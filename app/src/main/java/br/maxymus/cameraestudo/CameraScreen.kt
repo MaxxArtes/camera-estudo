@@ -73,7 +73,6 @@ import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Grid3x3
 import androidx.compose.material.icons.filled.HdrAuto
-import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SystemUpdate
@@ -362,17 +361,23 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize().background(Fundo)) {
         Column(modifier = Modifier.fillMaxSize()) {
             // ---- barra de cima ----
+            // ícones fixos: cada um alterna direto; a engrenagem abre a gaveta com tudo
             Row(
-                modifier = Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal = 4.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically
             ) {
                 IconButton(onClick = { flash = proximoFlash(flash) }) {
                     Icon(iconeFlash(flash), contentDescription = "Flash", tint = if (flash == ImageCapture.FLASH_MODE_OFF) Color.White else Amarelo)
                 }
-                Box(
-                    modifier = Modifier.size(34.dp).clip(CircleShape).background(Color(0x33FFFFFF)).clickable { gaveta = true },
-                    contentAlignment = Alignment.Center
-                ) { Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Mais ajustes", tint = Color.White) }
+                Box(modifier = Modifier.size(40.dp).clip(CircleShape).clickable { timer = when (timer) { 0 -> 3; 3 -> 10; else -> 0 } }, contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Timer, contentDescription = "Timer", tint = if (timer > 0) Amarelo else Color.White)
+                    if (timer > 0) Text("$timer", color = Amarelo, fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.BottomEnd).padding(end = 4.dp, bottom = 2.dp))
+                }
+                Box(modifier = Modifier.size(40.dp).clip(CircleShape).clickable { proporcao = if (proporcao == AspectRatio.RATIO_16_9) AspectRatio.RATIO_4_3 else AspectRatio.RATIO_16_9 }, contentAlignment = Alignment.Center) {
+                    Text(if (proporcao == AspectRatio.RATIO_16_9) "16:9" else "4:3", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+                IconButton(onClick = { grade = !grade }) { Icon(Icons.Filled.Grid3x3, contentDescription = "Grade", tint = if (grade) Amarelo else Color.White) }
+                IconButton(onClick = { nivel = !nivel }) { Icon(Icons.Filled.Straighten, contentDescription = "Nível", tint = if (nivel) Amarelo else Color.White) }
                 IconButton(onClick = { gaveta = true }) { Icon(Icons.Filled.Settings, contentDescription = "Ajustes", tint = Color.White) }
             }
 
