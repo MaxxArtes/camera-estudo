@@ -30,7 +30,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -194,6 +197,14 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     LaunchedEffect(flash) { imageCapture.flashMode = flash }
     LaunchedEffect(gravacao) { segundosGravando = 0; while (gravacao != null) { delay(1000); segundosGravando++ } }
 
+    // Deslizar para o lado troca o modo (só entre os prontos); para cima abre os ajustes.
+    fun trocaModo(passo: Int) {
+        if (gravacao != null) return
+        val prontos = Modo.entries.filter { it.pronto }
+        val i = prontos.indexOf(modo).let { if (it < 0) prontos.indexOf(Modo.FOTO) else it }
+        modo = prontos[(i + passo + prontos.size) % prontos.size]
+    }
+
     fun aplicaZoom(alvo: Float) {
         val cam = camera ?: return
         val estado = cam.cameraInfo.zoomState.value ?: return
@@ -271,7 +282,28 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     .fillMaxWidth()
                     .aspectRatio(if (proporcao == AspectRatio.RATIO_16_9) 9f / 16f else 3f / 4f)
                     .background(Color.Black)
-                    .pointerInput(camera) { detectTransformGestures { _, _, escala, _ -> aplicaZoom(zoom * escala) } }
+                    // um detector só: 2 dedos = zoom por pinça; 1 dedo = deslizar (lado: modo; cima: ajustes)
+                    .pointerInput(camera) {
+                        awaitEachGesture {
+                            awaitFirstDown(requireUnconsumed = false)
+                            var dx = 0f; var dy = 0f; var pinca = false
+                            do {
+                                val ev = awaitPointerEvent()
+                                val dedos = ev.changes.count { it.pressed }
+                                if (dedos >= 2) {
+                                    pinca = true
+                                    val z = ev.calculateZoom(); if (z != 1f) aplicaZoom(zoom * z)
+                                    ev.changes.forEach { it.consume() }
+                                } else if (dedos == 1 && !pinca) {
+                                    val pan = ev.calculatePan(); dx += pan.x; dy += pan.y
+                                }
+                            } while (ev.changes.any { it.pressed })
+                            if (!pinca) {
+                                if (dy < -90f && abs(dx) < 70f) gaveta = true
+                                else if (abs(dx) > 90f && abs(dy) < 70f) trocaModo(if (dx < 0) 1 else -1)
+                            }
+                        }
+                    }
                     .pointerInput(camera) {
                         detectTapGestures { toque ->
                             val cam = camera ?: return@detectTapGestures

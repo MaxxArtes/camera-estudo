@@ -37,7 +37,8 @@ object Retrato {
             val mascara = Tasks.await(segmentador.process(InputImage.fromBitmap(base, 0)))
             segmentador.close()
             val mw = mascara.width; val mh = mascara.height
-            val conf = FloatArray(mw * mh).also { mascara.buffer.rewind(); mascara.buffer.get(it) }
+            val bb = mascara.buffer; bb.rewind()
+            val conf = FloatArray(mw * mh) { bb.float }   // o ML Kit entrega a máscara como floats dentro de um ByteBuffer
 
             // fundo desfocado: 1/10 do tamanho e de volta
             val pequeno = Bitmap.createScaledBitmap(base, maxOf(1, w / 10), maxOf(1, h / 10), true)

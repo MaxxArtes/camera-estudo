@@ -11,7 +11,7 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
   desfoca o fundo depois da foto (`Retrato.kt`). Lenta e Mais marcados como "em breve".
 - Gaveta de ajustes: flash (desligado/auto/ligado), **timer** (3 s / 10 s), **proporção** 4:3 ou 16:9,
   grade, nível; HDR e filtros são marcadores para estudo futuro.
-- Zoom por pinça e foco/exposição por toque.
+- Zoom por pinça, foco/exposição por toque, **deslizar para o lado troca o modo** e **deslizar para cima abre os ajustes**.
 - Fotos em **Imagens/CameraEstudo**, vídeos em **Filmes/CameraEstudo** (aparecem na galeria do celular).
 - Galeria própria: grade de fotos e vídeos, tela cheia com **Compartilhar, Editar, Informações e
   Favorito**, apagar; vídeo abre no player do sistema.
