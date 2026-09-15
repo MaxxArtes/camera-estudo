@@ -1,12 +1,23 @@
 package br.maxymus.cameraestudo
 
 import android.Manifest
+import android.app.Activity
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CaptureRequest
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.IntentSenderRequest
+import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
+import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.CaptureRequestOptions
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.AspectRatio
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
@@ -54,6 +65,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.CenterFocusStrong
+import androidx.compose.material.icons.filled.SlowMotionVideo
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.FlashAuto
 import androidx.compose.material.icons.filled.FlashOff
@@ -71,6 +84,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -111,8 +126,10 @@ private val Verde = Color(0xFF22C55E)
 private val Fundo = Color(0xFF0E0E12)
 private val Painel = Color(0xFF16161B)
 
-enum class Modo(val rotulo: String, val pronto: Boolean) {
-    LENTA("LENTA", false), VIDEO("VÍDEO", true), FOTO("FOTO", true), RETRATO("RETRATO", true), MAIS("MAIS", false)
+/** Modos da linha (naLinha) e do menu "Mais" (LENTA e MACRO). `video` = usa VideoCapture. */
+enum class Modo(val rotulo: String, val naLinha: Boolean, val video: Boolean) {
+    VIDEO("VÍDEO", true, true), FOTO("FOTO", true, false), RETRATO("RETRATO", true, false),
+    PRO("PRO", true, false), DOCUMENTO("DOCUMENTO", true, false), LENTA("LENTA", false, true), MACRO("MACRO", false, false)
 }
 
 /**
@@ -123,7 +140,7 @@ enum class Modo(val rotulo: String, val pronto: Boolean) {
  * amarra ao ciclo de vida da tela e ele cuida do Camera2 por baixo (abrir, configurar, fechar).
  * Foto e vídeo são ligados separadamente, porque nem todo aparelho aceita os três de uma vez.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalCamera2Interop::class)
 @Composable
 fun CameraScreen(abrirGaleria: () -> Unit) {
     val contexto = LocalContext.current
@@ -147,6 +164,41 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var gravacao by remember { mutableStateOf<Recording?>(null) }
     var segundosGravando by remember { mutableIntStateOf(0) }
     var bokehNativo by remember { mutableStateOf(false) }      // o aparelho tem retrato de fábrica?
+    var menuMais by remember { mutableStateOf(false) }
+    var processandoLenta by remember { mutableStateOf(false) }
+    // modo Pro: valores manuais (null = automático). ISO e tempo em unidades do Camera2.
+    var proEv by remember { mutableIntStateOf(0) }
+    var proIso by remember { mutableStateOf<Int?>(null) }
+    var proTempoNs by remember { mutableStateOf<Long?>(null) }
+    var proFoco by remember { mutableStateOf<Float?>(null) }     // dioptrias: 0 = infinito, maior = mais perto
+    var proWb by remember { mutableIntStateOf(CaptureRequest.CONTROL_AWB_MODE_AUTO) }
+    var faixaIso by remember { mutableStateOf(100 to 3200) }
+    var faixaTempo by remember { mutableStateOf(100_000L to 100_000_000L) }   // 1/10000 s a 1/10 s
+    var focoMin by remember { mutableStateOf(0f) }                             // maior dioptria = foco mais perto
+    val scanner = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
+        if (res.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
+        val r = GmsDocumentScanningResult.fromActivityResultIntent(res.data) ?: return@rememberLauncherForActivityResult
+        escopo.launch(Dispatchers.IO) {
+            var n = 0
+            r.pages?.forEach { pag ->
+                runCatching {
+                    val valores = Fotos.novaEntrada().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, "DOC_" + System.currentTimeMillis() + "_$n.jpg") }
+                    val destino = contexto.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, valores)!!
+                    contexto.contentResolver.openInputStream(pag.imageUri)!!.use { i -> contexto.contentResolver.openOutputStream(destino)!!.use { o -> i.copyTo(o) } }
+                    ultima = destino; n++
+                }
+            }
+            withContext(Dispatchers.Main) { Toast.makeText(contexto, "$n página(s) salva(s) em Imagens/${Fotos.PASTA}", Toast.LENGTH_SHORT).show() }
+        }
+    }
+    fun abrirScanner() {
+        val atividade = contexto as? Activity ?: return
+        val opcoes = GmsDocumentScannerOptions.Builder().setGalleryImportAllowed(true).setPageLimit(10)
+            .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_JPEG).setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL).build()
+        GmsDocumentScanning.getClient(opcoes).getStartScanIntent(atividade)
+            .addOnSuccessListener { scanner.launch(IntentSenderRequest.Builder(it).build()) }
+            .addOnFailureListener { Toast.makeText(contexto, "Scanner indisponível: ${it.message}", Toast.LENGTH_LONG).show() }
+    }
     var processandoRetrato by remember { mutableStateOf(false) }
     val inclinacao by lembrarInclinacao(nivel)
     var novaVersao by remember { mutableStateOf<Atualizador.Versao?>(null) }
@@ -179,6 +231,12 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         val preview = Preview.Builder().setTargetAspectRatio(proporcao).build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
         var seletor = CameraSelector.Builder().requireLensFacing(lente).build()
         bokehNativo = false
+        if (modo == Modo.MACRO && lente == CameraSelector.LENS_FACING_BACK) {
+            // Macro: entre as câmeras traseiras, a que foca mais perto (maior distância mínima em dioptrias)
+            val melhor = provider.availableCameraInfos.filter { it.lensFacing == CameraSelector.LENS_FACING_BACK }
+                .maxByOrNull { Camera2CameraInfo.from(it).getCameraCharacteristic(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f }
+            if (melhor != null) seletor = melhor.cameraSelector
+        }
         if (modo == Modo.RETRATO) {
             // Extensions: o fabricante expõe o próprio modo retrato (bokeh) pelo CameraX, quando existe
             val gerente = withContext(Dispatchers.IO) { runCatching { ExtensionsManager.getInstanceAsync(contexto, provider).get() }.getOrNull() }
@@ -188,21 +246,54 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         }
         provider.unbindAll()
         camera = runCatching {
-            if (modo == Modo.VIDEO) provider.bindToLifecycle(dono, seletor, preview, videoCapture)
+            if (modo.video) provider.bindToLifecycle(dono, seletor, preview, videoCapture)
             else provider.bindToLifecycle(dono, seletor, preview, imageCapture)
         }.onFailure { Toast.makeText(contexto, "Não consegui abrir a câmera: ${it.message}", Toast.LENGTH_LONG).show() }.getOrNull()
         zoom = 1f
         camera?.cameraControl?.setZoomRatio(1f)
+        // faixas do sensor para o modo Pro (e foco mais perto para o Macro)
+        camera?.let { cam ->
+            val c2 = Camera2CameraInfo.from(cam.cameraInfo)
+            c2.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_SENSITIVITY_RANGE)?.let { faixaIso = it.lower to it.upper }
+            c2.getCameraCharacteristic(CameraCharacteristics.SENSOR_INFO_EXPOSURE_TIME_RANGE)?.let { faixaTempo = maxOf(it.lower, 50_000L) to minOf(it.upper, 500_000_000L) }
+            focoMin = c2.getCameraCharacteristic(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f
+            val opts = CaptureRequestOptions.Builder()
+            if (modo == Modo.MACRO && focoMin > 0f) {
+                opts.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+                opts.setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, focoMin)
+            }
+            if (modo != Modo.PRO) { proIso = null; proTempoNs = null; proFoco = null; proEv = 0; proWb = CaptureRequest.CONTROL_AWB_MODE_AUTO }
+            Camera2CameraControl.from(cam.cameraControl).setCaptureRequestOptions(opts.build())
+            cam.cameraControl.setExposureCompensationIndex(0)
+        }
     }
     LaunchedEffect(flash) { imageCapture.flashMode = flash }
+    LaunchedEffect(proEv, proIso, proTempoNs, proFoco, proWb, modo) {
+        val cam = camera ?: return@LaunchedEffect
+        if (modo != Modo.PRO) return@LaunchedEffect
+        val faixaEv = cam.cameraInfo.exposureState.exposureCompensationRange
+        cam.cameraControl.setExposureCompensationIndex(proEv.coerceIn(faixaEv.lower, faixaEv.upper))
+        val opts = CaptureRequestOptions.Builder()
+        if (proIso != null && proTempoNs != null) {
+            opts.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
+            opts.setCaptureRequestOption(CaptureRequest.SENSOR_SENSITIVITY, proIso!!)
+            opts.setCaptureRequestOption(CaptureRequest.SENSOR_EXPOSURE_TIME, proTempoNs!!)
+        } else opts.setCaptureRequestOption(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+        if (proFoco != null) {
+            opts.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+            opts.setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, proFoco!!)
+        } else opts.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
+        opts.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_MODE, proWb)
+        Camera2CameraControl.from(cam.cameraControl).setCaptureRequestOptions(opts.build())
+    }
     LaunchedEffect(gravacao) { segundosGravando = 0; while (gravacao != null) { delay(1000); segundosGravando++ } }
 
     // Deslizar para o lado troca o modo (só entre os prontos); para cima abre os ajustes.
     fun trocaModo(passo: Int) {
         if (gravacao != null) return
-        val prontos = Modo.entries.filter { it.pronto }
-        val i = prontos.indexOf(modo).let { if (it < 0) prontos.indexOf(Modo.FOTO) else it }
-        modo = prontos[(i + passo + prontos.size) % prontos.size]
+        val linha = Modo.entries.filter { it.naLinha }
+        val i = linha.indexOf(modo).let { if (it < 0) linha.indexOf(Modo.FOTO) else it }
+        modo = linha[(i + passo + linha.size) % linha.size]
     }
 
     fun aplicaZoom(alvo: Float) {
@@ -233,7 +324,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
 
     fun disparar() {
         if (ocupado) return
-        if (modo == Modo.VIDEO) {
+        if (modo == Modo.DOCUMENTO) { abrirScanner(); return }
+        if (modo.video) {
             val atual = gravacao
             if (atual != null) { atual.stop(); return }
             val temAudio = ContextCompat.checkSelfPermission(contexto, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -245,7 +337,15 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 if (ev is VideoRecordEvent.Finalize) {
                     gravacao = null
                     if (ev.hasError()) Toast.makeText(contexto, "Vídeo falhou (${ev.error})", Toast.LENGTH_LONG).show()
-                    else ultima = ev.outputResults.outputUri
+                    else if (modo == Modo.LENTA) {
+                        processandoLenta = true
+                        escopo.launch {
+                            val novo = Lenta.esticar(contexto, ev.outputResults.outputUri, 4)
+                            processandoLenta = false
+                            if (novo != null) { Fotos.apagar(contexto, ev.outputResults.outputUri); ultima = novo }
+                            else { ultima = ev.outputResults.outputUri; Toast.makeText(contexto, "Não consegui esticar; salvei o vídeo normal.", Toast.LENGTH_SHORT).show() }
+                        }
+                    } else ultima = ev.outputResults.outputUri
                 }
             }
             return
@@ -325,6 +425,9 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     Box(modifier = Modifier.align(Alignment.Center).width(140.dp).height(2.dp).rotate(-inclinacao).background(if (nivelado) Verde else Color.White.copy(alpha = 0.8f)))
                 }
                 if (contagem > 0) Text("$contagem", color = Color.White, fontSize = 96.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center))
+                if (processandoLenta) Text("Esticando o vídeo (4x)...", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
+                if (modo == Modo.MACRO) Text(if (focoMin > 0f) "Macro: chegue perto (foco no mínimo)" else "Macro: esta lente não informa foco mínimo", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
+                if (modo == Modo.DOCUMENTO) Text("Documento: toque no obturador para abrir o scanner", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
                 if (modo == Modo.RETRATO) Text(
                     if (processandoRetrato) "Desfocando o fundo..." else if (bokehNativo) "Retrato do aparelho" else "Retrato: enquadre uma pessoa",
                     color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp)
@@ -371,16 +474,26 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             }
 
             // ---- modos ----
-            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalArrangement = Arrangement.Center) {
-                Modo.entries.forEach { m ->
+            if (modo == Modo.PRO) PainelPro(
+                ev = proEv, faixaEv = camera?.cameraInfo?.exposureState?.exposureCompensationRange?.let { it.lower to it.upper } ?: (-2 to 2), aoEv = { proEv = it },
+                iso = proIso, faixaIso = faixaIso, aoIso = { proIso = it; if (proTempoNs == null) proTempoNs = 8_000_000L },
+                tempoNs = proTempoNs, faixaTempo = faixaTempo, aoTempo = { proTempoNs = it; if (proIso == null) proIso = faixaIso.first.coerceAtLeast(100) },
+                foco = proFoco, focoMax = focoMin, aoFoco = { proFoco = it },
+                wb = proWb, aoWb = { proWb = it },
+                aoAuto = { proIso = null; proTempoNs = null; proFoco = null; proEv = 0; proWb = CaptureRequest.CONTROL_AWB_MODE_AUTO }
+            )
+            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalArrangement = Arrangement.Center) {
+                Modo.entries.filter { it.naLinha }.forEach { m ->
                     Text(
-                        m.rotulo, color = if (m == modo) Amarelo else Color(0xFFBDBDBD), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 12.dp).clickable {
-                            if (gravacao != null) return@clickable
-                            if (m.pronto) modo = m else Toast.makeText(contexto, "${m.rotulo}: em breve", Toast.LENGTH_SHORT).show()
-                        }
+                        m.rotulo, color = if (m == modo) Amarelo else Color(0xFFBDBDBD), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 8.dp).clickable { if (gravacao == null) modo = m }
                     )
                 }
+                val noMais = !modo.naLinha
+                Text(
+                    if (noMais) modo.rotulo else "MAIS", color = if (noMais) Amarelo else Color(0xFFBDBDBD), fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 8.dp).clickable { if (gravacao == null) menuMais = true }
+                )
             }
 
             Spacer(modifier = Modifier.weight(1f))
@@ -397,13 +510,23 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 Box(
                     modifier = Modifier.size(80.dp).clip(CircleShape).border(3.dp, Color.White, CircleShape).padding(6.dp)
                         .clip(if (gravando) RoundedCornerShape(10.dp) else CircleShape)
-                        .background(when { gravando -> Rosa; modo == Modo.VIDEO -> Rosa; ocupado -> Color.Gray; else -> Color.White })
+                        .background(when { gravando -> Rosa; modo.video -> Rosa; ocupado || processandoLenta -> Color.Gray; else -> Color.White })
                         .clickable { disparar() }
                 )
                 Box(modifier = Modifier.size(52.dp).clip(CircleShape).background(Color(0x33FFFFFF)).clickable {
                     if (gravacao == null) lente = if (lente == CameraSelector.LENS_FACING_BACK) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
                 }, contentAlignment = Alignment.Center) {
                     Icon(Icons.Filled.Cameraswitch, contentDescription = "Trocar câmera", tint = Color.White)
+                }
+            }
+        }
+
+        // ---- menu "Mais": modos que não cabem na linha ----
+        if (menuMais) {
+            ModalBottomSheet(onDismissRequest = { menuMais = false }, containerColor = Painel) {
+                LazyVerticalGrid(columns = GridCells.Fixed(4), modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp), horizontalArrangement = Arrangement.Center) {
+                    item { Ajuste(Icons.Filled.SlowMotionVideo, "Lenta", "vídeo 4x mais lento", modo == Modo.LENTA) { modo = Modo.LENTA; menuMais = false } }
+                    item { Ajuste(Icons.Filled.CenterFocusStrong, "Macro", "bem de perto", modo == Modo.MACRO) { modo = Modo.MACRO; menuMais = false } }
                 }
             }
         }
@@ -457,3 +580,43 @@ private fun proximoFlash(f: Int) = when (f) {
 }
 private fun rotuloFlash(f: Int) = when (f) { ImageCapture.FLASH_MODE_AUTO -> "Auto"; ImageCapture.FLASH_MODE_ON -> "Ligado"; else -> "Desligado" }
 private fun iconeFlash(f: Int) = when (f) { ImageCapture.FLASH_MODE_AUTO -> Icons.Filled.FlashAuto; ImageCapture.FLASH_MODE_ON -> Icons.Filled.FlashOn; else -> Icons.Filled.FlashOff }
+
+
+/** Controles manuais do modo Pro. null = automático. */
+@Composable
+private fun PainelPro(
+    ev: Int, faixaEv: Pair<Int, Int>, aoEv: (Int) -> Unit,
+    iso: Int?, faixaIso: Pair<Int, Int>, aoIso: (Int) -> Unit,
+    tempoNs: Long?, faixaTempo: Pair<Long, Long>, aoTempo: (Long) -> Unit,
+    foco: Float?, focoMax: Float, aoFoco: (Float) -> Unit,
+    wb: Int, aoWb: (Int) -> Unit, aoAuto: () -> Unit
+) {
+    val corSlider = SliderDefaults.colors(thumbColor = Amarelo, activeTrackColor = Amarelo)
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
+        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            Text("PRO", color = Amarelo, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            Text("Auto", color = Color(0xFFBDBDBD), fontSize = 12.sp, modifier = Modifier.clickable(onClick = aoAuto))
+        }
+        LinhaPro("EV", if (ev == 0) "0" else (if (ev > 0) "+$ev" else "$ev"), ev.toFloat(), faixaEv.first.toFloat()..faixaEv.second.toFloat(), corSlider) { aoEv(it.toInt()) }
+        LinhaPro("ISO", iso?.toString() ?: "auto", (iso ?: faixaIso.first).toFloat(), faixaIso.first.toFloat()..faixaIso.second.toFloat(), corSlider) { aoIso(it.toInt()) }
+        val t = tempoNs ?: 8_000_000L
+        LinhaPro("Tempo", if (tempoNs == null) "auto" else "1/${(1_000_000_000L / t).coerceAtLeast(1)}", Math.log10(t.toDouble()).toFloat(),
+            Math.log10(faixaTempo.first.toDouble()).toFloat()..Math.log10(faixaTempo.second.toDouble()).toFloat(), corSlider) { aoTempo(Math.pow(10.0, it.toDouble()).toLong()) }
+        if (focoMax > 0f) LinhaPro("Foco", if (foco == null) "auto" else if (foco < 0.05f) "∞" else String.format("%.0f cm", 100f / foco), foco ?: 0f, 0f..focoMax, corSlider) { aoFoco(it) }
+        val wbs = listOf(CaptureRequest.CONTROL_AWB_MODE_AUTO to "Auto", CaptureRequest.CONTROL_AWB_MODE_DAYLIGHT to "Sol", CaptureRequest.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT to "Nublado",
+            CaptureRequest.CONTROL_AWB_MODE_INCANDESCENT to "Lâmpada", CaptureRequest.CONTROL_AWB_MODE_FLUORESCENT to "Fluor.")
+        Row(modifier = Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+            Text("WB", color = Color(0xFFBDBDBD), fontSize = 11.sp, modifier = Modifier.width(44.dp))
+            wbs.forEach { (v, r) -> Text(r, color = if (wb == v) Amarelo else Color(0xFFBDBDBD), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { aoWb(v) }.padding(horizontal = 4.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun LinhaPro(nome: String, valor: String, atual: Float, faixa: ClosedFloatingPointRange<Float>, cores: androidx.compose.material3.SliderColors, aoMudar: (Float) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().height(30.dp)) {
+        Text(nome, color = Color(0xFFBDBDBD), fontSize = 11.sp, modifier = Modifier.width(44.dp))
+        Slider(value = atual.coerceIn(faixa.start, faixa.endInclusive), onValueChange = aoMudar, valueRange = faixa, colors = cores, modifier = Modifier.weight(1f))
+        Text(valor, color = Color.White, fontSize = 11.sp, modifier = Modifier.width(56.dp), maxLines = 1)
+    }
+}
