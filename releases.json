@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.3",
+      "build": 5,
+      "tag": "v0.3-build5",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.3-build5.apk",
+      "mudou": [
+        "Build de release assinado e minificado (R8) no lugar do debug: APK menor"
+      ]
+    },
+    {
       "versao": "0.2",
       "build": 4,
       "tag": "v0.2-build4",
@@ -10,11 +19,11 @@
       ]
     }
   ],
-  "versionName": "0.2",
-  "versionCode": 2,
-  "build": 4,
+  "versionName": "0.3",
+  "versionCode": 3,
+  "build": 5,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.2-build4.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.3-build5.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T19:23:56Z"
+  "publicadoEm": "2026-09-15T19:33:15Z"
 }
