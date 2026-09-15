@@ -107,6 +107,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -529,9 +530,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         // ---- menu "Mais": modos que não cabem na linha ----
         if (menuMais) {
             ModalBottomSheet(onDismissRequest = { menuMais = false }, containerColor = Painel) {
-                LazyVerticalGrid(columns = GridCells.Fixed(4), modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp), horizontalArrangement = Arrangement.Center) {
-                    item { Ajuste(Icons.Filled.SlowMotionVideo, "Lenta", "vídeo 4x mais lento", modo == Modo.LENTA) { modo = Modo.LENTA; menuMais = false } }
-                    item { Ajuste(Icons.Filled.CenterFocusStrong, "Macro", "bem de perto", modo == Modo.MACRO) { modo = Modo.MACRO; menuMais = false } }
+                Text("Mais modos", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp))
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 36.dp), horizontalArrangement = Arrangement.Center) {
+                    Ajuste(Icons.Filled.SlowMotionVideo, "Lenta", "Vídeo 4x mais lento", modo == Modo.LENTA) { modo = Modo.LENTA; menuMais = false }
+                    Ajuste(Icons.Filled.CenterFocusStrong, "Macro", "Bem de perto", modo == Modo.MACRO) { modo = Modo.MACRO; menuMais = false }
                 }
             }
         }
@@ -569,12 +571,15 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
 
 @Composable
 private fun Ajuste(icone: ImageVector, titulo: String, valor: String, ativo: Boolean, aoTocar: () -> Unit) {
-    Column(modifier = Modifier.padding(vertical = 14.dp).clickable(onClick = aoTocar), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(
+        modifier = Modifier.width(96.dp).padding(vertical = 12.dp).clip(RoundedCornerShape(14.dp)).clickable(onClick = aoTocar).padding(4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
         Box(modifier = Modifier.size(58.dp).clip(CircleShape).background(if (ativo) Amarelo else Color(0xFF26262C)), contentAlignment = Alignment.Center) {
             Icon(icone, contentDescription = titulo, tint = Color.White)
         }
-        Text(titulo, color = Color.White, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
-        Text(valor, color = Color(0xFF9E9E9E), fontSize = 11.sp)
+        Text(titulo, color = Color.White, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp))
+        Text(valor, color = Color(0xFF9E9E9E), fontSize = 11.sp, textAlign = TextAlign.Center, maxLines = 2, lineHeight = 13.sp)
     }
 }
 
