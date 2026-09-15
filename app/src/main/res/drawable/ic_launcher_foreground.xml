@@ -1,6 +1,7 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <group android:scaleX="1.14" android:scaleY="1.14" android:pivotX="54" android:pivotY="57.5">
     <!-- corpo da câmera: coral em cima, rosa embaixo (mesmo degradê da arte) -->
     <path android:pathData="M30,42h8l3,-6h26l3,6h8a5,5 0 0 1 5,5v27a5,5 0 0 1 -5,5H30a5,5 0 0 1 -5,-5V47a5,5 0 0 1 5,-5z">
         <aapt:attr name="android:fillColor">
@@ -28,4 +29,5 @@
     <path android:fillColor="#99FFC0CB" android:pathData="M56.5,58.5a1.2,1.2 0 1 0 0.01,0z"/>
     <!-- LED verde -->
     <path android:fillColor="#FF22C55E" android:pathData="M72,50a2.2,2.2 0 1 0 0.01,0z"/>
+    </group>
 </vector>

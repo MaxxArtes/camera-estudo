@@ -11,8 +11,8 @@ android {
         applicationId = "br.maxymus.cameraestudo"
         minSdk = 26
         targetSdk = 34
-        versionCode = 7
-        versionName = "0.7"
+        versionCode = 8
+        versionName = "0.8"
         // Só arm64: todo celular Android de 2017 em diante. Sem isto o ML Kit traz 20 MB de
         // biblioteca nativa por arquitetura (x86, x86_64, armeabi-v7a) que ninguém usa no aparelho.
         ndk { abiFilters += listOf("arm64-v8a") }
