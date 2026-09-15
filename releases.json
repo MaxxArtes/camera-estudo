@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.24",
+      "build": 28,
+      "tag": "v0.24-build28",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.24-build28.apk",
+      "mudou": [
+        "Foco por toque com anel, trava AE/AF por toque longo e régua de luz; extensões do fabricante e modo de captura; cartão de progresso"
+      ]
+    },
+    {
       "versao": "0.23",
       "build": 27,
       "tag": "v0.23-build27",
@@ -208,11 +217,11 @@
       ]
     }
   ],
-  "versionName": "0.23",
-  "versionCode": 23,
-  "build": 27,
+  "versionName": "0.24",
+  "versionCode": 24,
+  "build": 28,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.23-build27.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.24-build28.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T22:59:53Z"
+  "publicadoEm": "2026-09-15T23:06:16Z"
 }
