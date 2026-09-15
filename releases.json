@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.26",
+      "build": 30,
+      "tag": "v0.26-build30",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.26-build30.apk",
+      "mudou": [
+        "CameraX 1.4.2: intensidade da extensão do fabricante (bokeh/HDR/noite) com régua 0-100 quando o aparelho aceita; senão retrato por software"
+      ]
+    },
+    {
       "versao": "0.25",
       "build": 29,
       "tag": "v0.25-build29",
@@ -226,11 +235,11 @@
       ]
     }
   ],
-  "versionName": "0.25",
-  "versionCode": 25,
-  "build": 29,
+  "versionName": "0.26",
+  "versionCode": 26,
+  "build": 30,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.25-build29.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.26-build30.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T23:16:48Z"
+  "publicadoEm": "2026-09-15T23:29:15Z"
 }
