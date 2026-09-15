@@ -23,6 +23,7 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
 | `GaleriaScreen.kt` | grade de fotos e vídeos, tela cheia com compartilhar/editar/informações/favorito, apagar |
 | `Fotos.kt` | MediaStore: onde salvar, listar, apagar; favoritos locais |
 | `Nivel.kt` | acelerômetro → ângulo do nível de bolha |
+| `Atualizador.kt` | lê `releases.json`, compara a versão, baixa e instala a nova |
 
 CameraX é a camada do Google em cima do Camera2: você declara os "casos de uso" e ele cuida de
 abrir, configurar e fechar a câmera. Para estudar o Camera2 puro depois, o lugar de trocar é só
@@ -38,6 +39,12 @@ depuração no release **"ultimo"** deste repositório, com link fixo:
 
 Baixe no celular, permita "instalar de fontes desconhecidas" para o navegador e instale.
 Com Android Studio: abrir a pasta e rodar; `minSdk 26`, `compileSdk 34`, Gradle 8.9, JDK 17.
+
+## Atualização dentro do app
+Ao abrir, o app lê `releases.json` no R2; se o `versionCode` de lá for maior que o instalado, mostra a
+faixa "Versão X disponível → Atualizar" (também na gaveta de ajustes, item "Atualizar", que serve para
+conferir à mão). Atualizar baixa o APK pelo DownloadManager e abre o instalador do sistema; como a
+assinatura é fixa (keystore nos secrets do repo), instala por cima. Código em `Atualizador.kt`.
 
 ## Próximos passos de estudo (sugestões)
 1. Trocar `ImageCapture` por `ImageAnalysis` e desenhar algo sobre a imagem ao vivo.

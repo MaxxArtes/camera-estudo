@@ -11,8 +11,8 @@ android {
         applicationId = "br.maxymus.cameraestudo"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "0.3"
+        versionCode = 4
+        versionName = "0.4"
     }
     // Assinatura fixa (secrets do repo): sem ela cada build teria chave aleatória e o celular
     // recusaria atualizar por cima. Localmente, sem as variáveis, cai na chave de debug.

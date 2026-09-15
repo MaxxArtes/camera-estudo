@@ -67,5 +67,6 @@ jobs:
           m["releases"] = [{"versao": versao, "build": int(os.environ["GITHUB_RUN_NUMBER"]), "tag": tag, "apk": m["apkVersao"], "mudou": [msg]}] + [r for r in m.get("releases", []) if r.get("tag") != tag]
           json.dump(m, open(p, "w"), ensure_ascii=False, indent=2); open(p, "a").write("\n")
           EOF
+          aws s3 cp releases.json "s3://omnigen-assets/camera-estudo/releases.json" --endpoint-url "$R2_ENDPOINT" --content-type application/json --cache-control "no-cache"
           git config user.name "github-actions[bot]"; git config user.email "github-actions[bot]@users.noreply.github.com"
           git add releases.json; git commit -m "releases.json: ${TAG} [skip ci]" || true; git push

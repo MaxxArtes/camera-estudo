@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.HdrAuto
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Tonality
@@ -134,6 +135,15 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var gravacao by remember { mutableStateOf<Recording?>(null) }
     var segundosGravando by remember { mutableIntStateOf(0) }
     val inclinacao by lembrarInclinacao(nivel)
+    var novaVersao by remember { mutableStateOf<Atualizador.Versao?>(null) }
+    var avisoAtualizacao by remember { mutableStateOf(true) }
+    val instalada = remember { Atualizador.versaoInstalada(contexto) }
+
+    // Ao abrir: consulta o canal de atualização em segundo plano (falha em silêncio se estiver sem rede).
+    LaunchedEffect(Unit) {
+        val v = Atualizador.consultar()
+        if (v != null && v.codigo > instalada.second) novaVersao = v
+    }
 
     // ---- objetos do CameraX ----
     val previewView = remember { PreviewView(contexto).apply { scaleType = PreviewView.ScaleType.FILL_CENTER } }
@@ -254,6 +264,21 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     Box(modifier = Modifier.align(Alignment.Center).width(140.dp).height(2.dp).rotate(-inclinacao).background(if (nivelado) Amarelo else Color.White.copy(alpha = 0.8f)))
                 }
                 if (contagem > 0) Text("$contagem", color = Color.White, fontSize = 96.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center))
+                val nv = novaVersao
+                if (nv != null && avisoAtualizacao) {
+                    Row(
+                        modifier = Modifier.align(Alignment.TopCenter).padding(10.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xE6202020)).padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.SystemUpdate, contentDescription = null, tint = Amarelo)
+                        Column(modifier = Modifier.padding(horizontal = 10.dp)) {
+                            Text("Versão ${nv.nome} disponível", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            if (nv.mudou.isNotEmpty()) Text(nv.mudou.first().take(60), color = Color(0xFFBDBDBD), fontSize = 11.sp)
+                        }
+                        Text("Atualizar", color = Amarelo, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.clickable { Atualizador.baixarEInstalar(contexto, nv) }.padding(6.dp))
+                        Text("×", color = Color.White, fontSize = 16.sp, modifier = Modifier.clickable { avisoAtualizacao = false }.padding(horizontal = 6.dp))
+                    }
+                }
                 if (gravacao != null) {
                     Row(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xCCFF3B30)).padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(String.format("%02d:%02d", segundosGravando / 60, segundosGravando % 60), color = Color.White, fontWeight = FontWeight.Bold)
@@ -328,6 +353,18 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     item { Ajuste(Icons.Filled.Grid3x3, "Grade", if (grade) "Ativado" else "Desativado", grade) { grade = !grade } }
                     item { Ajuste(Icons.Filled.Straighten, "Nível", if (nivel) "Ativado" else "Desativado", nivel) { nivel = !nivel } }
                     item { Ajuste(Icons.Filled.Tonality, "Filtro", "Nenhum", false) { Toast.makeText(contexto, "Filtros: em breve", Toast.LENGTH_SHORT).show() } }
+                    item {
+                        val nv = novaVersao
+                        Ajuste(Icons.Filled.SystemUpdate, "Atualizar", if (nv != null) "Nova ${nv.nome}" else "Atual ${instalada.first}", nv != null) {
+                            if (nv != null) { gaveta = false; Atualizador.baixarEInstalar(contexto, nv) }
+                            else escopo.launch {
+                                val v = Atualizador.consultar()
+                                if (v == null) Toast.makeText(contexto, "Não consegui consultar o canal (sem rede?)", Toast.LENGTH_SHORT).show()
+                                else if (v.codigo > instalada.second) { novaVersao = v; avisoAtualizacao = true; Toast.makeText(contexto, "Versão ${v.nome} disponível", Toast.LENGTH_SHORT).show() }
+                                else Toast.makeText(contexto, "Você já está na versão mais recente (${instalada.first})", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
                     item { Ajuste(Icons.Filled.MoreHoriz, "Mais", "", false) { gaveta = false } }
                 }
             }
