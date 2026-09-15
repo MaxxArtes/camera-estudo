@@ -36,7 +36,12 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
   da fusão), scanner (detectar, aplicar, quadro detectado x usado), retrato por software, troca de câmera e erro
   vira uma linha JSON com aparelho, versão e memória, enviada em lote ao coletor da bancada (token injetado pelo
   CI; build local sem token não envia). Nunca envia imagem. É o que alimenta as melhorias medidas.
-- Zoom por pinça, foco/exposição por toque, **deslizar para o lado troca o modo** e **deslizar para cima abre os ajustes**.
+- Zoom por pinça, **deslizar para o lado troca o modo** e **deslizar para cima abre os ajustes**.
+- **Foco por toque** com anel, **toque longo trava AE/AF** (o aparelho para de refocar e remedir) e uma régua de luz ao lado do anel
+  (arrastar na vertical muda a compensação de exposição). Toque simples solta a trava.
+- Gaveta: **Aparelho** liga as extensões do fabricante pelo CameraX (Auto, HDR, Noite, Retoque, o que o aparelho expuser) na Foto;
+  **Qualidade** Máxima deixa o HAL fazer o próprio multi-quadro (CAPTURE_MODE_MAXIMIZE_QUALITY), Rápida usa latência mínima
+  (a rajada e o HDR nossos usam sempre a rápida). Todo processamento demorado mostra um cartão com anel de progresso.
 - Fotos em **Imagens/CameraEstudo**, vídeos em **Filmes/CameraEstudo** (aparecem na galeria do celular).
 - Galeria própria: grade de fotos e vídeos, tela cheia com **Compartilhar, Editar, Informações e
   Favorito**, apagar; vídeo abre no player do sistema.

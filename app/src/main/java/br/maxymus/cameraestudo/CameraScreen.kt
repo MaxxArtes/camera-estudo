@@ -38,6 +38,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -85,6 +87,10 @@ import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Tonality
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.HighQuality
+import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -114,6 +120,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -126,6 +133,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 // Paleta do ícone: coral → rosa no corpo, fundo quase preto, aro branco, LED verde.
 private val Amarelo = Color(0xFFFF5A5F)       // nome mantido no código; a cor é o coral do ícone
@@ -167,6 +175,15 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var ultima by remember { mutableStateOf<Uri?>(null) }
     var zoom by remember { mutableStateOf(1f) }
     var camera by remember { mutableStateOf<Camera?>(null) }
+    // foco por toque: anel no ponto, trava por toque longo (AE/AF), régua de luz ao lado do anel
+    var focoPonto by remember { mutableStateOf<Offset?>(null) }
+    var focoTravado by remember { mutableStateOf(false) }
+    var focoEv by remember { mutableIntStateOf(0) }
+    var focoSerie by remember { mutableIntStateOf(0) }                 // muda a cada toque: cancela o sumiço anterior
+    // processamento do próprio aparelho (CameraX Extensions) e modo de captura
+    var extensao by remember { mutableIntStateOf(ExtensionMode.NONE) }
+    var extensoesDisponiveis by remember { mutableStateOf(listOf(ExtensionMode.NONE)) }
+    var qualidadeMax by remember { mutableStateOf(true) }              // MAXIMIZE_QUALITY: deixa o HAL fazer o multi-quadro dele
     var ocupado by remember { mutableStateOf(false) }
     var contagem by remember { mutableIntStateOf(0) }
     var gravacao by remember { mutableStateOf<Recording?>(null) }
@@ -203,9 +220,11 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
 
     // ---- objetos do CameraX ----
     val previewView = remember { PreviewView(contexto).apply { scaleType = PreviewView.ScaleType.FILL_CENTER } }
-    val imageCapture = remember(proporcao) {
+    // rajada/HDR nossos pedem latência mínima (quadros próximos); foto simples com "Qualidade" deixa o HAL processar
+    val capturaRapida = !qualidadeMax || rajada || hdr
+    val imageCapture = remember(proporcao, capturaRapida) {
         @Suppress("DEPRECATION")
-        ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).setTargetAspectRatio(proporcao).build()
+        ImageCapture.Builder().setCaptureMode(if (capturaRapida) ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY else ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY).setTargetAspectRatio(proporcao).build()
     }
     val videoCapture = remember {
         VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HIGHEST)).build())
@@ -215,7 +234,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     LaunchedEffect(Unit) { ultima = Fotos.listar(contexto, limite = 1).firstOrNull()?.uri }
 
     // (Re)liga a câmera quando muda lente, modo ou proporção.
-    LaunchedEffect(lente, modo, proporcao) {
+    LaunchedEffect(lente, modo, proporcao, capturaRapida, extensao) {
         val provider = ProcessCameraProvider.getInstance(contexto).get()
         @Suppress("DEPRECATION")
         val preview = Preview.Builder().setTargetAspectRatio(proporcao).build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
@@ -227,19 +246,24 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 .maxByOrNull { Camera2CameraInfo.from(it).getCameraCharacteristic(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f }
             if (melhor != null) seletor = melhor.cameraSelector
         }
-        if (modo == Modo.RETRATO) {
-            // Extensions: o fabricante expõe o próprio modo retrato (bokeh) pelo CameraX, quando existe
-            val gerente = withContext(Dispatchers.IO) { runCatching { ExtensionsManager.getInstanceAsync(contexto, provider).get() }.getOrNull() }
-            if (gerente != null && gerente.isExtensionAvailable(seletor, ExtensionMode.BOKEH)) {
+        // Extensions do fabricante: Retrato usa BOKEH; Foto usa o que o usuário escolheu na gaveta ("Aparelho")
+        val gerente = withContext(Dispatchers.IO) { runCatching { ExtensionsManager.getInstanceAsync(contexto, provider).get() }.getOrNull() }
+        if (gerente != null) {
+            extensoesDisponiveis = listOf(ExtensionMode.NONE) + listOf(ExtensionMode.AUTO, ExtensionMode.HDR, ExtensionMode.NIGHT, ExtensionMode.FACE_RETOUCH).filter { gerente.isExtensionAvailable(seletor, it) }
+            if (modo == Modo.RETRATO && gerente.isExtensionAvailable(seletor, ExtensionMode.BOKEH)) {
                 seletor = gerente.getExtensionEnabledCameraSelector(seletor, ExtensionMode.BOKEH); bokehNativo = true
+            } else if (modo == Modo.FOTO && extensao != ExtensionMode.NONE && gerente.isExtensionAvailable(seletor, extensao)) {
+                seletor = gerente.getExtensionEnabledCameraSelector(seletor, extensao)
             }
-        }
+        } else extensoesDisponiveis = listOf(ExtensionMode.NONE)
+        focoPonto = null; focoTravado = false; focoEv = 0
         provider.unbindAll()
         camera = runCatching {
             if (modo.video) provider.bindToLifecycle(dono, seletor, preview, videoCapture)
             else provider.bindToLifecycle(dono, seletor, preview, imageCapture)
         }.onFailure { Telemetria.evento("erro", mapOf("onde" to "abrir_camera", "modo" to modo.name.lowercase(), "msg" to (it.message ?: ""))); Toast.makeText(contexto, "Não consegui abrir a câmera: ${it.message}", Toast.LENGTH_LONG).show() }.getOrNull()
-        Telemetria.evento("camera", mapOf("modo" to modo.name.lowercase(), "lente" to (if (lente == CameraSelector.LENS_FACING_FRONT) "frontal" else "traseira"), "bokeh_nativo" to bokehNativo, "proporcao" to (if (proporcao == AspectRatio.RATIO_16_9) "16:9" else "4:3")))
+        Telemetria.evento("camera", mapOf("modo" to modo.name.lowercase(), "lente" to (if (lente == CameraSelector.LENS_FACING_FRONT) "frontal" else "traseira"), "bokeh_nativo" to bokehNativo, "proporcao" to (if (proporcao == AspectRatio.RATIO_16_9) "16:9" else "4:3"),
+            "extensao" to nomeExtensao(if (modo == Modo.FOTO) extensao else ExtensionMode.NONE), "extensoes" to extensoesDisponiveis.map { nomeExtensao(it) }, "captura_rapida" to capturaRapida))
         zoom = 1f
         camera?.cameraControl?.setZoomRatio(1f)
         // faixas do sensor para o modo Pro (e foco mais perto para o Macro)
@@ -531,11 +555,17 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                         }
                     }
                     .pointerInput(camera) {
-                        detectTapGestures { toque ->
-                            val cam = camera ?: return@detectTapGestures
+                        fun foca(toque: Offset, travar: Boolean) {
+                            val cam = camera ?: return
                             val ponto = previewView.meteringPointFactory.createPoint(toque.x, toque.y)
-                            cam.cameraControl.startFocusAndMetering(FocusMeteringAction.Builder(ponto, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE).build())
+                            val acao = FocusMeteringAction.Builder(ponto, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
+                            if (travar) acao.disableAutoCancel()
+                            cam.cameraControl.startFocusAndMetering(acao.build())
+                            focoPonto = toque; focoTravado = travar; focoEv = 0; focoSerie++
+                            cam.cameraControl.setExposureCompensationIndex(0)
+                            Telemetria.evento("foco_toque", mapOf("travado" to travar, "modo" to modo.name.lowercase()))
                         }
+                        detectTapGestures(onTap = { foca(it, false) }, onLongPress = { foca(it, true) })
                     }
             ) {
                 AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
@@ -550,8 +580,44 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     val nivelado = abs(inclinacao) < 1.5f
                     Box(modifier = Modifier.align(Alignment.Center).width(140.dp).height(2.dp).rotate(-inclinacao).background(if (nivelado) Verde else Color.White.copy(alpha = 0.8f)))
                 }
+                // anel de foco com régua de luz (arrastar na vertical muda a compensação de exposição); some em 3 s se não estiver travado
+                focoPonto?.let { p ->
+                    LaunchedEffect(focoSerie) { if (!focoTravado) { delay(3000); if (!focoTravado) focoPonto = null } }
+                    val faixa = camera?.cameraInfo?.exposureState?.exposureCompensationRange
+                    val cor = if (focoTravado) Amarelo else Color.White
+                    Box(modifier = Modifier.offset { IntOffset((p.x - 40.dp.toPx()).roundToInt(), (p.y - 40.dp.toPx()).roundToInt()) }.size(80.dp).border(1.5.dp, cor, RoundedCornerShape(4.dp)))
+                    Box(modifier = Modifier.offset { IntOffset((p.x + 48.dp.toPx()).roundToInt(), (p.y - 70.dp.toPx()).roundToInt()) }.width(44.dp).height(140.dp)
+                        .pointerInput(focoSerie) {
+                            detectVerticalDragGestures { mudanca, delta ->
+                                mudanca.consume()
+                                val cam = camera ?: return@detectVerticalDragGestures
+                                val f = faixa ?: return@detectVerticalDragGestures
+                                val novo = (focoEv - delta / 18f).roundToInt().coerceIn(f.lower, f.upper)
+                                if (novo != focoEv) { focoEv = novo; cam.cameraControl.setExposureCompensationIndex(novo) }
+                                focoSerie++
+                            }
+                        }, contentAlignment = Alignment.Center) {
+                        Box(modifier = Modifier.width(2.dp).height(140.dp).background(cor.copy(alpha = 0.6f)))
+                        val fracao = faixa?.let { if (it.upper > it.lower) (focoEv - it.lower).toFloat() / (it.upper - it.lower) else 0.5f } ?: 0.5f
+                        Icon(Icons.Filled.WbSunny, contentDescription = "Luz", tint = cor, modifier = Modifier.offset { IntOffset(0, ((0.5f - fracao) * 120.dp.toPx()).roundToInt()) }.size(22.dp).clip(CircleShape).background(Color(0x66000000)).padding(2.dp))
+                    }
+                    if (focoTravado) Text("AE/AF TRAVADO", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.TopCenter).padding(top = 14.dp).clip(RoundedCornerShape(6.dp)).background(Amarelo).padding(horizontal = 8.dp, vertical = 3.dp))
+                }
                 if (contagem > 0) Text("$contagem", color = Color.White, fontSize = 96.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center))
-                fase?.let { Text(it, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.Center).clip(RoundedCornerShape(12.dp)).background(Color(0xAA000000)).padding(horizontal = 14.dp, vertical = 8.dp)) }
+                // card de progresso: sequência, scanner, retrato por software, lenta
+                val textoProcesso = fase ?: when {
+                    processandoDoc && modo == Modo.TELA -> "Recortando a tela e tirando o moiré..."
+                    processandoDoc -> "Recortando e realçando..."
+                    processandoRetrato -> "Desfocando o fundo..."
+                    processandoLenta -> "Esticando o vídeo (4x)..."
+                    else -> null
+                }
+                textoProcesso?.let {
+                    Column(modifier = Modifier.align(Alignment.Center).clip(RoundedCornerShape(14.dp)).background(Color(0xBB000000)).padding(horizontal = 18.dp, vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(color = Amarelo, strokeWidth = 3.dp, modifier = Modifier.size(34.dp))
+                        Text(it, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 10.dp))
+                    }
+                }
                 if (processandoLenta) Text("Esticando o vídeo (4x)...", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
                 if (modo == Modo.MACRO) Text(if (focoMin > 0f) "Macro: chegue perto (foco no mínimo)" else "Macro: esta lente não informa foco mínimo", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
                 if (modo == Modo.TELA) Text(if (processandoDoc) "Recortando a tela e tirando o moiré..." else "Tela: encha o quadro com a página, sem reflexo", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
@@ -681,6 +747,11 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     item { var tel by remember { mutableStateOf(Telemetria.ligada) }; Ajuste(Icons.Filled.Timeline, "Telemetria", if (tel) "Enviando" else "Desligada", tel) { tel = Telemetria.alternar() } }
                     item { Ajuste(Icons.Filled.Share, "Registro", "Scanner: ${RegistroScanner.linhas(contexto)}", false) { if (!RegistroScanner.compartilhar(contexto)) Toast.makeText(contexto, "Nenhuma digitalização registrada ainda.", Toast.LENGTH_SHORT).show(); gaveta = false } }
                     item { Ajuste(Icons.Filled.AspectRatio, "Proporção", if (proporcao == AspectRatio.RATIO_16_9) "16:9" else "4:3", true) { proporcao = if (proporcao == AspectRatio.RATIO_16_9) AspectRatio.RATIO_4_3 else AspectRatio.RATIO_16_9 } }
+                    item { Ajuste(Icons.Filled.AutoAwesome, "Aparelho", if (extensoesDisponiveis.size == 1) "Sem extensão" else nomeExtensao(extensao), extensao != ExtensionMode.NONE) {
+                        val i = extensoesDisponiveis.indexOf(extensao); extensao = extensoesDisponiveis[(i + 1) % extensoesDisponiveis.size]
+                        if (extensoesDisponiveis.size == 1) Toast.makeText(contexto, "Este aparelho não expõe HDR/Noite pelo CameraX Extensions.", Toast.LENGTH_SHORT).show()
+                    } }
+                    item { Ajuste(Icons.Filled.HighQuality, "Qualidade", if (qualidadeMax) "Máxima" else "Rápida", qualidadeMax) { qualidadeMax = !qualidadeMax } }
                     item { Ajuste(Icons.Filled.HdrAuto, "HDR", if (hdr) "3 exposições" else "Desligado", hdr) { hdr = !hdr } }
                     item { Ajuste(Icons.Filled.BurstMode, "Rajada", if (rajada) "4 quadros" else "Desligada", rajada) { rajada = !rajada } }
                     item { Ajuste(Icons.Filled.Grid3x3, "Grade", if (grade) "Ativado" else "Desativado", grade) { grade = !grade } }
@@ -704,6 +775,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         }
     }
 }
+
+private fun nomeExtensao(m: Int) = when (m) { ExtensionMode.AUTO -> "Auto"; ExtensionMode.HDR -> "HDR"; ExtensionMode.NIGHT -> "Noite"; ExtensionMode.FACE_RETOUCH -> "Retoque"; ExtensionMode.BOKEH -> "Bokeh"; else -> "Desligado" }
 
 /** Foto de Documento/Tela esperando o usuário conferir os cantos. */
 private class Edicao(val uri: Uri, val deteccao: Documento.Deteccao, val tela: Boolean, val quadros: List<ByteArray>? = null, val rot: Int = 0)
