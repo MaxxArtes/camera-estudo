@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.15",
+      "build": 18,
+      "tag": "v0.15-build18",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.15-build18.apk",
+      "mudou": [
+        "Scanner: remoção de sombras (retinex simplificado), detecção por bordas como 2º candidato com placar; PDF de várias páginas na galeria"
+      ]
+    },
+    {
       "versao": "0.14",
       "build": 17,
       "tag": "v0.14-build17",
@@ -118,11 +127,11 @@
       ]
     }
   ],
-  "versionName": "0.14",
-  "versionCode": 14,
-  "build": 17,
+  "versionName": "0.15",
+  "versionCode": 15,
+  "build": 18,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.14-build17.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.15-build18.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T20:53:00Z"
+  "publicadoEm": "2026-09-15T21:04:23Z"
 }
