@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.9",
+      "build": 12,
+      "tag": "v0.9-build12",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.9-build12.apk",
+      "mudou": [
+        "Zoom: o chip mais próximo fica ativo e mostra o valor real, inclusive acima de 2x"
+      ]
+    },
+    {
       "versao": "0.8",
       "build": 11,
       "tag": "v0.8-build11",
@@ -64,11 +73,11 @@
       ]
     }
   ],
-  "versionName": "0.8",
-  "versionCode": 8,
-  "build": 11,
+  "versionName": "0.9",
+  "versionCode": 9,
+  "build": 12,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.8-build11.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.9-build12.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T20:12:40Z"
+  "publicadoEm": "2026-09-15T20:16:14Z"
 }
