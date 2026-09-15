@@ -127,8 +127,8 @@ private val Painel = Color(0xFF16161B)
 
 /** Modos da linha (naLinha) e do menu "Mais" (LENTA e MACRO). `video` = usa VideoCapture. */
 enum class Modo(val rotulo: String, val naLinha: Boolean, val video: Boolean) {
-    VIDEO("VÍDEO", true, true), FOTO("FOTO", true, false), RETRATO("RETRATO", true, false),
-    PRO("PRO", true, false), DOCUMENTO("DOCUMENTO", true, false), LENTA("LENTA", false, true), MACRO("MACRO", false, false)
+    PRO("PRO", true, false), VIDEO("VÍDEO", true, true), FOTO("FOTO", true, false), RETRATO("RETRATO", true, false),
+    DOCUMENTO("DOCUMENTO", true, false), LENTA("LENTA", false, true), MACRO("MACRO", false, false)
 }
 
 /**
