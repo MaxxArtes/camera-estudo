@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.17",
+      "build": 20,
+      "tag": "v0.17-build20",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.17-build20.apk",
+      "mudou": [
+        "Modo Tela (em Mais): scanner de monitor com recorte, antibanding, sem flash, redução de moiré e realce suave"
+      ]
+    },
+    {
       "versao": "0.16",
       "build": 19,
       "tag": "v0.16-build19",
@@ -136,11 +145,11 @@
       ]
     }
   ],
-  "versionName": "0.16",
-  "versionCode": 16,
-  "build": 19,
+  "versionName": "0.17",
+  "versionCode": 17,
+  "build": 20,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.16-build19.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.17-build20.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T21:11:03Z"
+  "publicadoEm": "2026-09-15T21:23:05Z"
 }
