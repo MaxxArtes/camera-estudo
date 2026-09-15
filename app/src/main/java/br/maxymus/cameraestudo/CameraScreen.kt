@@ -1,8 +1,13 @@
 package br.maxymus.cameraestudo
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.MediaStore
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.AspectRatio
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.FocusMeteringAction
@@ -10,7 +15,15 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.MediaStoreOutputOptions
+import androidx.camera.video.Quality
+import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
+import androidx.camera.video.Recording
+import androidx.camera.video.VideoCapture
+import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -18,190 +31,325 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.FlashAuto
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
+import androidx.compose.material.icons.filled.Grid3x3
+import androidx.compose.material.icons.filled.HdrAuto
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Straighten
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Tonality
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.math.abs
+
+private val Amarelo = Color(0xFFFFD60A)
+
+enum class Modo(val rotulo: String, val pronto: Boolean) {
+    LENTA("LENTA", false), VIDEO("VÍDEO", true), FOTO("FOTO", true), RETRATO("RETRATO", false), MAIS("MAIS", false)
+}
 
 /**
- * Tela principal: visualização ao vivo, botão de foto, troca de câmera, flash, zoom por pinça,
- * foco por toque e a miniatura da última foto (abre a galeria).
+ * Tela principal no desenho de referência: barra de cima (flash, gaveta, ajustes), visualização
+ * com grade e nível, chips de zoom, linha de modos, miniatura + obturador + trocar câmera.
  *
- * Como o CameraX funciona, em uma frase: você descreve "casos de uso" (Preview, ImageCapture),
+ * CameraX em uma frase: você descreve "casos de uso" (Preview, ImageCapture, VideoCapture),
  * amarra ao ciclo de vida da tela e ele cuida do Camera2 por baixo (abrir, configurar, fechar).
+ * Foto e vídeo são ligados separadamente, porque nem todo aparelho aceita os três de uma vez.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CameraScreen(abrirGaleria: () -> Unit) {
     val contexto = LocalContext.current
     val dono = LocalLifecycleOwner.current
+    val escopo = rememberCoroutineScope()
 
-    // Estado da tela. `remember` guarda entre recomposições; muda de valor → a tela redesenha.
-    var lente by remember { mutableStateOf(CameraSelector.LENS_FACING_BACK) }
-    var flash by remember { mutableStateOf(ImageCapture.FLASH_MODE_OFF) }
-    var ultimaFoto by remember { mutableStateOf<Uri?>(null) }
+    // ---- estado (remember = sobrevive à recomposição; mudou = redesenha) ----
+    var modo by remember { mutableStateOf(Modo.FOTO) }
+    var lente by remember { mutableIntStateOf(CameraSelector.LENS_FACING_BACK) }
+    var flash by remember { mutableIntStateOf(ImageCapture.FLASH_MODE_AUTO) }
+    var timer by remember { mutableIntStateOf(0) }            // 0, 3 ou 10 segundos
+    var proporcao by remember { mutableIntStateOf(AspectRatio.RATIO_4_3) }
+    var grade by remember { mutableStateOf(true) }
+    var nivel by remember { mutableStateOf(false) }
+    var gaveta by remember { mutableStateOf(false) }
+    var ultima by remember { mutableStateOf<Uri?>(null) }
     var zoom by remember { mutableStateOf(1f) }
     var camera by remember { mutableStateOf<Camera?>(null) }
-    var capturando by remember { mutableStateOf(false) }
+    var ocupado by remember { mutableStateOf(false) }
+    var contagem by remember { mutableIntStateOf(0) }
+    var gravacao by remember { mutableStateOf<Recording?>(null) }
+    var segundosGravando by remember { mutableIntStateOf(0) }
+    val inclinacao by lembrarInclinacao(nivel)
 
-    // Objetos do CameraX que sobrevivem às recomposições.
+    // ---- objetos do CameraX ----
     val previewView = remember { PreviewView(contexto).apply { scaleType = PreviewView.ScaleType.FILL_CENTER } }
-    val imageCapture = remember {
-        ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).build()
+    val imageCapture = remember(proporcao) {
+        @Suppress("DEPRECATION")
+        ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY).setTargetAspectRatio(proporcao).build()
     }
+    val videoCapture = remember {
+        VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HIGHEST)).build())
+    }
+    val pedirAudio = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
-    // Miniatura inicial: a última foto que já existir na pasta do app.
-    LaunchedEffect(Unit) { ultimaFoto = Fotos.listar(contexto, limite = 1).firstOrNull() }
+    LaunchedEffect(Unit) { ultima = Fotos.listar(contexto, limite = 1).firstOrNull()?.uri }
 
-    // (Re)liga a câmera sempre que a lente muda. O provider é único por processo.
-    LaunchedEffect(lente) {
+    // (Re)liga a câmera quando muda lente, modo ou proporção.
+    LaunchedEffect(lente, modo, proporcao) {
         val provider = ProcessCameraProvider.getInstance(contexto).get()
-        val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+        @Suppress("DEPRECATION")
+        val preview = Preview.Builder().setTargetAspectRatio(proporcao).build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
         val seletor = CameraSelector.Builder().requireLensFacing(lente).build()
         provider.unbindAll()
-        camera = runCatching { provider.bindToLifecycle(dono, seletor, preview, imageCapture) }
-            .onFailure { Toast.makeText(contexto, "Não consegui abrir a câmera: ${it.message}", Toast.LENGTH_LONG).show() }
-            .getOrNull()
+        camera = runCatching {
+            if (modo == Modo.VIDEO) provider.bindToLifecycle(dono, seletor, preview, videoCapture)
+            else provider.bindToLifecycle(dono, seletor, preview, imageCapture)
+        }.onFailure { Toast.makeText(contexto, "Não consegui abrir a câmera: ${it.message}", Toast.LENGTH_LONG).show() }.getOrNull()
         zoom = 1f
+        camera?.cameraControl?.setZoomRatio(1f)
     }
     LaunchedEffect(flash) { imageCapture.flashMode = flash }
+    LaunchedEffect(gravacao) { segundosGravando = 0; while (gravacao != null) { delay(1000); segundosGravando++ } }
+
+    fun aplicaZoom(alvo: Float) {
+        val cam = camera ?: return
+        val estado = cam.cameraInfo.zoomState.value ?: return
+        zoom = alvo.coerceIn(estado.minZoomRatio, estado.maxZoomRatio)
+        cam.cameraControl.setZoomRatio(zoom)
+    }
+
+    fun tiraFoto() {
+        ocupado = true
+        val saida = ImageCapture.OutputFileOptions.Builder(contexto.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Fotos.novaEntrada()).build()
+        imageCapture.takePicture(saida, ContextCompat.getMainExecutor(contexto), object : ImageCapture.OnImageSavedCallback {
+            override fun onImageSaved(r: ImageCapture.OutputFileResults) { ocupado = false; ultima = r.savedUri }
+            override fun onError(e: ImageCaptureException) { ocupado = false; Toast.makeText(contexto, "Falhou: ${e.message}", Toast.LENGTH_LONG).show() }
+        })
+    }
+
+    fun disparar() {
+        if (ocupado) return
+        if (modo == Modo.VIDEO) {
+            val atual = gravacao
+            if (atual != null) { atual.stop(); return }
+            val temAudio = ContextCompat.checkSelfPermission(contexto, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+            if (!temAudio) pedirAudio.launch(Manifest.permission.RECORD_AUDIO)
+            val opcoes = MediaStoreOutputOptions.Builder(contexto.contentResolver, MediaStore.Video.Media.EXTERNAL_CONTENT_URI).setContentValues(Fotos.novoVideo()).build()
+            var pendente = videoCapture.output.prepareRecording(contexto, opcoes)
+            if (temAudio) pendente = pendente.withAudioEnabled()
+            gravacao = pendente.start(ContextCompat.getMainExecutor(contexto)) { ev ->
+                if (ev is VideoRecordEvent.Finalize) {
+                    gravacao = null
+                    if (ev.hasError()) Toast.makeText(contexto, "Vídeo falhou (${ev.error})", Toast.LENGTH_LONG).show()
+                    else ultima = ev.outputResults.outputUri
+                }
+            }
+            return
+        }
+        if (timer > 0) {
+            escopo.launch {
+                contagem = timer
+                while (contagem > 0) { delay(1000); contagem-- }
+                tiraFoto()
+            }
+        } else tiraFoto()
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        AndroidView(
-            factory = { previewView },
-            modifier = Modifier
-                .fillMaxSize()
-                // pinça = zoom; a razão do gesto multiplica o zoom atual, limitada ao que a lente aceita
-                .pointerInput(camera) {
-                    detectTransformGestures { _, _, escala, _ ->
-                        val cam = camera ?: return@detectTransformGestures
-                        val estado = cam.cameraInfo.zoomState.value ?: return@detectTransformGestures
-                        zoom = (zoom * escala).coerceIn(estado.minZoomRatio, estado.maxZoomRatio)
-                        cam.cameraControl.setZoomRatio(zoom)
-                    }
+        Column(modifier = Modifier.fillMaxSize()) {
+            // ---- barra de cima ----
+            Row(
+                modifier = Modifier.fillMaxWidth().statusBarsPadding().height(56.dp).padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { flash = proximoFlash(flash) }) {
+                    Icon(iconeFlash(flash), contentDescription = "Flash", tint = if (flash == ImageCapture.FLASH_MODE_OFF) Color.White else Amarelo)
                 }
-                // toque = foco e exposição naquele ponto
-                .pointerInput(camera) {
-                    detectTapGestures { toque ->
-                        val cam = camera ?: return@detectTapGestures
-                        val ponto = previewView.meteringPointFactory.createPoint(toque.x, toque.y)
-                        cam.cameraControl.startFocusAndMetering(
-                            FocusMeteringAction.Builder(ponto, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE).build()
-                        )
-                    }
-                }
-        )
-
-        // Barra de cima: flash e troca de câmera.
-        Row(
-            modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            IconButton(onClick = {
-                flash = when (flash) {
-                    ImageCapture.FLASH_MODE_OFF -> ImageCapture.FLASH_MODE_AUTO
-                    ImageCapture.FLASH_MODE_AUTO -> ImageCapture.FLASH_MODE_ON
-                    else -> ImageCapture.FLASH_MODE_OFF
-                }
-            }) {
-                Icon(
-                    when (flash) {
-                        ImageCapture.FLASH_MODE_AUTO -> Icons.Filled.FlashAuto
-                        ImageCapture.FLASH_MODE_ON -> Icons.Filled.FlashOn
-                        else -> Icons.Filled.FlashOff
-                    },
-                    contentDescription = "Flash", tint = Color.White
-                )
+                Box(
+                    modifier = Modifier.size(34.dp).clip(CircleShape).background(Color(0x33FFFFFF)).clickable { gaveta = true },
+                    contentAlignment = Alignment.Center
+                ) { Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Mais ajustes", tint = Color.White) }
+                IconButton(onClick = { gaveta = true }) { Icon(Icons.Filled.Settings, contentDescription = "Ajustes", tint = Color.White) }
             }
-            Text(
-                text = if (zoom >= 1.05f) String.format("%.1fx", zoom) else "",
-                color = Color.White, modifier = Modifier.padding(top = 12.dp)
-            )
-            IconButton(onClick = {
-                lente = if (lente == CameraSelector.LENS_FACING_BACK) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
-            }) {
-                Icon(Icons.Filled.Cameraswitch, contentDescription = "Trocar câmera", tint = Color.White)
+
+            // ---- visualização (proporção fixa, como no desenho) ----
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(if (proporcao == AspectRatio.RATIO_16_9) 9f / 16f else 3f / 4f)
+                    .background(Color.Black)
+                    .pointerInput(camera) { detectTransformGestures { _, _, escala, _ -> aplicaZoom(zoom * escala) } }
+                    .pointerInput(camera) {
+                        detectTapGestures { toque ->
+                            val cam = camera ?: return@detectTapGestures
+                            val ponto = previewView.meteringPointFactory.createPoint(toque.x, toque.y)
+                            cam.cameraControl.startFocusAndMetering(FocusMeteringAction.Builder(ponto, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE).build())
+                        }
+                    }
+            ) {
+                AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+                if (grade) Canvas(modifier = Modifier.fillMaxSize()) {
+                    val cor = Color.White.copy(alpha = 0.55f)
+                    for (i in 1..2) {
+                        drawLine(cor, Offset(size.width * i / 3, 0f), Offset(size.width * i / 3, size.height), 1.5f)
+                        drawLine(cor, Offset(0f, size.height * i / 3), Offset(size.width, size.height * i / 3), 1.5f)
+                    }
+                }
+                if (nivel) {
+                    val nivelado = abs(inclinacao) < 1.5f
+                    Box(modifier = Modifier.align(Alignment.Center).width(140.dp).height(2.dp).rotate(-inclinacao).background(if (nivelado) Amarelo else Color.White.copy(alpha = 0.8f)))
+                }
+                if (contagem > 0) Text("$contagem", color = Color.White, fontSize = 96.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center))
+                if (gravacao != null) {
+                    Row(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xCCFF3B30)).padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(String.format("%02d:%02d", segundosGravando / 60, segundosGravando % 60), color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+                // chips de zoom
+                Row(modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp).clip(RoundedCornerShape(24.dp)).background(Color(0x66000000)).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    val minimo = camera?.cameraInfo?.zoomState?.value?.minZoomRatio ?: 1f
+                    val opcoes = buildList { if (minimo < 0.99f) add(0.5f); add(1f); add(2f) }
+                    opcoes.forEach { alvo ->
+                        val selecionado = abs(zoom - alvo) < 0.15f
+                        Box(
+                            modifier = Modifier.size(if (selecionado) 38.dp else 32.dp).clip(CircleShape).background(if (selecionado) Color(0x99000000) else Color.Transparent).clickable { aplicaZoom(alvo) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (selecionado) String.format("%.1fx", zoom).replace(".0x", "x") else (if (alvo == 0.5f) "0,5" else alvo.toInt().toString()),
+                                color = if (selecionado) Amarelo else Color.White, fontSize = if (selecionado) 13.sp else 12.sp, fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+            }
+
+            // ---- modos ----
+            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalArrangement = Arrangement.Center) {
+                Modo.entries.forEach { m ->
+                    Text(
+                        m.rotulo, color = if (m == modo) Amarelo else Color(0xFFBDBDBD), fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 12.dp).clickable {
+                            if (gravacao != null) return@clickable
+                            if (m.pronto) modo = m else Toast.makeText(contexto, "${m.rotulo}: em breve", Toast.LENGTH_SHORT).show()
+                        }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.weight(1f))
+
+            // ---- miniatura, obturador, trocar câmera ----
+            Row(
+                modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 28.dp, vertical = 18.dp),
+                horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(modifier = Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF222222)).clickable(onClick = abrirGaleria)) {
+                    if (ultima != null) AsyncImage(model = ultima, contentDescription = "Última", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                }
+                val gravando = gravacao != null
+                Box(
+                    modifier = Modifier.size(80.dp).clip(CircleShape).border(3.dp, Color.White, CircleShape).padding(6.dp)
+                        .clip(if (gravando) RoundedCornerShape(10.dp) else CircleShape)
+                        .background(when { gravando -> Color(0xFFFF3B30); modo == Modo.VIDEO -> Color(0xFFFF3B30); ocupado -> Color.Gray; else -> Color.White })
+                        .clickable { disparar() }
+                )
+                Box(modifier = Modifier.size(52.dp).clip(CircleShape).background(Color(0x33FFFFFF)).clickable {
+                    if (gravacao == null) lente = if (lente == CameraSelector.LENS_FACING_BACK) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
+                }, contentAlignment = Alignment.Center) {
+                    Icon(Icons.Filled.Cameraswitch, contentDescription = "Trocar câmera", tint = Color.White)
+                }
             }
         }
 
-        // Barra de baixo: miniatura, obturador.
-        Row(
-            modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).navigationBarsPadding().padding(24.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .border(2.dp, Color.White, RoundedCornerShape(10.dp))
-                    .clickable(onClick = abrirGaleria),
-                contentAlignment = Alignment.Center
-            ) {
-                if (ultimaFoto != null) {
-                    AsyncImage(model = ultimaFoto, contentDescription = "Última foto", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        // ---- gaveta de ajustes ----
+        if (gaveta) {
+            val estadoGaveta = rememberModalBottomSheetState()
+            ModalBottomSheet(onDismissRequest = { gaveta = false }, sheetState = estadoGaveta, containerColor = Color(0xFF1C1C1E)) {
+                LazyVerticalGrid(columns = GridCells.Fixed(4), modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp), horizontalArrangement = Arrangement.Center) {
+                    item { Ajuste(iconeFlash(flash), "Flash", rotuloFlash(flash), flash != ImageCapture.FLASH_MODE_OFF) { flash = proximoFlash(flash) } }
+                    item { Ajuste(Icons.Filled.Timer, "Timer", if (timer == 0) "Desativado" else "${timer} s", timer > 0) { timer = when (timer) { 0 -> 3; 3 -> 10; else -> 0 } } }
+                    item { Ajuste(Icons.Filled.AspectRatio, "Proporção", if (proporcao == AspectRatio.RATIO_16_9) "16:9" else "4:3", true) { proporcao = if (proporcao == AspectRatio.RATIO_16_9) AspectRatio.RATIO_4_3 else AspectRatio.RATIO_16_9 } }
+                    item { Ajuste(Icons.Filled.HdrAuto, "HDR", "Auto", false) { Toast.makeText(contexto, "HDR: o aparelho decide (CameraX Extensions em breve)", Toast.LENGTH_SHORT).show() } }
+                    item { Ajuste(Icons.Filled.Grid3x3, "Grade", if (grade) "Ativado" else "Desativado", grade) { grade = !grade } }
+                    item { Ajuste(Icons.Filled.Straighten, "Nível", if (nivel) "Ativado" else "Desativado", nivel) { nivel = !nivel } }
+                    item { Ajuste(Icons.Filled.Tonality, "Filtro", "Nenhum", false) { Toast.makeText(contexto, "Filtros: em breve", Toast.LENGTH_SHORT).show() } }
+                    item { Ajuste(Icons.Filled.MoreHoriz, "Mais", "", false) { gaveta = false } }
                 }
             }
-
-            Box(
-                modifier = Modifier
-                    .size(78.dp)
-                    .clip(CircleShape)
-                    .background(if (capturando) Color.Gray else Color.White)
-                    .border(4.dp, Color(0xFFBDBDBD), CircleShape)
-                    .clickable(enabled = !capturando) {
-                        capturando = true
-                        val saida = ImageCapture.OutputFileOptions.Builder(
-                            contexto.contentResolver,
-                            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                            Fotos.novaEntrada()
-                        ).build()
-                        imageCapture.takePicture(saida, ContextCompat.getMainExecutor(contexto), object : ImageCapture.OnImageSavedCallback {
-                            override fun onImageSaved(r: ImageCapture.OutputFileResults) {
-                                capturando = false
-                                ultimaFoto = r.savedUri
-                                Toast.makeText(contexto, "Foto salva em Imagens/${Fotos.PASTA}", Toast.LENGTH_SHORT).show()
-                            }
-                            override fun onError(e: ImageCaptureException) {
-                                capturando = false
-                                Toast.makeText(contexto, "Falhou: ${e.message}", Toast.LENGTH_LONG).show()
-                            }
-                        })
-                    }
-            )
-
-            // espaço simétrico à miniatura, para o obturador ficar no centro
-            Box(modifier = Modifier.size(56.dp))
         }
     }
 }
+
+@Composable
+private fun Ajuste(icone: ImageVector, titulo: String, valor: String, ativo: Boolean, aoTocar: () -> Unit) {
+    Column(modifier = Modifier.padding(vertical = 14.dp).clickable(onClick = aoTocar), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(modifier = Modifier.size(58.dp).clip(CircleShape).background(if (ativo) Amarelo else Color(0xFF2C2C2E)), contentAlignment = Alignment.Center) {
+            Icon(icone, contentDescription = titulo, tint = if (ativo) Color.Black else Color.White)
+        }
+        Text(titulo, color = Color.White, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
+        Text(valor, color = Color(0xFF9E9E9E), fontSize = 11.sp)
+    }
+}
+
+private fun proximoFlash(f: Int) = when (f) {
+    ImageCapture.FLASH_MODE_OFF -> ImageCapture.FLASH_MODE_AUTO
+    ImageCapture.FLASH_MODE_AUTO -> ImageCapture.FLASH_MODE_ON
+    else -> ImageCapture.FLASH_MODE_OFF
+}
+private fun rotuloFlash(f: Int) = when (f) { ImageCapture.FLASH_MODE_AUTO -> "Auto"; ImageCapture.FLASH_MODE_ON -> "Ligado"; else -> "Desligado" }
+private fun iconeFlash(f: Int) = when (f) { ImageCapture.FLASH_MODE_AUTO -> Icons.Filled.FlashAuto; ImageCapture.FLASH_MODE_ON -> Icons.Filled.FlashOn; else -> Icons.Filled.FlashOff }

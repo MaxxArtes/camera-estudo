@@ -3,19 +3,26 @@
 App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
 
 ## O que faz
-- Visualização ao vivo, foto com um toque, salva em **Imagens/CameraEstudo** (aparece na galeria do celular).
-- Troca entre câmera traseira e frontal; flash desligado, automático e ligado.
-- Zoom por pinça (mostra o fator) e foco/exposição por toque no ponto.
-- Galeria própria: grade das fotos tiradas, tela cheia, compartilhar e apagar.
-- Pede a permissão de câmera na primeira abertura e explica o que fazer se for negada.
+- Desenho no estilo do app de câmera do iPhone: barra de cima (flash, gaveta, ajustes), visualização
+  com **grade** e **nível de bolha** (acelerômetro), **chips de zoom** 0,5x / 1x / 2x, linha de modos,
+  miniatura, obturador e trocar câmera.
+- Modos **Foto** e **Vídeo** funcionando (vídeo com áudio, se a permissão for dada); Lenta, Retrato e
+  Mais marcados como "em breve".
+- Gaveta de ajustes: flash (desligado/auto/ligado), **timer** (3 s / 10 s), **proporção** 4:3 ou 16:9,
+  grade, nível; HDR e filtros são marcadores para estudo futuro.
+- Zoom por pinça e foco/exposição por toque.
+- Fotos em **Imagens/CameraEstudo**, vídeos em **Filmes/CameraEstudo** (aparecem na galeria do celular).
+- Galeria própria: grade de fotos e vídeos, tela cheia com **Compartilhar, Editar, Informações e
+  Favorito**, apagar; vídeo abre no player do sistema.
 
 ## Como o código está organizado (`app/src/main/java/br/maxymus/cameraestudo`)
 | Arquivo | Papel |
 |---|---|
 | `MainActivity.kt` | permissão de câmera e navegação entre as duas telas |
-| `CameraScreen.kt` | CameraX: `Preview` + `ImageCapture` amarrados ao ciclo de vida; gestos de zoom e foco; captura |
-| `GaleriaScreen.kt` | grade das fotos, tela cheia, compartilhar, apagar |
-| `Fotos.kt` | MediaStore: onde salvar e como listar/apagar |
+| `CameraScreen.kt` | CameraX: `Preview` + `ImageCapture` (foto) ou `Preview` + `VideoCapture` (vídeo); gestos; grade; nível; gaveta de ajustes |
+| `GaleriaScreen.kt` | grade de fotos e vídeos, tela cheia com compartilhar/editar/informações/favorito, apagar |
+| `Fotos.kt` | MediaStore: onde salvar, listar, apagar; favoritos locais |
+| `Nivel.kt` | acelerômetro → ângulo do nível de bolha |
 
 CameraX é a camada do Google em cima do Camera2: você declara os "casos de uso" e ele cuida de
 abrir, configurar e fechar a câmera. Para estudar o Camera2 puro depois, o lugar de trocar é só
