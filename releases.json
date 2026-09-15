@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.27",
+      "build": 31,
+      "tag": "v0.27-build31",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.27-build31.apk",
+      "mudou": [
+        "Galeria: selecionar tudo, apagar selecionadas (com confirmação), zoom por pinça e toque duplo; Retrato: motivo da falha na telemetria e máscara em tamanho real"
+      ]
+    },
+    {
       "versao": "0.26",
       "build": 30,
       "tag": "v0.26-build30",
@@ -235,11 +244,11 @@
       ]
     }
   ],
-  "versionName": "0.26",
-  "versionCode": 26,
-  "build": 30,
+  "versionName": "0.27",
+  "versionCode": 27,
+  "build": 31,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.26-build30.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.27-build31.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T23:29:15Z"
+  "publicadoEm": "2026-09-15T23:35:54Z"
 }
