@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.14",
+      "build": 17,
+      "tag": "v0.14-build17",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.14-build17.apk",
+      "mudou": [
+        "Documento dentro do app: detecção da folha, recorte com perspectiva e realce, sem a tela do Google"
+      ]
+    },
+    {
       "versao": "0.13",
       "build": 16,
       "tag": "v0.13-build16",
@@ -109,11 +118,11 @@
       ]
     }
   ],
-  "versionName": "0.13",
-  "versionCode": 13,
-  "build": 16,
+  "versionName": "0.14",
+  "versionCode": 14,
+  "build": 17,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.13-build16.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.14-build17.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T20:43:50Z"
+  "publicadoEm": "2026-09-15T20:53:00Z"
 }
