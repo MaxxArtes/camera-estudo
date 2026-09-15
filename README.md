@@ -15,6 +15,11 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
   `Lenta.kt`) e **Macro** (escolhe a lente traseira que foca mais perto e trava o foco no mínimo) e **Tela**
   (scanner de monitor/celular: retângulo iluminado, sem flash, antibanding, recorte com encaixe
   16:9/16:10/4:3, redução de moiré por reamostragem, realce suave que respeita fundo escuro).
+- Documento e Tela param antes de gravar: a prévia aparece com os **4 cantos como alças** (lupa 2,5x no canto
+  arrastado, só aceita quadrilátero convexo), e o usuário escolhe **Usar**, **Sem recorte** ou **Descartar**
+  (`EditorQuad.kt`; desligável na gaveta, "Recorte: Automático"). Cada digitalização grava uma linha em
+  `files/scanner.jsonl` (luz, candidato, quadro detectado x usado, quanto moveu); "Registro" na gaveta envia o arquivo
+  (`RegistroScanner.kt`) — é a base para ajustar os limiares fora do app.
 - Gaveta de ajustes: flash (desligado/auto/ligado), **timer** (3 s / 10 s), **proporção** 4:3 ou 16:9,
   grade, nível; HDR e filtros são marcadores para estudo futuro.
 - Zoom por pinça, foco/exposição por toque, **deslizar para o lado troca o modo** e **deslizar para cima abre os ajustes**.
@@ -33,7 +38,9 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
 | `Atualizador.kt` | lê `releases.json`, compara a versão, baixa e instala a nova |
 | `Retrato.kt` | retrato por software: máscara do ML Kit + fundo desfocado |
 | `Lenta.kt` | estica os tempos dos quadros do vídeo (câmera lenta de estudo) |
-| `Documento.kt` | retinex simplificado, Otsu ou bordas (Sobel), placar do quadrilátero, setPolyToPoly, realce |
+| `Documento.kt` | detectar (retinex, Otsu ou bordas, placar do quadrilátero) e aplicar (setPolyToPoly, realce) |
+| `EditorQuad.kt` | conferência dos cantos: alças, lupa, convexidade, Usar / Sem recorte / Descartar |
+| `RegistroScanner.kt` | uma linha JSON por digitalização; compartilhar pelo FileProvider |
 | `Pdf.kt` | PDF de várias páginas com o PdfDocument do Android (galeria: selecionar → PDF) |
 
 CameraX é a camada do Google em cima do Camera2: você declara os "casos de uso" e ele cuida de

@@ -27,8 +27,9 @@ import kotlin.math.min
  *        claro, onde só a borda da folha separa as duas.
  *     Cada candidato vira um quadrilátero pelos cantos extremos e recebe um placar (área, quanto
  *     do quadrilátero a mancha preenche, proporção). O melhor vence; sem candidato bom, sem recorte.
- *  3. Endireita a perspectiva com Matrix.setPolyToPoly (Android já sabe fazer).
- *  4. Realce final: fundo branco, contraste esticado por percentis.
+ *  3. O usuário confere os cantos (EditorQuad) — detectar() devolve a prévia e o quadrilátero, aplicar() grava.
+ *  4. Endireita a perspectiva com Matrix.setPolyToPoly (Android já sabe fazer).
+ *  5. Realce final: fundo branco, contraste esticado por percentis.
  */
 object Documento {
     private const val LADO_ANALISE = 640
@@ -54,51 +55,6 @@ object Documento {
             if (razao !in 0.3f..3.3f) return 0f
             return preenchimento * 0.6f + fracao * 0.4f
         }
-    }
-
-    /**
-     * Modo TELA (monitor, notebook, outro celular): a tela é o retângulo mais claro e uniforme da foto;
-     * não há sombra a tirar (a tela emite luz), o fundo pode ser escuro de propósito, e o inimigo é o
-     * moiré. Passos: detecção sem retinex (claro + bordas), recorte, reamostragem a 1400 px (mata a trama
-     * de alta frequência), realce só de contraste leve na luminância, sem clarear o fundo.
-     */
-    suspend fun processarTela(contexto: Context, uri: Uri): Resultado? = withContext(Dispatchers.Default) {
-        runCatching {
-            val foto = decodeReduzido(contexto, uri, 2400) ?: return@runCatching null
-            val esc = LADO_ANALISE.toFloat() / max(foto.width, foto.height)
-            val pw = max(1, (foto.width * esc).toInt()); val ph = max(1, (foto.height * esc).toInt())
-            val pequena = Bitmap.createScaledBitmap(foto, pw, ph, true)
-            // suaviza antes do limiar (o moiré quebra a mancha em tiras): reduz a 1/3 e volta
-            val suave = Bitmap.createScaledBitmap(Bitmap.createScaledBitmap(pequena, max(1, pw / 3), max(1, ph / 3), true), pw, ph, true)
-            val px = IntArray(pw * ph).also { suave.getPixels(it, 0, pw, 0, 0, pw, ph) }; pequena.recycle(); suave.recycle()
-            val cinza = IntArray(pw * ph) { luma(px[it]) }
-            val lim = otsu(cinza)
-            // monitor = maior mancha clara, com fechamento (dilata+erode 6 px) para o texto não furar a mancha
-            val mascara = fecha(BooleanArray(pw * ph) { cinza[it] > lim }, pw, ph, 6)
-            val melhor = maiorMancha(mascara, pw, ph, "monitor")?.takeIf { it.placar(pw * ph) > 0f }
-            var saida: Bitmap = foto; var recortou = false
-            if (melhor != null) {
-                val f = 1f / esc
-                val tl = melhor.tl.map { it * f }; val tr = melhor.tr.map { it * f }; val br = melhor.br.map { it * f }; val bl = melhor.bl.map { it * f }
-                var larg = max(hypot(tr[0] - tl[0], tr[1] - tl[1]), hypot(br[0] - bl[0], br[1] - bl[1])).toInt().coerceIn(200, 6000)
-                var alt = max(hypot(bl[0] - tl[0], bl[1] - tl[1]), hypot(br[0] - tr[0], br[1] - tr[1])).toInt().coerceIn(200, 6000)
-                val razao = larg.toFloat() / alt
-                for (tela in floatArrayOf(16f / 9f, 9f / 16f, 16f / 10f, 10f / 16f, 4f / 3f, 3f / 4f)) if (abs(razao / tela - 1f) < 0.1f) { if (tela > 1f) larg = (alt * tela).toInt() else alt = (larg / tela).toInt(); break }
-                val escS = min(1f, 1400f / max(larg, alt))       // 1400 px: reamostrar aqui já derruba boa parte do moiré
-                val w = (larg * escS).toInt(); val h = (alt * escS).toInt()
-                val m = Matrix()
-                if (m.setPolyToPoly(floatArrayOf(tl[0], tl[1], tr[0], tr[1], br[0], br[1], bl[0], bl[1]), 0, floatArrayOf(0f, 0f, w.toFloat(), 0f, w.toFloat(), h.toFloat(), 0f, h.toFloat()), 0, 4)) {
-                    val plano = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                    Canvas(plano).drawBitmap(foto, m, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
-                    saida = plano; recortou = true; foto.recycle()
-                }
-            }
-            val semMoire = suavizaMoire(saida); if (semMoire !== saida) saida.recycle()
-            val realcada = realcaTela(semMoire); if (realcada !== semMoire) semMoire.recycle()
-            contexto.contentResolver.openOutputStream(uri, "wt")?.use { realcada.compress(Bitmap.CompressFormat.JPEG, 92, it) } ?: return@runCatching null
-            realcada.recycle()
-            Resultado(recortou, melhor?.metodo ?: "nenhum")
-        }.getOrNull()
     }
 
     /**
@@ -172,55 +128,118 @@ object Documento {
         return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
     }
 
-    suspend fun processar(contexto: Context, uri: Uri): Resultado? = withContext(Dispatchers.Default) {
+    /** Cantos normalizados (0..1 da foto já girada pelo EXIF), ordem tl, tr, br, bl; null = nada achado. */
+    class Deteccao(val quad: FloatArray?, val metodo: String, val previa: Bitmap, val brilho: Int, val contraste: Int, val fracClara: Int)
+
+    /**
+     * Passo 1: acha o quadrilátero e devolve uma prévia (até 1200 px) para o usuário conferir os cantos.
+     * Não grava nada; quem grava é aplicar().
+     */
+    suspend fun detectar(contexto: Context, uri: Uri, tela: Boolean): Deteccao? = withContext(Dispatchers.Default) {
+        runCatching {
+            val previa = decodeReduzido(contexto, uri, 1200) ?: return@runCatching null
+            val esc = LADO_ANALISE.toFloat() / max(previa.width, previa.height)
+            val pw = max(1, (previa.width * esc).toInt()); val ph = max(1, (previa.height * esc).toInt())
+            val pequena = Bitmap.createScaledBitmap(previa, pw, ph, true)
+            val (melhor, estat) = if (tela) analisaTela(pequena) else analisaFolha(pequena)
+            pequena.recycle()
+            val quad = melhor?.let { q -> floatArrayOf(q.tl[0] / pw, q.tl[1] / ph, q.tr[0] / pw, q.tr[1] / ph, q.br[0] / pw, q.br[1] / ph, q.bl[0] / pw, q.bl[1] / ph) }
+            Deteccao(quad, melhor?.metodo ?: "nenhum", previa, estat[0], estat[1], estat[2])
+        }.getOrNull()
+    }
+
+    /** Folha: retinex por divisão pelo fundo, Otsu e três candidatos (mancha clara, mancha escura, região lisa por bordas). */
+    private fun analisaFolha(pequena: Bitmap): Pair<Quad?, IntArray> {
+        val pw = pequena.width; val ph = pequena.height
+        val px = IntArray(pw * ph).also { pequena.getPixels(it, 0, pw, 0, 0, pw, ph) }
+        val cinza = IntArray(pw * ph) { luma(px[it]) }
+        val fundo = fundoBorrado(pequena, 40)
+        val norm = IntArray(pw * ph) { (cinza[it] * 200 / max(1, luma(fundo[it]))).coerceIn(0, 255) }   // 200 ≈ "branco" após dividir
+        val candidatos = mutableListOf<Quad>()
+        val lim = otsu(norm)
+        maiorMancha(BooleanArray(pw * ph) { norm[it] > lim }, pw, ph, "claro")?.let { candidatos += it }
+        maiorMancha(BooleanArray(pw * ph) { norm[it] <= lim }, pw, ph, "escuro")?.let { candidatos += it }
+        maiorMancha(regiaoLisa(cinza, pw, ph), pw, ph, "bordas")?.let { candidatos += it }
+        val melhor = candidatos.maxByOrNull { it.placar(pw * ph) }?.takeIf { it.placar(pw * ph) > 0f }
+        return melhor to estatisticas(cinza, lim)
+    }
+
+    /**
+     * Tela (monitor, notebook, outro celular): a tela é o retângulo mais claro e uniforme; sem retinex (ela emite luz).
+     * Suaviza antes do limiar (o moiré quebra a mancha em tiras) e fecha a máscara (6 px) para o texto não furar.
+     */
+    private fun analisaTela(pequena: Bitmap): Pair<Quad?, IntArray> {
+        val pw = pequena.width; val ph = pequena.height
+        val terco = Bitmap.createScaledBitmap(pequena, max(1, pw / 3), max(1, ph / 3), true)
+        val suave = Bitmap.createScaledBitmap(terco, pw, ph, true)
+        val px = IntArray(pw * ph).also { suave.getPixels(it, 0, pw, 0, 0, pw, ph) }
+        terco.recycle(); if (suave !== terco) suave.recycle()
+        val cinza = IntArray(pw * ph) { luma(px[it]) }
+        val lim = otsu(cinza)
+        val mascara = fecha(BooleanArray(pw * ph) { cinza[it] > lim }, pw, ph, 6)
+        val melhor = maiorMancha(mascara, pw, ph, "monitor")?.takeIf { it.placar(pw * ph) > 0f }
+        return melhor to estatisticas(cinza, lim)
+    }
+
+    /** Brilho médio, contraste (p95 − p5) e fração clara em %: o registro do scanner agrupa as condições de luz por eles. */
+    private fun estatisticas(cinza: IntArray, lim: Int): IntArray {
+        val hist = IntArray(256); var soma = 0L; var claros = 0
+        for (v in cinza) { hist[v]++; soma += v; if (v > lim) claros++ }
+        val n = cinza.size; var acc = 0; var p5 = 0; var p95 = 255
+        for (i in 0..255) { acc += hist[i]; if (acc >= n * 0.05) { p5 = i; break } }
+        acc = 0; for (i in 255 downTo 0) { acc += hist[i]; if (acc >= n * 0.05) { p95 = i; break } }
+        return intArrayOf((soma / n).toInt(), p95 - p5, claros * 100 / n)
+    }
+
+    /**
+     * Passo 2: recorta pelo quadrilátero (normalizado; null = sem recorte), realça e SOBRESCREVE o JPEG.
+     * Lado de saída = MAIOR dos dois lados opostos (o menor é o que a perspectiva encurtou); razão perto de
+     * papel (A4/Carta) ou de tela (16:9, 16:10, 4:3) é encaixada.
+     */
+    suspend fun aplicar(contexto: Context, uri: Uri, quad: FloatArray?, tela: Boolean, metodo: String): Resultado? = withContext(Dispatchers.Default) {
         runCatching {
             val foto = decodeReduzido(contexto, uri, 2400) ?: return@runCatching null
-
-            // 1) pequena, cinza, iluminação normalizada
-            val esc = LADO_ANALISE.toFloat() / max(foto.width, foto.height)
-            val pw = max(1, (foto.width * esc).toInt()); val ph = max(1, (foto.height * esc).toInt())
-            val pequena = Bitmap.createScaledBitmap(foto, pw, ph, true)
-            val px = IntArray(pw * ph).also { pequena.getPixels(it, 0, pw, 0, 0, pw, ph) }
-            val cinza = IntArray(pw * ph) { luma(px[it]) }
-            val fundo = fundoBorrado(pequena, 40)
-            pequena.recycle()
-            val norm = IntArray(pw * ph) { (cinza[it] * 200 / max(1, luma(fundo[it]))).coerceIn(0, 255) }   // 200 ≈ "branco" após dividir
-
-            // 2) candidatos: folha clara, folha ESCURA (recibo amarelado em mesa branca — apontado pelo agy) e região lisa por bordas
-            val candidatos = mutableListOf<Quad>()
-            val lim = otsu(norm)
-            maiorMancha(BooleanArray(pw * ph) { norm[it] > lim }, pw, ph, "claro")?.let { candidatos += it }
-            maiorMancha(BooleanArray(pw * ph) { norm[it] <= lim }, pw, ph, "escuro")?.let { candidatos += it }
-            maiorMancha(regiaoLisa(cinza, pw, ph), pw, ph, "bordas")?.let { candidatos += it }
-            val melhor = candidatos.maxByOrNull { it.placar(pw * ph) }?.takeIf { it.placar(pw * ph) > 0f }
-
-            // 3) recorte com perspectiva
             var saida: Bitmap = foto; var recortou = false
-            if (melhor != null) {
-                val f = 1f / esc
-                val tl = melhor.tl.map { it * f }; val tr = melhor.tr.map { it * f }; val br = melhor.br.map { it * f }; val bl = melhor.bl.map { it * f }
-                // lado = MAIOR dos dois opostos (o menor é o que a perspectiva encurtou); se a razão fica perto de A4/Carta, encaixa
-                var larg = max(hypot(tr[0] - tl[0], tr[1] - tl[1]), hypot(br[0] - bl[0], br[1] - bl[1])).toInt().coerceIn(200, 6000)
-                var alt = max(hypot(bl[0] - tl[0], bl[1] - tl[1]), hypot(br[0] - tr[0], br[1] - tr[1])).toInt().coerceIn(200, 6000)
+            if (quad != null && convexo(quad)) {
+                val p = FloatArray(8) { quad[it] * (if (it % 2 == 0) foto.width else foto.height) }
+                var larg = max(hypot(p[2] - p[0], p[3] - p[1]), hypot(p[4] - p[6], p[5] - p[7])).toInt().coerceIn(200, 6000)
+                var alt = max(hypot(p[6] - p[0], p[7] - p[1]), hypot(p[4] - p[2], p[5] - p[3])).toInt().coerceIn(200, 6000)
                 val razao = larg.toFloat() / alt
-                for (papel in floatArrayOf(1.414f, 1f / 1.414f, 1.294f, 1f / 1.294f)) if (abs(razao / papel - 1f) < 0.12f) { if (papel > 1f) larg = (alt * papel).toInt() else alt = (larg / papel).toInt(); break }
-                val escS = min(1f, LADO_SAIDA.toFloat() / max(larg, alt))
+                val padroes = if (tela) floatArrayOf(16f / 9f, 9f / 16f, 16f / 10f, 10f / 16f, 4f / 3f, 3f / 4f) else floatArrayOf(1.414f, 1f / 1.414f, 1.294f, 1f / 1.294f)
+                val tolerancia = if (tela) 0.1f else 0.12f
+                for (r in padroes) if (abs(razao / r - 1f) < tolerancia) { if (r > 1f) larg = (alt * r).toInt() else alt = (larg / r).toInt(); break }
+                val escS = min(1f, (if (tela) 1400f else LADO_SAIDA.toFloat()) / max(larg, alt))   // 1400 px na tela já derruba boa parte do moiré
                 val w = (larg * escS).toInt(); val h = (alt * escS).toInt()
                 val m = Matrix()
-                if (m.setPolyToPoly(floatArrayOf(tl[0], tl[1], tr[0], tr[1], br[0], br[1], bl[0], bl[1]), 0, floatArrayOf(0f, 0f, w.toFloat(), 0f, w.toFloat(), h.toFloat(), 0f, h.toFloat()), 0, 4)) {
+                if (m.setPolyToPoly(p, 0, floatArrayOf(0f, 0f, w.toFloat(), 0f, w.toFloat(), h.toFloat(), 0f, h.toFloat()), 0, 4)) {
                     val plano = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                     Canvas(plano).drawBitmap(foto, m, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
                     saida = plano; recortou = true; foto.recycle()
                 }
             }
-
-            // 4) realce: sombras fora, fundo branco, contraste
-            val realcada = realca(saida)
-            if (realcada !== saida) saida.recycle()
-            contexto.contentResolver.openOutputStream(uri, "wt")?.use { realcada.compress(Bitmap.CompressFormat.JPEG, 92, it) } ?: return@runCatching null
-            realcada.recycle()
-            Resultado(recortou, melhor?.metodo ?: "nenhum")
+            val pronta = if (tela) {
+                val semMoire = suavizaMoire(saida); if (semMoire !== saida) saida.recycle()
+                val r = realcaTela(semMoire); if (r !== semMoire) semMoire.recycle(); r
+            } else {
+                val r = realca(saida); if (r !== saida) saida.recycle(); r
+            }
+            contexto.contentResolver.openOutputStream(uri, "wt")?.use { pronta.compress(Bitmap.CompressFormat.JPEG, 92, it) } ?: return@runCatching null
+            pronta.recycle()
+            Resultado(recortou, if (recortou) metodo else "nenhum")
         }.getOrNull()
+    }
+
+    /**
+     * Os 4 cantos (tl, tr, br, bl) formam um quadrilátero convexo no sentido horário da tela: todos os
+     * produtos vetoriais positivos. Rejeita "gravata borboleta" e cantos trocados de lado (saída espelhada).
+     */
+    fun convexo(q: FloatArray): Boolean {
+        for (i in 0 until 4) {
+            val a = i * 2; val b = ((i + 1) % 4) * 2; val c = ((i + 2) % 4) * 2
+            val cruz = (q[b] - q[a]) * (q[c + 1] - q[b + 1]) - (q[b + 1] - q[a + 1]) * (q[c] - q[b])
+            if (cruz <= 1e-5f) return false
+        }
+        return true
     }
 
     private fun luma(c: Int) = ((c shr 16 and 255) * 30 + (c shr 8 and 255) * 59 + (c and 255) * 11) / 100

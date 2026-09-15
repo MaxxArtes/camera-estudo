@@ -64,6 +64,8 @@ import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.SlowMotionVideo
 import androidx.compose.material.icons.filled.Monitor
 import androidx.compose.material.icons.filled.Cameraswitch
+import androidx.compose.material.icons.filled.Crop
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.FlashAuto
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
@@ -172,6 +174,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var faixaTempo by remember { mutableStateOf(100_000L to 100_000_000L) }   // 1/10000 s a 1/10 s
     var focoMin by remember { mutableStateOf(0f) }                             // maior dioptria = foco mais perto
     var processandoDoc by remember { mutableStateOf(false) }
+    var conferir by remember { mutableStateOf(true) }            // Documento/Tela: abrir o editor de cantos antes de gravar
+    var edicao by remember { mutableStateOf<Edicao?>(null) }
     var processandoRetrato by remember { mutableStateOf(false) }
     val inclinacao by lembrarInclinacao(nivel)
     var novaVersao by remember { mutableStateOf<Atualizador.Versao?>(null) }
@@ -281,6 +285,19 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         cam.cameraControl.setZoomRatio(zoom)
     }
 
+    // Documento/Tela, passo 2: grava o recorte escolhido (quad null = só realce), registra e libera o botão
+    fun concluirDocumento(uri: Uri, d: Documento.Deteccao, tela: Boolean, quad: FloatArray?, conferido: Boolean) {
+        edicao = null; processandoDoc = true
+        escopo.launch {
+            val r = Documento.aplicar(contexto, uri, quad, tela, d.metodo)
+            RegistroScanner.anota(contexto, tela, d, quad, conferido, r)
+            d.previa.recycle()
+            processandoDoc = false; ocupado = false; ultima = uri
+            val alvo = if (tela) "tela" else "folha"
+            Toast.makeText(contexto, when { r == null -> "Não consegui tratar; salvei a foto."; r.recortou -> "${alvo.replaceFirstChar { it.uppercase() }} recortada (${r.metodo})."; else -> "Sem recorte; salvei a foto tratada." }, Toast.LENGTH_SHORT).show()
+        }
+    }
+
     fun tiraFoto() {
         ocupado = true
         val saida = ImageCapture.OutputFileOptions.Builder(contexto.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Fotos.novaEntrada()).build()
@@ -288,12 +305,16 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             override fun onImageSaved(r: ImageCapture.OutputFileResults) {
                 val uri = r.savedUri
                 if ((modo == Modo.DOCUMENTO || modo == Modo.TELA) && uri != null) {
+                    val tela = modo == Modo.TELA
                     processandoDoc = true
                     escopo.launch {
-                        val r = if (modo == Modo.TELA) Documento.processarTela(contexto, uri) else Documento.processar(contexto, uri)
-                        processandoDoc = false; ocupado = false; ultima = uri
-                        val alvo = if (modo == Modo.TELA) "tela" else "folha"
-                        Toast.makeText(contexto, when { r == null -> "Não consegui tratar; salvei a foto."; r.recortou -> "${alvo.replaceFirstChar { it.uppercase() }} recortada (${r.metodo})."; else -> "Não achei a $alvo; salvei a foto tratada." }, Toast.LENGTH_SHORT).show()
+                        val d = Documento.detectar(contexto, uri, tela)
+                        processandoDoc = false
+                        when {
+                            d == null -> { ocupado = false; ultima = uri; Toast.makeText(contexto, "Não consegui analisar; salvei a foto.", Toast.LENGTH_SHORT).show() }
+                            conferir -> edicao = Edicao(uri, d, tela)
+                            else -> concluirDocumento(uri, d, tela, d.quad, false)
+                        }
                     }
                 } else if (modo == Modo.RETRATO && !bokehNativo && uri != null) {
                     processandoRetrato = true
@@ -513,6 +534,14 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             }
         }
 
+        // ---- Documento/Tela: conferência dos cantos antes de gravar ----
+        edicao?.let { e ->
+            EditorQuad(e.deteccao.previa, e.deteccao.quad, e.tela,
+                aoUsar = { q -> concluirDocumento(e.uri, e.deteccao, e.tela, q, true) },
+                aoSemRecorte = { concluirDocumento(e.uri, e.deteccao, e.tela, null, true) },
+                aoDescartar = { Fotos.apagar(contexto, e.uri); e.deteccao.previa.recycle(); edicao = null; ocupado = false })
+        }
+
         // ---- menu "Mais": modos que não cabem na linha ----
         if (menuMais) {
             ModalBottomSheet(onDismissRequest = { menuMais = false }, containerColor = Painel) {
@@ -532,6 +561,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 LazyVerticalGrid(columns = GridCells.Fixed(4), modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp), horizontalArrangement = Arrangement.Center) {
                     item { Ajuste(iconeFlash(flash), "Flash", rotuloFlash(flash), flash != ImageCapture.FLASH_MODE_OFF) { flash = proximoFlash(flash) } }
                     item { Ajuste(Icons.Filled.Timer, "Timer", if (timer == 0) "Desativado" else "${timer} s", timer > 0) { timer = when (timer) { 0 -> 3; 3 -> 10; else -> 0 } } }
+                    item { Ajuste(Icons.Filled.Crop, "Recorte", if (conferir) "Conferir cantos" else "Automático", conferir) { conferir = !conferir } }
+                    item { Ajuste(Icons.Filled.Share, "Registro", "Scanner: ${RegistroScanner.linhas(contexto)}", false) { if (!RegistroScanner.compartilhar(contexto)) Toast.makeText(contexto, "Nenhuma digitalização registrada ainda.", Toast.LENGTH_SHORT).show(); gaveta = false } }
                     item { Ajuste(Icons.Filled.AspectRatio, "Proporção", if (proporcao == AspectRatio.RATIO_16_9) "16:9" else "4:3", true) { proporcao = if (proporcao == AspectRatio.RATIO_16_9) AspectRatio.RATIO_4_3 else AspectRatio.RATIO_16_9 } }
                     item { Ajuste(Icons.Filled.HdrAuto, "HDR", "Auto", false) { Toast.makeText(contexto, "HDR: o aparelho decide (CameraX Extensions em breve)", Toast.LENGTH_SHORT).show() } }
                     item { Ajuste(Icons.Filled.Grid3x3, "Grade", if (grade) "Ativado" else "Desativado", grade) { grade = !grade } }
@@ -555,6 +586,9 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         }
     }
 }
+
+/** Foto de Documento/Tela esperando o usuário conferir os cantos. */
+private class Edicao(val uri: Uri, val deteccao: Documento.Deteccao, val tela: Boolean)
 
 @Composable
 private fun Ajuste(icone: ImageVector, titulo: String, valor: String, ativo: Boolean, aoTocar: () -> Unit) {
