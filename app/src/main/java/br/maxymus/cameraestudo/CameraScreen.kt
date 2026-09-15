@@ -353,8 +353,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 Row(modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp).clip(RoundedCornerShape(24.dp)).background(Color(0x66000000)).padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                     val minimo = camera?.cameraInfo?.zoomState?.value?.minZoomRatio ?: 1f
                     val opcoes = buildList { if (minimo < 0.99f) add(0.5f); add(1f); add(2f) }
+                    // o chip ativo é sempre o mais próximo do zoom atual: acima de 2x o "2" mostra o valor real (3,4x, 5x...)
+                    val maisProximo = opcoes.minByOrNull { abs(zoom - it) } ?: 1f
                     opcoes.forEach { alvo ->
-                        val selecionado = abs(zoom - alvo) < 0.15f
+                        val selecionado = alvo == maisProximo
                         Box(
                             modifier = Modifier.size(if (selecionado) 38.dp else 32.dp).clip(CircleShape).background(if (selecionado) Color(0x99000000) else Color.Transparent).clickable { aplicaZoom(alvo) },
                             contentAlignment = Alignment.Center
