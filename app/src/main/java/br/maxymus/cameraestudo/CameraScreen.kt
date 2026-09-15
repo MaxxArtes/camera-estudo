@@ -473,10 +473,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     processandoRetrato = true
                     escopo.launch {
                         val tR = Telemetria.agora()
-                        val ok = Retrato.aplicar(contexto, uri, desfoque)
-                        Telemetria.evento("retrato_software", mapOf("ms" to Telemetria.ms(tR), "achou_pessoa" to ok, "desfoque" to desfoque))
+                        val erro = Retrato.aplicar(contexto, uri, desfoque)
+                        Telemetria.evento("retrato_software", mapOf("ms" to Telemetria.ms(tR), "achou_pessoa" to (erro == null), "desfoque" to desfoque, "erro" to erro))
                         processandoRetrato = false; ocupado = false; ultima = uri
-                        if (!ok) Toast.makeText(contexto, "Não achei uma pessoa na foto; salvei sem desfoque.", Toast.LENGTH_SHORT).show()
+                        if (erro != null) Toast.makeText(contexto, "Retrato por software falhou ($erro); salvei sem desfoque.", Toast.LENGTH_LONG).show()
                     }
                 } else { ocupado = false; ultima = uri }
             }

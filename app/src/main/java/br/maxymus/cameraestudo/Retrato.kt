@@ -23,15 +23,17 @@ object Retrato {
     private const val LADO_MAX = 1600   // processar em 12 Mpx levaria muitos segundos; 1600 px basta para tela e redes
 
     /** intensidade 1..10: 5 é o padrão antigo (fundo reduzido a 1/10); 1 quase não desfoca, 10 desfoca muito. */
-    suspend fun aplicar(contexto: Context, uri: Uri, intensidade: Int = 5): Boolean = withContext(Dispatchers.Default) {
+    /** Devolve null quando deu certo; senão o motivo (vai para a telemetria). */
+    suspend fun aplicar(contexto: Context, uri: Uri, intensidade: Int = 5): String? = withContext(Dispatchers.Default) {
         runCatching {
-            val certa = Documento.decodeReduzido(contexto, uri, LADO_MAX * 2) ?: return@runCatching false
+            val certa = Documento.decodeReduzido(contexto, uri, LADO_MAX * 2) ?: return@runCatching "decode nulo"
             val escala = minOf(1f, LADO_MAX.toFloat() / maxOf(certa.width, certa.height))
             val base = if (escala < 1f) Bitmap.createScaledBitmap(certa, (certa.width * escala).toInt(), (certa.height * escala).toInt(), true) else certa
             if (base !== certa) certa.recycle()
             val w = base.width; val h = base.height
 
-            val segmentador = Segmentation.getClient(SelfieSegmenterOptions.Builder().setDetectorMode(SelfieSegmenterOptions.SINGLE_IMAGE_MODE).build())
+            // enableRawSizeMask: máscara no tamanho da imagem em vez de 256x256; o contorno da pessoa fica bem mais fiel
+            val segmentador = Segmentation.getClient(SelfieSegmenterOptions.Builder().setDetectorMode(SelfieSegmenterOptions.SINGLE_IMAGE_MODE).enableRawSizeMask().build())
             val mascara = Tasks.await(segmentador.process(InputImage.fromBitmap(base, 0)))
             segmentador.close()
             val mw = mascara.width; val mh = mascara.height
@@ -62,9 +64,9 @@ object Retrato {
             }
             pequeno.recycle(); fundo.recycle(); base.recycle()
             val resultado = Bitmap.createBitmap(saida, w, h, Bitmap.Config.ARGB_8888)
-            contexto.contentResolver.openOutputStream(uri, "wt")?.use { resultado.compress(Bitmap.CompressFormat.JPEG, 92, it) } ?: return@runCatching false
+            contexto.contentResolver.openOutputStream(uri, "wt")?.use { resultado.compress(Bitmap.CompressFormat.JPEG, 92, it) } ?: return@runCatching "não consegui gravar"
             resultado.recycle()
-            true
-        }.getOrDefault(false)
+            null
+        }.getOrElse { e -> (e::class.java.simpleName + ": " + (e.message ?: "")).take(300) }
     }
 }

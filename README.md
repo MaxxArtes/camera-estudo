@@ -55,7 +55,7 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
 |---|---|
 | `MainActivity.kt` | permissão de câmera e navegação entre as duas telas |
 | `CameraScreen.kt` | CameraX: `Preview` + `ImageCapture` (foto) ou `Preview` + `VideoCapture` (vídeo); gestos; grade; nível; gaveta de ajustes |
-| `GaleriaScreen.kt` | grade de fotos e vídeos, tela cheia com compartilhar/editar/informações/favorito, apagar |
+| `GaleriaScreen.kt` (grade, seleção múltipla com selecionar tudo / apagar / PDF, tela cheia com zoom por pinça e toque duplo) | grade de fotos e vídeos, tela cheia com compartilhar/editar/informações/favorito, apagar |
 | `Fotos.kt` | MediaStore: onde salvar, listar, apagar; favoritos locais |
 | `Nivel.kt` | acelerômetro → ângulo do nível de bolha |
 | `Atualizador.kt` | lê `releases.json`, compara a versão, baixa e instala a nova |

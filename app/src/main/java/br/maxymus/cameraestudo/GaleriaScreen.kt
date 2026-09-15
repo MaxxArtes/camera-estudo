@@ -30,6 +30,12 @@ import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.SelectAll
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -72,6 +78,9 @@ fun GaleriaScreen(voltar: () -> Unit) {
     var selecionando by remember { mutableStateOf(false) }
     var selecionadas by remember { mutableStateOf<List<Uri>>(emptyList()) }
     var gerandoPdf by remember { mutableStateOf(false) }
+    var confirmarApagar by remember { mutableStateOf(false) }
+    var escala by remember { mutableStateOf(1f) }
+    var desloc by remember { mutableStateOf(Offset.Zero) }
     val escopo = rememberCoroutineScope()
     fun compartilhaPdf(uri: Uri) {
         val envio = Intent(Intent.ACTION_SEND).apply { type = "application/pdf"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
@@ -90,10 +99,17 @@ fun GaleriaScreen(voltar: () -> Unit) {
                 color = Color.White, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f)
             )
             if (aberta == null && midias.isNotEmpty()) {
-                if (selecionando && selecionadas.isNotEmpty()) IconButton(enabled = !gerandoPdf, onClick = {
+                if (selecionando) IconButton(onClick = {
+                    selecionadas = if (selecionadas.size == midias.size) emptyList() else midias.map { it.uri }
+                }) { Icon(Icons.Filled.SelectAll, contentDescription = "Selecionar tudo", tint = if (selecionadas.size == midias.size) Color(0xFFFF5A5F) else Color.White) }
+                if (selecionando && selecionadas.isNotEmpty()) IconButton(onClick = { confirmarApagar = true }) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Apagar selecionadas", tint = Color.White)
+                }
+                if (selecionando && selecionadas.any { u -> midias.firstOrNull { it.uri == u }?.ehVideo == false }) IconButton(enabled = !gerandoPdf, onClick = {
                     gerandoPdf = true
                     escopo.launch {
-                        val pdf = Pdf.gerar(contexto, selecionadas); gerandoPdf = false
+                        val soFotos = selecionadas.filter { u -> midias.firstOrNull { it.uri == u }?.ehVideo == false }
+                        val pdf = Pdf.gerar(contexto, soFotos); gerandoPdf = false
                         if (pdf != null) { Toast.makeText(contexto, "PDF salvo em Documentos/${Fotos.PASTA}", Toast.LENGTH_SHORT).show(); compartilhaPdf(pdf); selecionando = false; selecionadas = emptyList() }
                         else Toast.makeText(contexto, "Não consegui gerar o PDF", Toast.LENGTH_SHORT).show()
                     }
@@ -110,11 +126,36 @@ fun GaleriaScreen(voltar: () -> Unit) {
                 }) { Icon(Icons.Filled.Delete, contentDescription = "Apagar", tint = Color.White) }
             }
         }
+        if (confirmarApagar) AlertDialog(
+            onDismissRequest = { confirmarApagar = false },
+            title = { Text("Apagar ${selecionadas.size} item(ns)?") },
+            text = { Text("Não dá para desfazer.") },
+            confirmButton = { TextButton(onClick = {
+                confirmarApagar = false
+                val apagadas = selecionadas.filter { Fotos.apagar(contexto, it) }
+                midias = midias.filter { it.uri !in apagadas }; selecionadas = emptyList(); selecionando = false
+                if (apagadas.size < selecionadas.size) Toast.makeText(contexto, "Algumas não puderam ser apagadas", Toast.LENGTH_SHORT).show()
+            }) { Text("Apagar", color = Color(0xFFFF5A5F)) } },
+            dismissButton = { TextButton(onClick = { confirmarApagar = false }) { Text("Cancelar") } }
+        )
 
         val atual = aberta
         if (atual != null) {
-            Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                AsyncImage(model = atual.uri, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+            LaunchedEffect(atual.uri) { escala = 1f; desloc = Offset.Zero }
+            // zoom por pinça (1x a 6x) com arraste; toque duplo alterna 1x / 2,5x
+            Box(modifier = Modifier.weight(1f).fillMaxWidth()
+                .pointerInput(atual.uri) {
+                    detectTransformGestures { centro, pan, zoom, _ ->
+                        val nova = (escala * zoom).coerceIn(1f, 6f)
+                        val lim = Offset(size.width * (nova - 1) / 2, size.height * (nova - 1) / 2)
+                        val d = if (nova == 1f) Offset.Zero else (desloc + pan + (centro - Offset(size.width / 2f, size.height / 2f)) * (escala - nova))
+                        escala = nova; desloc = Offset(d.x.coerceIn(-lim.x, lim.x), d.y.coerceIn(-lim.y, lim.y))
+                    }
+                }
+                .pointerInput(atual.uri) { detectTapGestures(onDoubleTap = { if (escala > 1f) { escala = 1f; desloc = Offset.Zero } else escala = 2.5f }) },
+                contentAlignment = Alignment.Center) {
+                AsyncImage(model = atual.uri, contentDescription = null, contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = escala; scaleY = escala; translationX = desloc.x; translationY = desloc.y })
                 if (atual.ehVideo) {
                     Box(modifier = Modifier.size(72.dp).background(Color(0x99000000), MaterialTheme.shapes.extraLarge).clickable {
                         contexto.startActivity(Intent(Intent.ACTION_VIEW).apply { setDataAndType(atual.uri, "video/mp4"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) })
@@ -173,10 +214,10 @@ fun GaleriaScreen(voltar: () -> Unit) {
                 items(midias, key = { it.uri.toString() }) { m ->
                     val marcada = m.uri in selecionadas
                     Box(modifier = Modifier.aspectRatio(1f).clickable {
-                        if (selecionando) { if (m.ehVideo) return@clickable; selecionadas = if (marcada) selecionadas - m.uri else selecionadas + m.uri } else aberta = m
+                        if (selecionando) selecionadas = if (marcada) selecionadas - m.uri else selecionadas + m.uri else aberta = m
                     }) {
                         AsyncImage(model = m.uri, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                        if (selecionando && !m.ehVideo) Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = if (marcada) Color(0xFFFF5A5F) else Color(0x99FFFFFF), modifier = Modifier.align(Alignment.TopStart).padding(4.dp).size(22.dp))
+                        if (selecionando) Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = if (marcada) Color(0xFFFF5A5F) else Color(0x99FFFFFF), modifier = Modifier.align(Alignment.TopStart).padding(4.dp).size(22.dp))
                         if (m.ehVideo) Icon(Icons.Filled.PlayArrow, contentDescription = "Vídeo", tint = Color.White, modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp))
                         if (m.uri.toString() in favoritos) Icon(Icons.Filled.Favorite, contentDescription = "Favorita", tint = Color(0xFFF0325A), modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(16.dp))
                     }
