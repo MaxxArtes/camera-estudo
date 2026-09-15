@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.16",
+      "build": 19,
+      "tag": "v0.16-build19",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.16-build19.apk",
+      "mudou": [
+        "Scanner após revisão do agy: candidato escuro, fecho convexo + Douglas-Peucker, lados pelo máximo com encaixe A4, realce só na luminância, decodificação reduzida e recycle"
+      ]
+    },
+    {
       "versao": "0.15",
       "build": 18,
       "tag": "v0.15-build18",
@@ -127,11 +136,11 @@
       ]
     }
   ],
-  "versionName": "0.15",
-  "versionCode": 15,
-  "build": 18,
+  "versionName": "0.16",
+  "versionCode": 16,
+  "build": 19,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.15-build18.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.16-build19.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T21:04:23Z"
+  "publicadoEm": "2026-09-15T21:11:03Z"
 }
