@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.23",
+      "build": 27,
+      "tag": "v0.23-build27",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.23-build27.apk",
+      "mudou": [
+        "Telemetria: cada foto, sequência, scanner, retrato, troca de câmera e erro vira evento com tempos e memória"
+      ]
+    },
+    {
       "versao": "0.22",
       "build": 26,
       "tag": "v0.22-build26",
@@ -199,11 +208,11 @@
       ]
     }
   ],
-  "versionName": "0.22",
-  "versionCode": 22,
-  "build": 26,
+  "versionName": "0.23",
+  "versionCode": 23,
+  "build": 27,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.22-build26.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.23-build27.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T22:43:09Z"
+  "publicadoEm": "2026-09-15T22:59:53Z"
 }
