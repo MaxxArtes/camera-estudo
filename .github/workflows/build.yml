@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
 jobs:
   apk:
-    name: APK de depuração (instalável direto no celular)
+    name: APK de release (assinado, menor)
     runs-on: ubuntu-latest
     permissions: { contents: write }
     steps:
@@ -14,20 +14,25 @@ jobs:
         with: { distribution: temurin, java-version: "17" }
       - uses: gradle/actions/setup-gradle@v4
         with: { gradle-version: "8.9" }
-      - name: Build
-        run: gradle :app:assembleDebug --no-daemon
+      - name: Restaura keystore (assinatura fixa)
+        run: |
+          echo "${{ secrets.SIGNING_KEY_BASE64 }}" | base64 -d > "$RUNNER_TEMP/camera.jks"
+          echo "CAMERA_KEYSTORE=$RUNNER_TEMP/camera.jks" >> "$GITHUB_ENV"
+          echo "CAMERA_KEYSTORE_SENHA=${{ secrets.SIGNING_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+      - name: Build (release assinado, compactado com R8)
+        run: gradle :app:assembleRelease --no-daemon
       # Artifact é best-effort (cota de storage já estourou no passado); a entrega de verdade é o
       # release "ultimo", cujo asset não conta na cota e tem link fixo.
       - uses: actions/upload-artifact@v4
         continue-on-error: true
-        with: { name: camera-estudo-debug, path: app/build/outputs/apk/debug/app-debug.apk }
+        with: { name: camera-estudo-debug, path: app/build/outputs/apk/release/app-release.apk }
       - name: Publica releases (uma por build, com histórico, e o link fixo "ultimo")
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
           VERSAO=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
           TAG="v${VERSAO}-build${GITHUB_RUN_NUMBER}"
-          cp app/build/outputs/apk/debug/app-debug.apk "camera-estudo-${TAG}.apk"
-          cp app/build/outputs/apk/debug/app-debug.apk camera-estudo.apk
+          cp app/build/outputs/apk/release/app-release.apk "camera-estudo-${TAG}.apk"
+          cp app/build/outputs/apk/release/app-release.apk camera-estudo.apk
           # histórico: cada build vira uma release própria, fica guardada para baixar depois
           gh release create "$TAG" "camera-estudo-${TAG}.apk" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
             --title "Build ${GITHUB_RUN_NUMBER} (v${VERSAO})" --notes "Commit: ${GITHUB_SHA:0:7} — $(git log -1 --pretty=%s)"
@@ -46,8 +51,8 @@ jobs:
           VERSAO=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
           CODIGO=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts)
           TAG="v${VERSAO}-build${GITHUB_RUN_NUMBER}"
-          aws s3 cp app/build/outputs/apk/debug/app-debug.apk "s3://omnigen-assets/camera-estudo/camera-estudo-${TAG}.apk" --endpoint-url "$R2_ENDPOINT" --content-type application/vnd.android.package-archive
-          aws s3 cp app/build/outputs/apk/debug/app-debug.apk "s3://omnigen-assets/camera-estudo/camera-estudo.apk" --endpoint-url "$R2_ENDPOINT" --content-type application/vnd.android.package-archive --cache-control "no-cache"
+          aws s3 cp app/build/outputs/apk/release/app-release.apk "s3://omnigen-assets/camera-estudo/camera-estudo-${TAG}.apk" --endpoint-url "$R2_ENDPOINT" --content-type application/vnd.android.package-archive
+          aws s3 cp app/build/outputs/apk/release/app-release.apk "s3://omnigen-assets/camera-estudo/camera-estudo.apk" --endpoint-url "$R2_ENDPOINT" --content-type application/vnd.android.package-archive --cache-control "no-cache"
           python3 - "$VERSAO" "$CODIGO" "$TAG" "$R2_PUBLICO" <<'EOF'
           import json, os, sys, subprocess, datetime
           versao, codigo, tag, pub = sys.argv[1:5]

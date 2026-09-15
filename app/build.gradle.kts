@@ -11,11 +11,27 @@ android {
         applicationId = "br.maxymus.cameraestudo"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2"
+        versionCode = 3
+        versionName = "0.3"
+    }
+    // Assinatura fixa (secrets do repo): sem ela cada build teria chave aleatória e o celular
+    // recusaria atualizar por cima. Localmente, sem as variáveis, cai na chave de debug.
+    val ksCaminho = System.getenv("CAMERA_KEYSTORE")
+    val ksSenha = System.getenv("CAMERA_KEYSTORE_SENHA")
+    signingConfigs {
+        create("release") {
+            if (ksCaminho != null && ksSenha != null) {
+                storeFile = file(ksCaminho); storePassword = ksSenha; keyAlias = "camera"; keyPassword = ksSenha
+            }
+        }
     }
     buildTypes {
-        release { isMinifyEnabled = false }
+        release {
+            isMinifyEnabled = true          // R8: tira código não usado
+            isShrinkResources = true        // e recursos não usados
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = if (ksCaminho != null) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
+        }
     }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
