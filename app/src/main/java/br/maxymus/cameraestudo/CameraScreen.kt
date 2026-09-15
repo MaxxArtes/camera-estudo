@@ -36,6 +36,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.calculatePan
@@ -71,6 +73,8 @@ import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.Grid3x3
 import androidx.compose.material.icons.filled.HdrAuto
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SystemUpdate
@@ -488,7 +492,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
 
             // ---- modos ----
             if (modo == Modo.PRO) PainelPro(
-                ev = proEv, faixaEv = camera?.cameraInfo?.exposureState?.exposureCompensationRange?.let { it.lower to it.upper } ?: (-2 to 2), aoEv = { proEv = it },
+                ev = proEv, faixaEv = camera?.cameraInfo?.exposureState?.exposureCompensationRange?.let { it.lower to it.upper } ?: (-2 to 2),
+                passoEv = camera?.cameraInfo?.exposureState?.exposureCompensationStep?.toFloat() ?: 0.5f, aoEv = { proEv = it },
                 iso = proIso, faixaIso = faixaIso, aoIso = { proIso = it; if (proTempoNs == null) proTempoNs = 8_000_000L },
                 tempoNs = proTempoNs, faixaTempo = faixaTempo, aoTempo = { proTempoNs = it; if (proIso == null) proIso = faixaIso.first.coerceAtLeast(100) },
                 foco = proFoco, focoMax = focoMin, aoFoco = { proFoco = it },
@@ -614,40 +619,78 @@ private fun iconeFlash(f: Int) = when (f) { ImageCapture.FLASH_MODE_AUTO -> Icon
 
 
 /** Controles manuais do modo Pro. null = automático. */
+/**
+ * Painel Pro no formato das câmeras de celular: faixa horizontal de chips (ISO, S, EV, WB, MF) com o valor
+ * atual; tocar num chip abre só o controle daquele parâmetro logo abaixo; tocar de novo fecha.
+ */
 @Composable
 private fun PainelPro(
-    ev: Int, faixaEv: Pair<Int, Int>, aoEv: (Int) -> Unit,
+    ev: Int, faixaEv: Pair<Int, Int>, passoEv: Float, aoEv: (Int) -> Unit,
     iso: Int?, faixaIso: Pair<Int, Int>, aoIso: (Int) -> Unit,
     tempoNs: Long?, faixaTempo: Pair<Long, Long>, aoTempo: (Long) -> Unit,
     foco: Float?, focoMax: Float, aoFoco: (Float) -> Unit,
     wb: Int, aoWb: (Int) -> Unit, aoAuto: () -> Unit
 ) {
-    val corSlider = SliderDefaults.colors(thumbColor = Amarelo, activeTrackColor = Amarelo)
-    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)) {
-        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-            Text("PRO", color = Amarelo, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-            Text("Auto", color = Color(0xFFBDBDBD), fontSize = 12.sp, modifier = Modifier.clickable(onClick = aoAuto))
+    var aberto by remember { mutableStateOf<String?>(null) }
+    val corSlider = SliderDefaults.colors(thumbColor = Amarelo, activeTrackColor = Amarelo, inactiveTrackColor = Color(0x33FFFFFF))
+    val wbs = listOf(CaptureRequest.CONTROL_AWB_MODE_AUTO to "Auto", CaptureRequest.CONTROL_AWB_MODE_INCANDESCENT to "2800K", CaptureRequest.CONTROL_AWB_MODE_FLUORESCENT to "4000K",
+        CaptureRequest.CONTROL_AWB_MODE_DAYLIGHT to "5500K", CaptureRequest.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT to "6500K")
+    val valorEv = if (ev == 0) "0.0" else String.format(java.util.Locale.US, "%+.1f", ev * passoEv)
+    val valorTempo = tempoNs?.let { "1/${(1_000_000_000L / it).coerceAtLeast(1)}" } ?: "Auto"
+    val valorFoco = when { focoMax <= 0f -> "—"; foco == null -> "Auto"; foco < 0.05f -> "∞"; else -> String.format(java.util.Locale.US, "%.0f cm", 100f / foco) }
+    fun alterna(nome: String) { aberto = if (aberto == nome) null else nome }
+
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp)) {
+        Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
+            ChipPro("ISO", iso?.toString() ?: "Auto", aberto == "iso", iso != null) { alterna("iso") }
+            DivisorPro()
+            ChipPro("S", valorTempo, aberto == "s", tempoNs != null) { alterna("s") }
+            DivisorPro()
+            ChipPro("EV", valorEv, aberto == "ev", ev != 0) { alterna("ev") }
+            DivisorPro()
+            ChipPro("WB", wbs.firstOrNull { it.first == wb }?.second ?: "Auto", aberto == "wb", wb != CaptureRequest.CONTROL_AWB_MODE_AUTO) { alterna("wb") }
+            DivisorPro()
+            ChipPro("MF", valorFoco, aberto == "mf", foco != null) { if (focoMax > 0f) alterna("mf") }
+            DivisorPro()
+            Icon(if (aberto == null) Icons.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown, contentDescription = "Abrir ou fechar", tint = Color(0xFFBDBDBD),
+                modifier = Modifier.size(28.dp).clickable { aberto = if (aberto == null) "iso" else null })
         }
-        LinhaPro("EV", if (ev == 0) "0" else (if (ev > 0) "+$ev" else "$ev"), ev.toFloat(), faixaEv.first.toFloat()..faixaEv.second.toFloat(), corSlider) { aoEv(it.toInt()) }
-        LinhaPro("ISO", iso?.toString() ?: "auto", (iso ?: faixaIso.first).toFloat(), faixaIso.first.toFloat()..faixaIso.second.toFloat(), corSlider) { aoIso(it.toInt()) }
-        val t = tempoNs ?: 8_000_000L
-        LinhaPro("Tempo", if (tempoNs == null) "auto" else "1/${(1_000_000_000L / t).coerceAtLeast(1)}", Math.log10(t.toDouble()).toFloat(),
-            Math.log10(faixaTempo.first.toDouble()).toFloat()..Math.log10(faixaTempo.second.toDouble()).toFloat(), corSlider) { aoTempo(Math.pow(10.0, it.toDouble()).toLong()) }
-        if (focoMax > 0f) LinhaPro("Foco", if (foco == null) "auto" else if (foco < 0.05f) "∞" else String.format("%.0f cm", 100f / foco), foco ?: 0f, 0f..focoMax, corSlider) { aoFoco(it) }
-        val wbs = listOf(CaptureRequest.CONTROL_AWB_MODE_AUTO to "Auto", CaptureRequest.CONTROL_AWB_MODE_DAYLIGHT to "Sol", CaptureRequest.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT to "Nublado",
-            CaptureRequest.CONTROL_AWB_MODE_INCANDESCENT to "Lâmpada", CaptureRequest.CONTROL_AWB_MODE_FLUORESCENT to "Fluor.")
-        Row(modifier = Modifier.fillMaxWidth().padding(top = 2.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("WB", color = Color(0xFFBDBDBD), fontSize = 11.sp, modifier = Modifier.width(44.dp))
-            wbs.forEach { (v, r) -> Text(r, color = if (wb == v) Amarelo else Color(0xFFBDBDBD), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { aoWb(v) }.padding(horizontal = 4.dp)) }
+        aberto?.let { qual ->
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp).height(36.dp)) {
+                when (qual) {
+                    "iso" -> Slider(value = (iso ?: faixaIso.first).toFloat().coerceIn(faixaIso.first.toFloat(), faixaIso.second.toFloat()), onValueChange = { aoIso(it.toInt()) },
+                        valueRange = faixaIso.first.toFloat()..faixaIso.second.toFloat(), colors = corSlider, modifier = Modifier.weight(1f))
+                    "s" -> {
+                        val t = tempoNs ?: 8_000_000L
+                        val faixa = Math.log10(faixaTempo.first.toDouble()).toFloat()..Math.log10(faixaTempo.second.toDouble()).toFloat()
+                        Slider(value = Math.log10(t.toDouble()).toFloat().coerceIn(faixa.start, faixa.endInclusive), onValueChange = { aoTempo(Math.pow(10.0, it.toDouble()).toLong()) },
+                            valueRange = faixa, colors = corSlider, modifier = Modifier.weight(1f))
+                    }
+                    "ev" -> Slider(value = ev.toFloat().coerceIn(faixaEv.first.toFloat(), faixaEv.second.toFloat()), onValueChange = { aoEv(Math.round(it)) },
+                        valueRange = faixaEv.first.toFloat()..faixaEv.second.toFloat(), steps = (faixaEv.second - faixaEv.first - 1).coerceAtLeast(0), colors = corSlider, modifier = Modifier.weight(1f))
+                    "wb" -> Row(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.SpaceEvenly) {
+                        wbs.forEach { (v, r) ->
+                            Text(r, color = if (wb == v) Color.Black else Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.clip(RoundedCornerShape(12.dp)).background(if (wb == v) Amarelo else Color(0x22FFFFFF)).clickable { aoWb(v) }.padding(horizontal = 10.dp, vertical = 5.dp))
+                        }
+                    }
+                    "mf" -> Slider(value = (foco ?: 0f).coerceIn(0f, focoMax), onValueChange = { aoFoco(it) }, valueRange = 0f..focoMax, colors = corSlider, modifier = Modifier.weight(1f))
+                }
+                Text("Auto", color = Color(0xFFBDBDBD), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp).clickable(onClick = aoAuto))
+            }
         }
     }
 }
 
 @Composable
-private fun LinhaPro(nome: String, valor: String, atual: Float, faixa: ClosedFloatingPointRange<Float>, cores: androidx.compose.material3.SliderColors, aoMudar: (Float) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().height(30.dp)) {
-        Text(nome, color = Color(0xFFBDBDBD), fontSize = 11.sp, modifier = Modifier.width(44.dp))
-        Slider(value = atual.coerceIn(faixa.start, faixa.endInclusive), onValueChange = aoMudar, valueRange = faixa, colors = cores, modifier = Modifier.weight(1f))
-        Text(valor, color = Color.White, fontSize = 11.sp, modifier = Modifier.width(56.dp), maxLines = 1)
+private fun ChipPro(nome: String, valor: String, aberto: Boolean, manual: Boolean, aoTocar: () -> Unit) {
+    Column(modifier = Modifier.clickable(onClick = aoTocar).padding(horizontal = 12.dp, vertical = 4.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(nome, color = if (aberto) Amarelo else Color(0xFFBDBDBD), fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+        Text(valor, color = if (aberto || manual) Amarelo else Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
     }
+}
+
+@Composable
+private fun DivisorPro() {
+    Box(modifier = Modifier.width(1.dp).height(26.dp).background(Color(0x33FFFFFF)))
 }
