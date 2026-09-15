@@ -22,7 +22,8 @@ import kotlinx.coroutines.withContext
 object Retrato {
     private const val LADO_MAX = 1600   // processar em 12 Mpx levaria muitos segundos; 1600 px basta para tela e redes
 
-    suspend fun aplicar(contexto: Context, uri: Uri): Boolean = withContext(Dispatchers.Default) {
+    /** intensidade 1..10: 5 é o padrão antigo (fundo reduzido a 1/10); 1 quase não desfoca, 10 desfoca muito. */
+    suspend fun aplicar(contexto: Context, uri: Uri, intensidade: Int = 5): Boolean = withContext(Dispatchers.Default) {
         runCatching {
             val certa = Documento.decodeReduzido(contexto, uri, LADO_MAX * 2) ?: return@runCatching false
             val escala = minOf(1f, LADO_MAX.toFloat() / maxOf(certa.width, certa.height))
@@ -37,9 +38,11 @@ object Retrato {
             val bb = mascara.buffer; bb.rewind()
             val conf = FloatArray(mw * mh) { bb.float }   // o ML Kit entrega a máscara como floats dentro de um ByteBuffer
 
-            // fundo desfocado: 1/10 do tamanho e de volta
-            val pequeno = Bitmap.createScaledBitmap(base, maxOf(1, w / 10), maxOf(1, h / 10), true)
-            val fundo = Bitmap.createScaledBitmap(pequeno, w, h, true)
+            // fundo desfocado: reduz por (2 x intensidade) e volta, duas vezes para o desfoque ficar redondo, não quadriculado
+            val divisor = (intensidade.coerceIn(1, 10) * 2)
+            val pequeno = Bitmap.createScaledBitmap(base, maxOf(1, w / divisor), maxOf(1, h / divisor), true)
+            val meio = Bitmap.createScaledBitmap(pequeno, maxOf(1, w / 2), maxOf(1, h / 2), true)
+            val fundo = Bitmap.createScaledBitmap(meio, w, h, true); meio.recycle()
 
             val pFrente = IntArray(w * h).also { base.getPixels(it, 0, w, 0, 0, w, h) }
             val pFundo = IntArray(w * h).also { fundo.getPixels(it, 0, w, 0, 0, w, h) }

@@ -183,7 +183,9 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     // processamento do próprio aparelho (CameraX Extensions) e modo de captura
     var extensao by remember { mutableIntStateOf(ExtensionMode.NONE) }
     var extensoesDisponiveis by remember { mutableStateOf(listOf(ExtensionMode.NONE)) }
-    var qualidadeMax by remember { mutableStateOf(true) }              // MAXIMIZE_QUALITY: deixa o HAL fazer o multi-quadro dele
+    var qualidadeMax by remember { mutableStateOf(true) }
+    var desfoque by remember { mutableIntStateOf(5) }                   // Retrato por software: 1..10
+    var retratoSoftware by remember { mutableStateOf(false) }          // força o nosso retrato mesmo com bokeh do aparelho              // MAXIMIZE_QUALITY: deixa o HAL fazer o multi-quadro dele
     var ocupado by remember { mutableStateOf(false) }
     var contagem by remember { mutableIntStateOf(0) }
     var gravacao by remember { mutableStateOf<Recording?>(null) }
@@ -234,7 +236,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     LaunchedEffect(Unit) { ultima = Fotos.listar(contexto, limite = 1).firstOrNull()?.uri }
 
     // (Re)liga a câmera quando muda lente, modo ou proporção.
-    LaunchedEffect(lente, modo, proporcao, capturaRapida, extensao) {
+    LaunchedEffect(lente, modo, proporcao, capturaRapida, extensao, retratoSoftware) {
         val provider = ProcessCameraProvider.getInstance(contexto).get()
         @Suppress("DEPRECATION")
         val preview = Preview.Builder().setTargetAspectRatio(proporcao).build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
@@ -250,7 +252,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         val gerente = withContext(Dispatchers.IO) { runCatching { ExtensionsManager.getInstanceAsync(contexto, provider).get() }.getOrNull() }
         if (gerente != null) {
             extensoesDisponiveis = listOf(ExtensionMode.NONE) + listOf(ExtensionMode.AUTO, ExtensionMode.HDR, ExtensionMode.NIGHT, ExtensionMode.FACE_RETOUCH).filter { gerente.isExtensionAvailable(seletor, it) }
-            if (modo == Modo.RETRATO && gerente.isExtensionAvailable(seletor, ExtensionMode.BOKEH)) {
+            if (modo == Modo.RETRATO && !retratoSoftware && gerente.isExtensionAvailable(seletor, ExtensionMode.BOKEH)) {
                 seletor = gerente.getExtensionEnabledCameraSelector(seletor, ExtensionMode.BOKEH); bokehNativo = true
             } else if (modo == Modo.FOTO && extensao != ExtensionMode.NONE && gerente.isExtensionAvailable(seletor, extensao)) {
                 seletor = gerente.getExtensionEnabledCameraSelector(seletor, extensao)
@@ -456,8 +458,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     processandoRetrato = true
                     escopo.launch {
                         val tR = Telemetria.agora()
-                        val ok = Retrato.aplicar(contexto, uri)
-                        Telemetria.evento("retrato_software", mapOf("ms" to Telemetria.ms(tR), "achou_pessoa" to ok))
+                        val ok = Retrato.aplicar(contexto, uri, desfoque)
+                        Telemetria.evento("retrato_software", mapOf("ms" to Telemetria.ms(tR), "achou_pessoa" to ok, "desfoque" to desfoque))
                         processandoRetrato = false; ocupado = false; ultima = uri
                         if (!ok) Toast.makeText(contexto, "Não achei uma pessoa na foto; salvei sem desfoque.", Toast.LENGTH_SHORT).show()
                     }
@@ -668,6 +670,18 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             }
 
             // ---- modos ----
+            if (modo == Modo.RETRATO) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(36.dp)) {
+                if (bokehNativo) {
+                    Text("Desfoque do aparelho (sem controle no CameraX 1.3)", color = Color(0xFFBDBDBD), fontSize = 12.sp, modifier = Modifier.weight(1f))
+                    Text("Usar o nosso", color = Amarelo, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { retratoSoftware = true })
+                } else {
+                    Text("Desfoque", color = Color(0xFFBDBDBD), fontSize = 12.sp, modifier = Modifier.width(64.dp))
+                    Slider(value = desfoque.toFloat(), onValueChange = { desfoque = it.roundToInt().coerceIn(1, 10) }, valueRange = 1f..10f, steps = 8,
+                        colors = SliderDefaults.colors(thumbColor = Amarelo, activeTrackColor = Amarelo, inactiveTrackColor = Color(0x33FFFFFF)), modifier = Modifier.weight(1f))
+                    Text("$desfoque", color = Color.White, fontSize = 12.sp, modifier = Modifier.width(24.dp))
+                    if (retratoSoftware) Text("Aparelho", color = Amarelo, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 6.dp).clickable { retratoSoftware = false })
+                }
+            }
             if (modo == Modo.PRO) PainelPro(
                 ev = proEv, faixaEv = camera?.cameraInfo?.exposureState?.exposureCompensationRange?.let { it.lower to it.upper } ?: (-2 to 2),
                 passoEv = camera?.cameraInfo?.exposureState?.exposureCompensationStep?.toFloat() ?: 0.5f, aoEv = { proEv = it },
