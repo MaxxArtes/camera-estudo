@@ -185,7 +185,11 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var extensoesDisponiveis by remember { mutableStateOf(listOf(ExtensionMode.NONE)) }
     var qualidadeMax by remember { mutableStateOf(true) }
     var desfoque by remember { mutableIntStateOf(5) }                   // Retrato por software: 1..10
-    var retratoSoftware by remember { mutableStateOf(false) }          // força o nosso retrato mesmo com bokeh do aparelho              // MAXIMIZE_QUALITY: deixa o HAL fazer o multi-quadro dele
+    var retratoSoftware by remember { mutableStateOf(false) }          // força o nosso retrato mesmo com bokeh do aparelho
+    // intensidade da extensão do fabricante (bokeh/HDR/noite): CameraX 1.4 + Android 14 + apoio do fabricante
+    var gerenteExt by remember { mutableStateOf<ExtensionsManager?>(null) }
+    var forcaDisponivel by remember { mutableStateOf(false) }
+    var forca by remember { mutableIntStateOf(50) }              // MAXIMIZE_QUALITY: deixa o HAL fazer o multi-quadro dele
     var ocupado by remember { mutableStateOf(false) }
     var contagem by remember { mutableIntStateOf(0) }
     var gravacao by remember { mutableStateOf<Recording?>(null) }
@@ -250,12 +254,14 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         }
         // Extensions do fabricante: Retrato usa BOKEH; Foto usa o que o usuário escolheu na gaveta ("Aparelho")
         val gerente = withContext(Dispatchers.IO) { runCatching { ExtensionsManager.getInstanceAsync(contexto, provider).get() }.getOrNull() }
+        gerenteExt = gerente
+        var extensaoAtiva = ExtensionMode.NONE
         if (gerente != null) {
             extensoesDisponiveis = listOf(ExtensionMode.NONE) + listOf(ExtensionMode.AUTO, ExtensionMode.HDR, ExtensionMode.NIGHT, ExtensionMode.FACE_RETOUCH).filter { gerente.isExtensionAvailable(seletor, it) }
             if (modo == Modo.RETRATO && !retratoSoftware && gerente.isExtensionAvailable(seletor, ExtensionMode.BOKEH)) {
-                seletor = gerente.getExtensionEnabledCameraSelector(seletor, ExtensionMode.BOKEH); bokehNativo = true
+                seletor = gerente.getExtensionEnabledCameraSelector(seletor, ExtensionMode.BOKEH); bokehNativo = true; extensaoAtiva = ExtensionMode.BOKEH
             } else if (modo == Modo.FOTO && extensao != ExtensionMode.NONE && gerente.isExtensionAvailable(seletor, extensao)) {
-                seletor = gerente.getExtensionEnabledCameraSelector(seletor, extensao)
+                seletor = gerente.getExtensionEnabledCameraSelector(seletor, extensao); extensaoAtiva = extensao
             }
         } else extensoesDisponiveis = listOf(ExtensionMode.NONE)
         focoPonto = null; focoTravado = false; focoEv = 0
@@ -264,8 +270,17 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             if (modo.video) provider.bindToLifecycle(dono, seletor, preview, videoCapture)
             else provider.bindToLifecycle(dono, seletor, preview, imageCapture)
         }.onFailure { Telemetria.evento("erro", mapOf("onde" to "abrir_camera", "modo" to modo.name.lowercase(), "msg" to (it.message ?: ""))); Toast.makeText(contexto, "Não consegui abrir a câmera: ${it.message}", Toast.LENGTH_LONG).show() }.getOrNull()
+        // intensidade da extensão: o próprio aparelho diz se aceita (Android 14+, fabricante); só então a régua aparece
+        forcaDisponivel = false
+        if (extensaoAtiva != ExtensionMode.NONE && gerente != null) camera?.let { cam ->
+            runCatching {
+                val info = gerente.getCameraExtensionsInfo(cam.cameraInfo)
+                forcaDisponivel = info.isExtensionStrengthAvailable
+                if (forcaDisponivel) { forca = info.extensionStrength?.value ?: 50; gerente.getCameraExtensionsControl(cam.cameraControl)?.setExtensionStrength(forca) }
+            }
+        }
         Telemetria.evento("camera", mapOf("modo" to modo.name.lowercase(), "lente" to (if (lente == CameraSelector.LENS_FACING_FRONT) "frontal" else "traseira"), "bokeh_nativo" to bokehNativo, "proporcao" to (if (proporcao == AspectRatio.RATIO_16_9) "16:9" else "4:3"),
-            "extensao" to nomeExtensao(if (modo == Modo.FOTO) extensao else ExtensionMode.NONE), "extensoes" to extensoesDisponiveis.map { nomeExtensao(it) }, "captura_rapida" to capturaRapida))
+            "extensao" to nomeExtensao(extensaoAtiva), "extensoes" to extensoesDisponiveis.map { nomeExtensao(it) }, "captura_rapida" to capturaRapida, "forca_disponivel" to forcaDisponivel, "android" to android.os.Build.VERSION.SDK_INT))
         zoom = 1f
         camera?.cameraControl?.setZoomRatio(1f)
         // faixas do sensor para o modo Pro (e foco mais perto para o Macro)
@@ -671,8 +686,13 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
 
             // ---- modos ----
             if (modo == Modo.RETRATO) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(36.dp)) {
-                if (bokehNativo) {
-                    Text("Desfoque do aparelho (sem controle no CameraX 1.3)", color = Color(0xFFBDBDBD), fontSize = 12.sp, modifier = Modifier.weight(1f))
+                if (bokehNativo && forcaDisponivel) {
+                    Text("Desfoque", color = Color(0xFFBDBDBD), fontSize = 12.sp, modifier = Modifier.width(64.dp))
+                    ReguaForca(forca, { v -> forca = v; camera?.let { c -> gerenteExt?.getCameraExtensionsControl(c.cameraControl)?.setExtensionStrength(v) } }, Modifier.weight(1f))
+                    Text("$forca", color = Color.White, fontSize = 12.sp, modifier = Modifier.width(30.dp))
+                    Text("Nosso", color = Amarelo, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 6.dp).clickable { retratoSoftware = true })
+                } else if (bokehNativo) {
+                    Text("Desfoque do aparelho sem controle (Android ${android.os.Build.VERSION.RELEASE}; precisa 14+ e apoio do fabricante)", color = Color(0xFFBDBDBD), fontSize = 11.sp, modifier = Modifier.weight(1f))
                     Text("Usar o nosso", color = Amarelo, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { retratoSoftware = true })
                 } else {
                     Text("Desfoque", color = Color(0xFFBDBDBD), fontSize = 12.sp, modifier = Modifier.width(64.dp))
@@ -681,6 +701,11 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     Text("$desfoque", color = Color.White, fontSize = 12.sp, modifier = Modifier.width(24.dp))
                     if (retratoSoftware) Text("Aparelho", color = Amarelo, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 6.dp).clickable { retratoSoftware = false })
                 }
+            }
+            if (modo == Modo.FOTO && extensao != ExtensionMode.NONE && forcaDisponivel) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(36.dp)) {
+                Text(nomeExtensao(extensao), color = Color(0xFFBDBDBD), fontSize = 12.sp, modifier = Modifier.width(64.dp))
+                ReguaForca(forca, { v -> forca = v; camera?.let { c -> gerenteExt?.getCameraExtensionsControl(c.cameraControl)?.setExtensionStrength(v) } }, Modifier.weight(1f))
+                Text("$forca", color = Color.White, fontSize = 12.sp, modifier = Modifier.width(30.dp))
             }
             if (modo == Modo.PRO) PainelPro(
                 ev = proEv, faixaEv = camera?.cameraInfo?.exposureState?.exposureCompensationRange?.let { it.lower to it.upper } ?: (-2 to 2),
@@ -788,6 +813,13 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             }
         }
     }
+}
+
+/** Régua 0..100 da intensidade de uma extensão do fabricante (bokeh, HDR, noite). */
+@Composable
+private fun ReguaForca(valor: Int, aoMudar: (Int) -> Unit, modifier: Modifier) {
+    Slider(value = valor.toFloat(), onValueChange = { aoMudar(it.roundToInt().coerceIn(0, 100)) }, valueRange = 0f..100f,
+        colors = SliderDefaults.colors(thumbColor = Amarelo, activeTrackColor = Amarelo, inactiveTrackColor = Color(0x33FFFFFF)), modifier = modifier)
 }
 
 private fun nomeExtensao(m: Int) = when (m) { ExtensionMode.AUTO -> "Auto"; ExtensionMode.HDR -> "HDR"; ExtensionMode.NIGHT -> "Noite"; ExtensionMode.FACE_RETOUCH -> "Retoque"; ExtensionMode.BOKEH -> "Bokeh"; else -> "Desligado" }
