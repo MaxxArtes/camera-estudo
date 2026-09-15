@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.11",
+      "build": 14,
+      "tag": "v0.11-build14",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.11-build14.apk",
+      "mudou": [
+        "Barra de cima com ícones fixos: flash, timer, proporção, grade, nível, ajustes"
+      ]
+    },
+    {
       "versao": "0.10",
       "build": 13,
       "tag": "v0.10-build13",
@@ -82,11 +91,11 @@
       ]
     }
   ],
-  "versionName": "0.10",
-  "versionCode": 10,
-  "build": 13,
+  "versionName": "0.11",
+  "versionCode": 11,
+  "build": 14,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.10-build13.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.11-build14.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T20:24:35Z"
+  "publicadoEm": "2026-09-15T20:33:52Z"
 }
