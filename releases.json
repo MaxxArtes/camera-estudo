@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.5",
+      "build": 7,
+      "tag": "v0.5-build7",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.5-build7.apk",
+      "mudou": [
+        "Ícone e paleta da arte: câmera coral/rosa em vetor, fundo quase preto, LED verde; cores aplicadas em todo o app"
+      ]
+    },
+    {
       "versao": "0.4",
       "build": 6,
       "tag": "v0.4-build6",
@@ -28,11 +37,11 @@
       ]
     }
   ],
-  "versionName": "0.4",
-  "versionCode": 4,
-  "build": 6,
+  "versionName": "0.5",
+  "versionCode": 5,
+  "build": 7,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.4-build6.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.5-build7.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T19:38:04Z"
+  "publicadoEm": "2026-09-15T19:51:15Z"
 }
