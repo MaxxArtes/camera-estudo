@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.6",
+      "build": 9,
+      "tag": "v0.6-build9",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.6-build9.apk",
+      "mudou": [
+        "Retrato: leitura correta da máscara; gestos: deslizar para cima abre ajustes, para o lado troca o modo"
+      ]
+    },
+    {
       "versao": "0.5",
       "build": 7,
       "tag": "v0.5-build7",
@@ -37,11 +46,11 @@
       ]
     }
   ],
-  "versionName": "0.5",
-  "versionCode": 5,
-  "build": 7,
+  "versionName": "0.6",
+  "versionCode": 6,
+  "build": 9,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.5-build7.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.6-build9.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T19:51:15Z"
+  "publicadoEm": "2026-09-15T20:01:38Z"
 }
