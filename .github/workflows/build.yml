@@ -35,3 +35,32 @@ jobs:
           gh release create ultimo --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --prerelease \
             --title "Última build" --notes "Sempre o APK mais recente. Histórico completo nas releases numeradas." || true
           gh release upload ultimo camera-estudo.apk --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Publica no R2 (link público fixo) e atualiza releases.json — igual ao canal do pitanga
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_PUBLICO: https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev
+        run: |
+          VERSAO=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          CODIGO=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle.kts)
+          TAG="v${VERSAO}-build${GITHUB_RUN_NUMBER}"
+          aws s3 cp app/build/outputs/apk/debug/app-debug.apk "s3://omnigen-assets/camera-estudo/camera-estudo-${TAG}.apk" --endpoint-url "$R2_ENDPOINT" --content-type application/vnd.android.package-archive
+          aws s3 cp app/build/outputs/apk/debug/app-debug.apk "s3://omnigen-assets/camera-estudo/camera-estudo.apk" --endpoint-url "$R2_ENDPOINT" --content-type application/vnd.android.package-archive --cache-control "no-cache"
+          python3 - "$VERSAO" "$CODIGO" "$TAG" "$R2_PUBLICO" <<'EOF'
+          import json, os, sys, subprocess, datetime
+          versao, codigo, tag, pub = sys.argv[1:5]
+          p = "releases.json"
+          m = json.load(open(p)) if os.path.exists(p) else {"releases": []}
+          msg = subprocess.run(["git", "log", "-1", "--pretty=%s"], capture_output=True, text=True).stdout.strip()
+          m.update({"versionName": versao, "versionCode": int(codigo), "build": int(os.environ["GITHUB_RUN_NUMBER"]),
+                    "apk": f"{pub}/camera-estudo/camera-estudo.apk",
+                    "apkVersao": f"{pub}/camera-estudo/camera-estudo-{tag}.apk",
+                    "github": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/ultimo/camera-estudo.apk",
+                    "publicadoEm": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")})
+          m["releases"] = [{"versao": versao, "build": int(os.environ["GITHUB_RUN_NUMBER"]), "tag": tag, "apk": m["apkVersao"], "mudou": [msg]}] + [r for r in m.get("releases", []) if r.get("tag") != tag]
+          json.dump(m, open(p, "w"), ensure_ascii=False, indent=2); open(p, "a").write("\n")
+          EOF
+          git config user.name "github-actions[bot]"; git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add releases.json; git commit -m "releases.json: ${TAG} [skip ci]" || true; git push

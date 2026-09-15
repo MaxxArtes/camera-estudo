@@ -32,7 +32,9 @@ o `CameraScreen.kt`.
 Sem Android Studio: cada push em `main` roda o GitHub Actions, que compila e publica o APK de
 depuração no release **"ultimo"** deste repositório, com link fixo:
 
-`https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk`
+- Link fixo no R2 (rápido, igual ao canal do pitanga): `https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk`
+- Link fixo no GitHub: `https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk`
+- Histórico: `releases.json` na raiz (versão, build, links por versão, o que mudou) e as releases numeradas.
 
 Baixe no celular, permita "instalar de fontes desconhecidas" para o navegador e instale.
 Com Android Studio: abrir a pasta e rodar; `minSdk 26`, `compileSdk 34`, Gradle 8.9, JDK 17.
