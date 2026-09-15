@@ -1,7 +1,6 @@
 package br.maxymus.cameraestudo
 
 import android.Manifest
-import android.app.Activity
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
 import android.content.pm.PackageManager
@@ -10,10 +9,6 @@ import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.result.IntentSenderRequest
-import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
-import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
-import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.CaptureRequestOptions
@@ -175,30 +170,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var faixaIso by remember { mutableStateOf(100 to 3200) }
     var faixaTempo by remember { mutableStateOf(100_000L to 100_000_000L) }   // 1/10000 s a 1/10 s
     var focoMin by remember { mutableStateOf(0f) }                             // maior dioptria = foco mais perto
-    val scanner = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
-        if (res.resultCode != Activity.RESULT_OK) return@rememberLauncherForActivityResult
-        val r = GmsDocumentScanningResult.fromActivityResultIntent(res.data) ?: return@rememberLauncherForActivityResult
-        escopo.launch(Dispatchers.IO) {
-            var n = 0
-            r.pages?.forEach { pag ->
-                runCatching {
-                    val valores = Fotos.novaEntrada().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, "DOC_" + System.currentTimeMillis() + "_$n.jpg") }
-                    val destino = contexto.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, valores)!!
-                    contexto.contentResolver.openInputStream(pag.imageUri)!!.use { i -> contexto.contentResolver.openOutputStream(destino)!!.use { o -> i.copyTo(o) } }
-                    ultima = destino; n++
-                }
-            }
-            withContext(Dispatchers.Main) { Toast.makeText(contexto, "$n página(s) salva(s) em Imagens/${Fotos.PASTA}", Toast.LENGTH_SHORT).show() }
-        }
-    }
-    fun abrirScanner() {
-        val atividade = contexto as? Activity ?: return
-        val opcoes = GmsDocumentScannerOptions.Builder().setGalleryImportAllowed(true).setPageLimit(10)
-            .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_JPEG).setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL).build()
-        GmsDocumentScanning.getClient(opcoes).getStartScanIntent(atividade)
-            .addOnSuccessListener { scanner.launch(IntentSenderRequest.Builder(it).build()) }
-            .addOnFailureListener { Toast.makeText(contexto, "Scanner indisponível: ${it.message}", Toast.LENGTH_LONG).show() }
-    }
+    var processandoDoc by remember { mutableStateOf(false) }
     var processandoRetrato by remember { mutableStateOf(false) }
     val inclinacao by lembrarInclinacao(nivel)
     var novaVersao by remember { mutableStateOf<Atualizador.Versao?>(null) }
@@ -309,7 +281,14 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         imageCapture.takePicture(saida, ContextCompat.getMainExecutor(contexto), object : ImageCapture.OnImageSavedCallback {
             override fun onImageSaved(r: ImageCapture.OutputFileResults) {
                 val uri = r.savedUri
-                if (modo == Modo.RETRATO && !bokehNativo && uri != null) {
+                if (modo == Modo.DOCUMENTO && uri != null) {
+                    processandoDoc = true
+                    escopo.launch {
+                        val r = Documento.processar(contexto, uri)
+                        processandoDoc = false; ocupado = false; ultima = uri
+                        Toast.makeText(contexto, when { r == null -> "Não consegui tratar; salvei a foto."; r.recortou -> "Documento recortado e realçado."; else -> "Não achei a folha; salvei com realce." }, Toast.LENGTH_SHORT).show()
+                    }
+                } else if (modo == Modo.RETRATO && !bokehNativo && uri != null) {
                     processandoRetrato = true
                     escopo.launch {
                         val ok = Retrato.aplicar(contexto, uri)
@@ -324,7 +303,6 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
 
     fun disparar() {
         if (ocupado) return
-        if (modo == Modo.DOCUMENTO) { abrirScanner(); return }
         if (modo.video) {
             val atual = gravacao
             if (atual != null) { atual.stop(); return }
@@ -433,7 +411,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 if (contagem > 0) Text("$contagem", color = Color.White, fontSize = 96.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center))
                 if (processandoLenta) Text("Esticando o vídeo (4x)...", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
                 if (modo == Modo.MACRO) Text(if (focoMin > 0f) "Macro: chegue perto (foco no mínimo)" else "Macro: esta lente não informa foco mínimo", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
-                if (modo == Modo.DOCUMENTO) Text("Documento: toque no obturador para abrir o scanner", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
+                if (modo == Modo.DOCUMENTO) Text(if (processandoDoc) "Recortando e realçando..." else "Documento: folha inteira no quadro, fundo mais escuro que a folha", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
                 if (modo == Modo.RETRATO) Text(
                     if (processandoRetrato) "Desfocando o fundo..." else if (bokehNativo) "Retrato do aparelho" else "Retrato: enquadre uma pessoa",
                     color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp)
@@ -516,7 +494,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 Box(
                     modifier = Modifier.size(80.dp).clip(CircleShape).border(3.dp, Color.White, CircleShape).padding(6.dp)
                         .clip(if (gravando) RoundedCornerShape(10.dp) else CircleShape)
-                        .background(when { gravando -> Rosa; modo.video -> Rosa; ocupado || processandoLenta -> Color.Gray; else -> Color.White })
+                        .background(when { gravando -> Rosa; modo.video -> Rosa; ocupado || processandoLenta || processandoDoc -> Color.Gray; else -> Color.White })
                         .clickable { disparar() }
                 )
                 Box(modifier = Modifier.size(52.dp).clip(CircleShape).background(Color(0x33FFFFFF)).clickable {

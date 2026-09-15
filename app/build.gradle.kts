@@ -11,8 +11,8 @@ android {
         applicationId = "br.maxymus.cameraestudo"
         minSdk = 26
         targetSdk = 34
-        versionCode = 13
-        versionName = "0.13"
+        versionCode = 14
+        versionName = "0.14"
         // Só arm64: todo celular Android de 2017 em diante. Sem isto o ML Kit traz 20 MB de
         // biblioteca nativa por arquitetura (x86, x86_64, armeabi-v7a) que ninguém usa no aparelho.
         ndk { abiFilters += listOf("arm64-v8a") }
@@ -60,7 +60,6 @@ dependencies {
     implementation("androidx.camera:camera-extensions:1.3.4")           // bokeh/HDR nativos, quando o aparelho tem
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6") // retrato por software (pessoa x fundo)
-    implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0-beta1") // modo Documento (scanner do Google, sem modelo no APK)
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }
