@@ -22,8 +22,11 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
   (`RegistroScanner.kt`) — é a base para ajustar os limiares fora do app.
 - Gaveta de ajustes: flash (desligado/auto/ligado), **timer** (3 s / 10 s), **proporção** 4:3 ou 16:9,
   grade, nível, **HDR** e **Rajada** (`Fusao.kt`, Kotlin puro, medido em Python antes de codar):
-  - HDR (Foto): 3 capturas com compensação −2 / 0 / +2 EV, alinhadas por MTB (Ward 2003) e fundidas por
-    exposure fusion (Mertens 2007) na luminância, pirâmide de 6 níveis, cor pela mistura das exposições.
+  - HDR (Foto): o 1º quadro (0 EV) decide. Cena clara: mais 2 capturas a −2 / +2 EV, alinhadas por MTB (Ward 2003)
+    e fundidas por exposure fusion (Mertens 2007) na luminância, 6 níveis, contraste em luminância suavizada e
+    peso menor para o quadro mais ruidoso. Cena escura (luminância média < 70): vira **Noite**, mais 3 quadros
+    iguais fundidos como rajada e sombras levantadas (gama 0,7). Medido em cena noturna sintética: bracket
+    saía mais ruidoso que a foto simples; a rajada sai menos ruidosa.
   - Rajada (Foto, Pro, Documento, Tela, Macro): 4 capturas iguais; referência = quadro mais nítido; alinhamento
     MTB + refino por ladrilho (128 px, ±2 px); merge robusto com peso exp(−(d/τ)²), τ = 2,5 σ (σ pela mediana da
     diferença entre quadros). No scanner a fusão acontece DEPOIS do recorte, com as folhas já retificadas.

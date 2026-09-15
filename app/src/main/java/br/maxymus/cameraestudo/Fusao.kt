@@ -27,6 +27,9 @@ import kotlin.math.sqrt
  *    laplaciana de 6 níveis, base ~25 px a 1600 px — menos que isso dá halo, apontado pelo agy) feita na LUMINÂNCIA; a cor vem da mistura das exposições pelos mesmos pesos,
  *    reescalada para a luminância fundida. Corta 3x o custo e a memória em relação a fundir R, G e B. Sem
  *    tone mapping; um esticamento leve de contraste no fim porque a fusão pura sai acinzentada.
+ *  - Noite (medido em cena escura sintética, ruído nos blocos lisos): foto simples 0,041, Mertens 0,063 (pior: o
+ *    quadro longo é ruidoso e a boa-exposição o escolhe para o céu), Mertens com penalidade por ruído 0,055, rajada
+ *    de 4 na mesma exposição + gama 0,7 = 0,037. Por isso o HDR mede o brilho do 1º quadro e, escuro, vira Noite.
  */
 object Fusao {
     class Plano(val w: Int, val h: Int, val v: FloatArray)
@@ -38,6 +41,33 @@ object Fusao {
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         var amostra = 1; while (max(bounds.outWidth, bounds.outHeight) / (amostra * 2) >= ladoMax) amostra *= 2
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = amostra })
+    }
+
+    /** Luminância média (0..255) de um JPEG, decodificado pequeno: decide se a cena é escura. */
+    fun brilhoMedio(bytes: ByteArray): Int {
+        val b = decodifica(bytes, 160) ?: return 128
+        val px = IntArray(b.width * b.height).also { b.getPixels(it, 0, b.width, 0, 0, b.width, b.height) }; b.recycle()
+        val lu = luminancia(px); var soma = 0L; for (v in lu) soma += v
+        return (soma / max(1, lu.size)).toInt()
+    }
+    const val LIMIAR_ESCURO = 70   // abaixo disso o bracket só traz ruído (medido: Mertens 0,063 vs rajada 0,037 de ruído nos lisos)
+
+    /**
+     * Noite: N quadros na MESMA exposição fundidos (rajada) e sombras levantadas (gama 0,7 na luminância,
+     * cor preservada pela razão). É o caminho do HDR+: à noite o bracket só traz o ruído do quadro longo.
+     */
+    suspend fun noite(quadros: List<Bitmap>, reciclar: Boolean = false, gama: Float = 0.7f): Bitmap = withContext(Dispatchers.Default) {
+        val fundido = rajada(quadros, reciclar)
+        val w = fundido.width; val h = fundido.height
+        val px = IntArray(w * h).also { fundido.getPixels(it, 0, w, 0, 0, w, h) }; fundido.recycle()
+        val tabela = FloatArray(256) { 255f * Math.pow(it / 255.0, gama.toDouble()).toFloat() }
+        for (k in px.indices) {
+            val c = px[k]; val r = c shr 16 and 255; val g = c shr 8 and 255; val b = c and 255
+            val y = (r * 54 + g * 183 + b * 19) shr 8
+            val f = if (y > 0) tabela[y] / y else 1f
+            px[k] = (0xFF shl 24) or ((r * f + 0.5f).toInt().coerceIn(0, 255) shl 16) or ((g * f + 0.5f).toInt().coerceIn(0, 255) shl 8) or (b * f + 0.5f).toInt().coerceIn(0, 255)
+        }
+        Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
     }
 
     fun gira(b: Bitmap, graus: Int): Bitmap {
@@ -214,9 +244,22 @@ object Fusao {
         // alinha tudo à exposição do meio (MTB é invariante à exposição por construção)
         val meio = pxs.size / 2
         val desl = pxs.indices.map { if (it == meio) intArrayOf(0, 0) else alinhaMtb(lums[meio], lums[it], w, h) }
+        // ruído de cada exposição (MAD do laplaciano, amostrado): o quadro mais ruidoso (o longo, à noite) perde peso
+        val sigmas = lums.map { lu ->
+            val hist = IntArray(1024); var cnt = 0
+            var y = 1; while (y < h - 1) { var x = 1; while (x < w - 1) { val j = y * w + x
+                hist[min(1023, abs(-4 * lu[j] + lu[j - w] + lu[j + w] + lu[j - 1] + lu[j + 1]))]++; cnt++; x += 4 }; y += 4 }
+            var acc = 0; var mad = 0; for (k in 0 until 1024) { acc += hist[k]; if (acc * 2 >= cnt) { mad = k; break } }
+            max(1f, mad.toFloat())
+        }
+        val sigMin = sigmas.minOrNull() ?: 1f
+        val penal = sigmas.map { (sigMin / it) * (sigMin / it) }
+        // luminância suavizada 3x3 para o contraste: ruído fino não vira "detalhe" com peso alto
+        val suaves = lums.map { lu -> IntArray(n) { k -> val x = k % w; val y = k / w
+            if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) lu[k] else (lu[k - w - 1] + lu[k - w] + lu[k - w + 1] + lu[k - 1] + lu[k] + lu[k + 1] + lu[k + w - 1] + lu[k + w] + lu[k + w + 1]) / 9 } }
         // pesos de Mertens por exposição
         val pesos = pxs.indices.map { i ->
-            val px = pxs[i]; val lu = lums[i]; val (dx, dy) = desl[i].let { it[0] to it[1] }
+            val px = pxs[i]; val lu = suaves[i]; val (dx, dy) = desl[i].let { it[0] to it[1] }; val pi = penal[i]
             FloatArray(n) { k ->
                 val x = k % w + dx; val y = k / w + dy
                 if (x !in 1 until w - 1 || y !in 1 until h - 1) 1e-6f else {
@@ -226,7 +269,7 @@ object Fusao {
                     val m = (r + g + b) / 3f
                     val sat = sqrt(((r - m) * (r - m) + (g - m) * (g - m) + (b - m) * (b - m)) / 3f)
                     val exp_ = exp(-((r - .5f) * (r - .5f) + (g - .5f) * (g - .5f) + (b - .5f) * (b - .5f)) / (2 * .2f * .2f))
-                    contraste * sat * exp_ + 1e-6f
+                    contraste * sat * exp_ * pi + 1e-6f
                 }
             }
         }
@@ -251,12 +294,13 @@ object Fusao {
         // colapsa a pirâmide
         var y = acc!![niveis - 1]
         for (l in niveis - 2 downTo 0) { val u = amplia(y, acc!![l].w, acc!![l].h); y = Plano(u.w, u.h, FloatArray(u.v.size) { k -> u.v[k] + acc!![l].v[k] }) }
-        // esticamento leve (percentis 0,5% e 99,5%): a fusão pura sai acinzentada
+        // esticamento brando (percentis 0,1% e 99,9%, ganho até 1,15): a fusão pura sai acinzentada, mas
+        // esticar forte amplificou o granulado na selfie noturna do dono
         val hist = IntArray(256); for (v in y.v) hist[v.toInt().coerceIn(0, 255)]++
         var acc2 = 0; var lo = 0; var hi = 255
-        for (i in 0..255) { acc2 += hist[i]; if (acc2 >= n * 0.005) { lo = i; break } }
-        acc2 = 0; for (i in 255 downTo 0) { acc2 += hist[i]; if (acc2 >= n * 0.005) { hi = i; break } }
-        val esc = if (hi - lo > 40) 255f / (hi - lo) else 1f
+        for (i in 0..255) { acc2 += hist[i]; if (acc2 >= n * 0.001) { lo = i; break } }
+        acc2 = 0; for (i in 255 downTo 0) { acc2 += hist[i]; if (acc2 >= n * 0.001) { hi = i; break } }
+        val esc = if (hi - lo > 40) min(1.15f, 255f / (hi - lo)) else 1f
         val saida = IntArray(n) { k ->
             val yf = ((y.v[k] - lo) * esc).coerceIn(0f, 255f)
             val yc = (corR[k] * 54 + corG[k] * 183 + corB[k] * 19) / 256f

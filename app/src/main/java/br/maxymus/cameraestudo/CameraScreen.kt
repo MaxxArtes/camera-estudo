@@ -347,26 +347,41 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             val cam = camera
             val estadoEv = cam?.cameraInfo?.exposureState
             val evOriginal = estadoEv?.exposureCompensationIndex ?: 0
-            val indices: List<Int?> = if (comHdr && estadoEv != null && estadoEv.isExposureCompensationSupported) {
-                val passo = estadoEv.exposureCompensationStep.toFloat().takeIf { it > 0f } ?: 0.5f
-                listOf(-2f, 0f, 2f).map { ev -> Math.round(ev / passo).coerceIn(estadoEv.exposureCompensationRange.lower, estadoEv.exposureCompensationRange.upper) }
-            } else List(if (comHdr) 3 else 4) { null }
+            // HDR: o 1º quadro (0 EV) decide — cena escura vira Noite (mais 3 iguais + sombras), clara vira bracket −2/+2
             val quadros = ArrayList<Pair<ByteArray, Int>>()
+            var noite = false
             try {
-                for ((i, idx) in indices.withIndex()) {
-                    fase = (if (comHdr) "HDR" else "Rajada") + " ${i + 1}/${indices.size}: segure firme"
-                    if (idx != null) cam?.cameraControl?.setExposureCompensationIndex(idx)?.let { f -> withContext(Dispatchers.IO) { runCatching { f.get() } } }
-                    quadros += capturaBytes() ?: break
+                fase = (if (comHdr) "HDR" else "Rajada") + " 1/${if (comHdr) 3 else 4}: segure firme"
+                val primeiro = capturaBytes()
+                if (primeiro != null) {
+                    quadros += primeiro
+                    val bracket = comHdr && estadoEv != null && estadoEv.isExposureCompensationSupported
+                    noite = comHdr && withContext(Dispatchers.Default) { Fusao.brilhoMedio(primeiro.first) } < Fusao.LIMIAR_ESCURO
+                    val indices: List<Int?> = if (bracket && !noite) {
+                        val passo = estadoEv.exposureCompensationStep.toFloat().takeIf { it > 0f } ?: 0.5f
+                        listOf(-2f, 2f).map { ev -> Math.round(ev / passo).coerceIn(estadoEv.exposureCompensationRange.lower, estadoEv.exposureCompensationRange.upper) }
+                    } else List(3) { null }
+                    for ((i, idx) in indices.withIndex()) {
+                        fase = (if (noite) "Noite" else if (comHdr) "HDR" else "Rajada") + " ${i + 2}/${indices.size + 1}: segure firme"
+                        if (idx != null) cam?.cameraControl?.setExposureCompensationIndex(idx)?.let { f -> withContext(Dispatchers.IO) { runCatching { f.get() } } }
+                        quadros += capturaBytes() ?: break
+                    }
                 }
             } finally { if (comHdr) cam?.cameraControl?.setExposureCompensationIndex(evOriginal) }
             if (quadros.size < 2) { fase = null; ocupado = false; Toast.makeText(contexto, "Não consegui capturar a sequência.", Toast.LENGTH_SHORT).show(); return@launch }
             val scanner = modo == Modo.DOCUMENTO || modo == Modo.TELA
-            fase = when { scanner -> "Guardando os quadros..."; comHdr -> "Fundindo as exposições..."; else -> "Fundindo ${quadros.size} quadros..." }
+            val bracketReal = comHdr && !noite && quadros.size == 3
+            fase = when { scanner -> "Guardando os quadros..."; bracketReal -> "Fundindo as exposições..."; noite -> "Noite: fundindo e levantando sombras..."; else -> "Fundindo ${quadros.size} quadros..." }
             val uri = withContext(Dispatchers.Default) {
                 runCatching {
                     // scanner: grava só o 1º quadro agora; a fusão acontece depois do recorte, com os cantos conferidos
                     val fundido = if (scanner) Fusao.decodifica(quadros[0].first, 2400)!!
-                        else { val bitmaps = quadros.mapNotNull { Fusao.decodifica(it.first, if (comHdr) 1600 else 2000) }; if (comHdr) Fusao.hdr(bitmaps, reciclar = true) else Fusao.rajada(bitmaps, reciclar = true) }
+                        else {
+                            // bracket foi capturado na ordem 0, −2, +2; o Mertens alinha tudo à exposição do meio, então reordena para −2, 0, +2
+                            val ordem = if (bracketReal) listOf(quadros[1], quadros[0], quadros[2]) else quadros
+                            val bitmaps = ordem.mapNotNull { Fusao.decodifica(it.first, if (bracketReal) 1600 else 2000) }
+                            when { bracketReal -> Fusao.hdr(bitmaps, reciclar = true); noite -> Fusao.noite(bitmaps, reciclar = true); else -> Fusao.rajada(bitmaps, reciclar = true) }
+                        }
                     val pronto = Fusao.gira(fundido, quadros[0].second)
                     val destino = contexto.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Fotos.novaEntrada())
                     if (destino != null) contexto.contentResolver.openOutputStream(destino)?.use { pronto.compress(Bitmap.CompressFormat.JPEG, 93, it) }
