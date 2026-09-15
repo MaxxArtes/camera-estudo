@@ -196,9 +196,12 @@ object Documento {
      * Lado de saída = MAIOR dos dois lados opostos (o menor é o que a perspectiva encurtou); razão perto de
      * papel (A4/Carta) ou de tela (16:9, 16:10, 4:3) é encaixada.
      */
-    suspend fun aplicar(contexto: Context, uri: Uri, quad: FloatArray?, tela: Boolean, metodo: String): Resultado? = withContext(Dispatchers.Default) {
+    suspend fun aplicar(contexto: Context, uri: Uri, quad: FloatArray?, tela: Boolean, metodo: String, rajada: List<ByteArray>? = null, rotRajada: Int = 0): Resultado? = withContext(Dispatchers.Default) {
         runCatching {
-            val foto = decodeReduzido(contexto, uri, 2400) ?: return@runCatching null
+            // rajada (agy): fundir DEPOIS do recorte — as folhas retificadas no mesmo retângulo já saem alinhadas
+            val fontes: List<() -> Bitmap?> = if (rajada != null && rajada.size >= 2) rajada.map { bytes -> { Fusao.decodifica(bytes, 2000)?.let { Fusao.gira(it, rotRajada) } } }
+                else listOf({ decodeReduzido(contexto, uri, 2400) })
+            val foto = fontes[0]() ?: return@runCatching null
             var saida: Bitmap = foto; var recortou = false
             if (quad != null && convexo(quad)) {
                 val p = FloatArray(8) { quad[it] * (if (it % 2 == 0) foto.width else foto.height) }
@@ -212,10 +215,21 @@ object Documento {
                 val w = (larg * escS).toInt(); val h = (alt * escS).toInt()
                 val m = Matrix()
                 if (m.setPolyToPoly(p, 0, floatArrayOf(0f, 0f, w.toFloat(), 0f, w.toFloat(), h.toFloat(), 0f, h.toFloat()), 0, 4)) {
-                    val plano = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-                    Canvas(plano).drawBitmap(foto, m, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
-                    saida = plano; recortou = true; foto.recycle()
+                    val pincel = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
+                    val planos = ArrayList<Bitmap>()
+                    for ((i, fonte) in fontes.withIndex()) {
+                        val origem = if (i == 0) foto else fonte() ?: continue
+                        val plano = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                        Canvas(plano).drawBitmap(origem, m, pincel)
+                        origem.recycle(); planos += plano
+                    }
+                    saida = if (planos.size >= 2) Fusao.rajada(planos, reciclar = true) else planos[0]
+                    recortou = true
                 }
+            } else if (fontes.size >= 2) {
+                // sem recorte: funde os quadros inteiros (alinhamento por MTB + ladrilhos)
+                val todos = arrayListOf(foto); for (i in 1 until fontes.size) fontes[i]()?.let { todos += it }
+                if (todos.size >= 2) saida = Fusao.rajada(todos, reciclar = true)
             }
             val pronta = if (tela) {
                 val semMoire = suavizaMoire(saida); if (semMoire !== saida) saida.recycle()

@@ -4,6 +4,7 @@ import android.Manifest
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CaptureRequest
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.net.Uri
 import android.provider.MediaStore
 import android.widget.Toast
@@ -19,6 +20,7 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.extensions.ExtensionMode
 import androidx.camera.extensions.ExtensionsManager
@@ -62,6 +64,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.BurstMode
 import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.SlowMotionVideo
 import androidx.compose.material.icons.filled.Monitor
@@ -119,6 +122,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import kotlin.math.abs
 
 // Paleta do ícone: coral → rosa no corpo, fundo quase preto, aro branco, LED verde.
@@ -178,6 +183,9 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var faixaTempo by remember { mutableStateOf(100_000L to 100_000_000L) }   // 1/10000 s a 1/10 s
     var focoMin by remember { mutableStateOf(0f) }                             // maior dioptria = foco mais perto
     var processandoDoc by remember { mutableStateOf(false) }
+    var hdr by remember { mutableStateOf(false) }               // Foto: 3 exposições (−2, 0, +2 EV) fundidas (Fusao.hdr)
+    var rajada by remember { mutableStateOf(false) }            // Foto/Pro/Documento/Tela/Macro: 4 quadros fundidos (Fusao.rajada)
+    var fase by remember { mutableStateOf<String?>(null) }      // texto de progresso da rajada/HDR
     var conferir by remember { mutableStateOf(true) }            // Documento/Tela: abrir o editor de cantos antes de gravar
     var edicao by remember { mutableStateOf<Edicao?>(null) }
     var processandoRetrato by remember { mutableStateOf(false) }
@@ -290,10 +298,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     }
 
     // Documento/Tela, passo 2: grava o recorte escolhido (quad null = só realce), registra e libera o botão
-    fun concluirDocumento(uri: Uri, d: Documento.Deteccao, tela: Boolean, quad: FloatArray?, conferido: Boolean) {
+    fun concluirDocumento(uri: Uri, d: Documento.Deteccao, tela: Boolean, quad: FloatArray?, conferido: Boolean, quadros: List<ByteArray>? = null, rot: Int = 0) {
         edicao = null; processandoDoc = true
         escopo.launch {
-            val r = Documento.aplicar(contexto, uri, quad, tela, d.metodo)
+            val r = Documento.aplicar(contexto, uri, quad, tela, d.metodo, quadros, rot)
             RegistroScanner.anota(contexto, tela, d, quad, conferido, r)
             d.previa.recycle()
             processandoDoc = false; ocupado = false; ultima = uri
@@ -302,24 +310,89 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         }
     }
 
+    // Documento/Tela, passo 1: detecta e abre o editor (ou grava direto, se o usuário desligou a conferência)
+    fun trataDocumento(uri: Uri, quadros: List<ByteArray>? = null, rot: Int = 0) {
+        val tela = modo == Modo.TELA
+        processandoDoc = true
+        escopo.launch {
+            val d = Documento.detectar(contexto, uri, tela)
+            processandoDoc = false
+            when {
+                d == null -> { ocupado = false; ultima = uri; Toast.makeText(contexto, "Não consegui analisar; salvei a foto.", Toast.LENGTH_SHORT).show() }
+                conferir -> edicao = Edicao(uri, d, tela, quadros, rot)
+                else -> concluirDocumento(uri, d, tela, d.quad, false, quadros, rot)
+            }
+        }
+    }
+
+    /** Uma captura em memória: bytes do JPEG e a rotação que o sensor pede. */
+    suspend fun capturaBytes(): Pair<ByteArray, Int>? = suspendCancellableCoroutine { cont ->
+        imageCapture.takePicture(ContextCompat.getMainExecutor(contexto), object : ImageCapture.OnImageCapturedCallback() {
+            override fun onCaptureSuccess(image: ImageProxy) {
+                val buf = image.planes[0].buffer; val bytes = ByteArray(buf.remaining()).also { buf.get(it) }
+                val rot = image.imageInfo.rotationDegrees; image.close()
+                cont.resume(bytes to rot)
+            }
+            override fun onError(e: ImageCaptureException) { cont.resume(null) }
+        })
+    }
+
+    /**
+     * Várias fotos em sequência e uma só gravada: HDR (3 exposições por compensação de EV) ou rajada
+     * (4 quadros iguais). A foto fundida segue o mesmo caminho da foto simples (inclusive o scanner).
+     */
+    fun tiraVarias(comHdr: Boolean) {
+        ocupado = true
+        escopo.launch {
+            val cam = camera
+            val estadoEv = cam?.cameraInfo?.exposureState
+            val evOriginal = estadoEv?.exposureCompensationIndex ?: 0
+            val indices: List<Int?> = if (comHdr && estadoEv != null && estadoEv.isExposureCompensationSupported) {
+                val passo = estadoEv.exposureCompensationStep.toFloat().takeIf { it > 0f } ?: 0.5f
+                listOf(-2f, 0f, 2f).map { ev -> Math.round(ev / passo).coerceIn(estadoEv.exposureCompensationRange.lower, estadoEv.exposureCompensationRange.upper) }
+            } else List(if (comHdr) 3 else 4) { null }
+            val quadros = ArrayList<Pair<ByteArray, Int>>()
+            try {
+                for ((i, idx) in indices.withIndex()) {
+                    fase = (if (comHdr) "HDR" else "Rajada") + " ${i + 1}/${indices.size}: segure firme"
+                    if (idx != null) cam?.cameraControl?.setExposureCompensationIndex(idx)?.let { f -> withContext(Dispatchers.IO) { runCatching { f.get() } } }
+                    quadros += capturaBytes() ?: break
+                }
+            } finally { if (comHdr) cam?.cameraControl?.setExposureCompensationIndex(evOriginal) }
+            if (quadros.size < 2) { fase = null; ocupado = false; Toast.makeText(contexto, "Não consegui capturar a sequência.", Toast.LENGTH_SHORT).show(); return@launch }
+            val scanner = modo == Modo.DOCUMENTO || modo == Modo.TELA
+            fase = when { scanner -> "Guardando os quadros..."; comHdr -> "Fundindo as exposições..."; else -> "Fundindo ${quadros.size} quadros..." }
+            val uri = withContext(Dispatchers.Default) {
+                runCatching {
+                    // scanner: grava só o 1º quadro agora; a fusão acontece depois do recorte, com os cantos conferidos
+                    val fundido = if (scanner) Fusao.decodifica(quadros[0].first, 2400)!!
+                        else { val bitmaps = quadros.mapNotNull { Fusao.decodifica(it.first, if (comHdr) 1600 else 2000) }; if (comHdr) Fusao.hdr(bitmaps, reciclar = true) else Fusao.rajada(bitmaps, reciclar = true) }
+                    val pronto = Fusao.gira(fundido, quadros[0].second)
+                    val destino = contexto.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Fotos.novaEntrada())
+                    if (destino != null) contexto.contentResolver.openOutputStream(destino)?.use { pronto.compress(Bitmap.CompressFormat.JPEG, 93, it) }
+                    pronto.recycle()
+                    destino
+                }.getOrNull()
+            }
+            fase = null
+            when {
+                uri == null -> { ocupado = false; Toast.makeText(contexto, "A fusão falhou; nada foi gravado.", Toast.LENGTH_SHORT).show() }
+                scanner -> trataDocumento(uri, quadros.map { it.first }, quadros[0].second)
+                else -> { ocupado = false; ultima = uri }
+            }
+        }
+    }
+
     fun tiraFoto() {
+        if (modo == Modo.FOTO && hdr) { tiraVarias(true); return }
+        if (rajada && !modo.video && modo != Modo.RETRATO) { tiraVarias(false); return }
         ocupado = true
         val saida = ImageCapture.OutputFileOptions.Builder(contexto.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Fotos.novaEntrada()).build()
         imageCapture.takePicture(saida, ContextCompat.getMainExecutor(contexto), object : ImageCapture.OnImageSavedCallback {
             override fun onImageSaved(r: ImageCapture.OutputFileResults) {
                 val uri = r.savedUri
                 if ((modo == Modo.DOCUMENTO || modo == Modo.TELA) && uri != null) {
-                    val tela = modo == Modo.TELA
-                    processandoDoc = true
-                    escopo.launch {
-                        val d = Documento.detectar(contexto, uri, tela)
-                        processandoDoc = false
-                        when {
-                            d == null -> { ocupado = false; ultima = uri; Toast.makeText(contexto, "Não consegui analisar; salvei a foto.", Toast.LENGTH_SHORT).show() }
-                            conferir -> edicao = Edicao(uri, d, tela)
-                            else -> concluirDocumento(uri, d, tela, d.quad, false)
-                        }
-                    }
+                    trataDocumento(uri)
                 } else if (modo == Modo.RETRATO && !bokehNativo && uri != null) {
                     processandoRetrato = true
                     escopo.launch {
@@ -441,6 +514,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     Box(modifier = Modifier.align(Alignment.Center).width(140.dp).height(2.dp).rotate(-inclinacao).background(if (nivelado) Verde else Color.White.copy(alpha = 0.8f)))
                 }
                 if (contagem > 0) Text("$contagem", color = Color.White, fontSize = 96.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center))
+                fase?.let { Text(it, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.align(Alignment.Center).clip(RoundedCornerShape(12.dp)).background(Color(0xAA000000)).padding(horizontal = 14.dp, vertical = 8.dp)) }
                 if (processandoLenta) Text("Esticando o vídeo (4x)...", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
                 if (modo == Modo.MACRO) Text(if (focoMin > 0f) "Macro: chegue perto (foco no mínimo)" else "Macro: esta lente não informa foco mínimo", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
                 if (modo == Modo.TELA) Text(if (processandoDoc) "Recortando a tela e tirando o moiré..." else "Tela: encha o quadro com a página, sem reflexo", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
@@ -542,8 +616,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         // ---- Documento/Tela: conferência dos cantos antes de gravar ----
         edicao?.let { e ->
             EditorQuad(e.deteccao.previa, e.deteccao.quad, e.tela,
-                aoUsar = { q -> concluirDocumento(e.uri, e.deteccao, e.tela, q, true) },
-                aoSemRecorte = { concluirDocumento(e.uri, e.deteccao, e.tela, null, true) },
+                aoUsar = { q -> concluirDocumento(e.uri, e.deteccao, e.tela, q, true, e.quadros, e.rot) },
+                aoSemRecorte = { concluirDocumento(e.uri, e.deteccao, e.tela, null, true, e.quadros, e.rot) },
                 aoDescartar = { Fotos.apagar(contexto, e.uri); e.deteccao.previa.recycle(); edicao = null; ocupado = false })
         }
 
@@ -569,7 +643,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     item { Ajuste(Icons.Filled.Crop, "Recorte", if (conferir) "Conferir cantos" else "Automático", conferir) { conferir = !conferir } }
                     item { Ajuste(Icons.Filled.Share, "Registro", "Scanner: ${RegistroScanner.linhas(contexto)}", false) { if (!RegistroScanner.compartilhar(contexto)) Toast.makeText(contexto, "Nenhuma digitalização registrada ainda.", Toast.LENGTH_SHORT).show(); gaveta = false } }
                     item { Ajuste(Icons.Filled.AspectRatio, "Proporção", if (proporcao == AspectRatio.RATIO_16_9) "16:9" else "4:3", true) { proporcao = if (proporcao == AspectRatio.RATIO_16_9) AspectRatio.RATIO_4_3 else AspectRatio.RATIO_16_9 } }
-                    item { Ajuste(Icons.Filled.HdrAuto, "HDR", "Auto", false) { Toast.makeText(contexto, "HDR: o aparelho decide (CameraX Extensions em breve)", Toast.LENGTH_SHORT).show() } }
+                    item { Ajuste(Icons.Filled.HdrAuto, "HDR", if (hdr) "3 exposições" else "Desligado", hdr) { hdr = !hdr } }
+                    item { Ajuste(Icons.Filled.BurstMode, "Rajada", if (rajada) "4 quadros" else "Desligada", rajada) { rajada = !rajada } }
                     item { Ajuste(Icons.Filled.Grid3x3, "Grade", if (grade) "Ativado" else "Desativado", grade) { grade = !grade } }
                     item { Ajuste(Icons.Filled.Straighten, "Nível", if (nivel) "Ativado" else "Desativado", nivel) { nivel = !nivel } }
                     item { Ajuste(Icons.Filled.Tonality, "Filtro", "Nenhum", false) { Toast.makeText(contexto, "Filtros: em breve", Toast.LENGTH_SHORT).show() } }
@@ -593,7 +668,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
 }
 
 /** Foto de Documento/Tela esperando o usuário conferir os cantos. */
-private class Edicao(val uri: Uri, val deteccao: Documento.Deteccao, val tela: Boolean)
+private class Edicao(val uri: Uri, val deteccao: Documento.Deteccao, val tela: Boolean, val quadros: List<ByteArray>? = null, val rot: Int = 0)
 
 @Composable
 private fun Ajuste(icone: ImageVector, titulo: String, valor: String, ativo: Boolean, aoTocar: () -> Unit) {

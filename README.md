@@ -21,7 +21,14 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
   `files/scanner.jsonl` (luz, candidato, quadro detectado x usado, quanto moveu); "Registro" na gaveta envia o arquivo
   (`RegistroScanner.kt`) — é a base para ajustar os limiares fora do app.
 - Gaveta de ajustes: flash (desligado/auto/ligado), **timer** (3 s / 10 s), **proporção** 4:3 ou 16:9,
-  grade, nível; HDR e filtros são marcadores para estudo futuro.
+  grade, nível, **HDR** e **Rajada** (`Fusao.kt`, Kotlin puro, medido em Python antes de codar):
+  - HDR (Foto): 3 capturas com compensação −2 / 0 / +2 EV, alinhadas por MTB (Ward 2003) e fundidas por
+    exposure fusion (Mertens 2007) na luminância, pirâmide de 6 níveis, cor pela mistura das exposições.
+  - Rajada (Foto, Pro, Documento, Tela, Macro): 4 capturas iguais; referência = quadro mais nítido; alinhamento
+    MTB + refino por ladrilho (128 px, ±2 px); merge robusto com peso exp(−(d/τ)²), τ = 2,5 σ (σ pela mediana da
+    diferença entre quadros). No scanner a fusão acontece DEPOIS do recorte, com as folhas já retificadas.
+    Medido em rajada sintética: +3 a +4 dB sobre 1 quadro; média simples piorou 5 dB.
+  Filtros seguem marcador.
 - Zoom por pinça, foco/exposição por toque, **deslizar para o lado troca o modo** e **deslizar para cima abre os ajustes**.
 - Fotos em **Imagens/CameraEstudo**, vídeos em **Filmes/CameraEstudo** (aparecem na galeria do celular).
 - Galeria própria: grade de fotos e vídeos, tela cheia com **Compartilhar, Editar, Informações e
@@ -40,6 +47,7 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
 | `Lenta.kt` | estica os tempos dos quadros do vídeo (câmera lenta de estudo) |
 | `Documento.kt` | detectar (retinex, Otsu ou bordas, placar do quadrilátero) e aplicar (setPolyToPoly, realce) |
 | `EditorQuad.kt` | conferência dos cantos: alças, lupa, convexidade, Usar / Sem recorte / Descartar |
+| `Fusao.kt` | MTB, refino por ladrilho, merge robusto de rajada, Mertens em luminância |
 | `RegistroScanner.kt` | uma linha JSON por digitalização; compartilhar pelo FileProvider |
 | `Pdf.kt` | PDF de várias páginas com o PdfDocument do Android (galeria: selecionar → PDF) |
 
