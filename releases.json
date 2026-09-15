@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.21",
+      "build": 24,
+      "tag": "v0.21-build24",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.21-build24.apk",
+      "mudou": [
+        "HDR e Rajada em Kotlin puro (Fusao.kt), medidos em Python antes e revisados com o agy"
+      ]
+    },
+    {
       "versao": "0.20",
       "build": 23,
       "tag": "v0.20-build23",
@@ -172,11 +181,11 @@
       ]
     }
   ],
-  "versionName": "0.20",
-  "versionCode": 20,
-  "build": 23,
+  "versionName": "0.21",
+  "versionCode": 21,
+  "build": 24,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.20-build23.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.21-build24.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T21:59:57Z"
+  "publicadoEm": "2026-09-15T22:29:20Z"
 }
