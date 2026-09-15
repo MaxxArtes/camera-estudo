@@ -35,6 +35,7 @@ import androidx.core.content.ContextCompat
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Telemetria.iniciar(this)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFFFF5A5F), secondary = Color(0xFF22C55E), background = Color(0xFF0E0E12), surface = Color(0xFF16161B))) {
                 App()

@@ -37,6 +37,8 @@ object RegistroScanner {
                 put("recortou", r?.recortou ?: false)
             }
             File(contexto.filesDir, NOME).appendText(linha.toString() + "\n")
+            Telemetria.evento("scanner", mapOf("modo" to (if (tela) "tela" else "folha"), "metodo" to d.metodo, "brilho" to d.brilho, "contraste" to d.contraste,
+                "frac_clara" to d.fracClara, "desloc" to desloc, "conferido" to conferido, "recortou" to (r?.recortou ?: false), "detectado" to d.quad, "usado" to usado))
         }
     }
 

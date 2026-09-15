@@ -83,6 +83,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Tonality
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -237,7 +238,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         camera = runCatching {
             if (modo.video) provider.bindToLifecycle(dono, seletor, preview, videoCapture)
             else provider.bindToLifecycle(dono, seletor, preview, imageCapture)
-        }.onFailure { Toast.makeText(contexto, "Não consegui abrir a câmera: ${it.message}", Toast.LENGTH_LONG).show() }.getOrNull()
+        }.onFailure { Telemetria.evento("erro", mapOf("onde" to "abrir_camera", "modo" to modo.name.lowercase(), "msg" to (it.message ?: ""))); Toast.makeText(contexto, "Não consegui abrir a câmera: ${it.message}", Toast.LENGTH_LONG).show() }.getOrNull()
+        Telemetria.evento("camera", mapOf("modo" to modo.name.lowercase(), "lente" to (if (lente == CameraSelector.LENS_FACING_FRONT) "frontal" else "traseira"), "bokeh_nativo" to bokehNativo, "proporcao" to (if (proporcao == AspectRatio.RATIO_16_9) "16:9" else "4:3")))
         zoom = 1f
         camera?.cameraControl?.setZoomRatio(1f)
         // faixas do sensor para o modo Pro (e foco mais perto para o Macro)
@@ -301,7 +303,9 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     fun concluirDocumento(uri: Uri, d: Documento.Deteccao, tela: Boolean, quad: FloatArray?, conferido: Boolean, quadros: List<ByteArray>? = null, rot: Int = 0) {
         edicao = null; processandoDoc = true
         escopo.launch {
+            val t = Telemetria.agora()
             val r = Documento.aplicar(contexto, uri, quad, tela, d.metodo, quadros, rot)
+            Telemetria.evento("scanner_aplicar", mapOf("ms" to Telemetria.ms(t), "quadros" to (quadros?.size ?: 1), "recortou" to (r?.recortou ?: false), "modo" to (if (tela) "tela" else "folha")))
             RegistroScanner.anota(contexto, tela, d, quad, conferido, r)
             d.previa.recycle()
             processandoDoc = false; ocupado = false; ultima = uri
@@ -315,7 +319,9 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         val tela = modo == Modo.TELA
         processandoDoc = true
         escopo.launch {
+            val t = Telemetria.agora()
             val d = Documento.detectar(contexto, uri, tela)
+            Telemetria.evento("scanner_detectar", mapOf("ms" to Telemetria.ms(t), "achou" to (d?.quad != null), "metodo" to (d?.metodo ?: "falha"), "modo" to (if (tela) "tela" else "folha")))
             processandoDoc = false
             when {
                 d == null -> { ocupado = false; ultima = uri; Toast.makeText(contexto, "Não consegui analisar; salvei a foto.", Toast.LENGTH_SHORT).show() }
@@ -349,29 +355,37 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             val evOriginal = estadoEv?.exposureCompensationIndex ?: 0
             // HDR: o 1º quadro (0 EV) decide — cena escura vira Noite (mais 3 iguais + sombras), clara vira bracket −2/+2
             val quadros = ArrayList<Pair<ByteArray, Int>>()
-            var noite = false
+            val tempos = ArrayList<Long>(); val tInicio = Telemetria.agora()
+            var noite = false; var brilho = -1
             try {
                 fase = (if (comHdr) "HDR" else "Rajada") + " 1/${if (comHdr) 3 else 4}: segure firme"
+                var tq = Telemetria.agora()
                 val primeiro = capturaBytes()
+                tempos += Telemetria.ms(tq)
                 if (primeiro != null) {
                     quadros += primeiro
                     val bracket = comHdr && estadoEv != null && estadoEv.isExposureCompensationSupported
-                    noite = comHdr && withContext(Dispatchers.Default) { Fusao.brilhoMedio(primeiro.first) } < Fusao.LIMIAR_ESCURO
+                    if (comHdr) brilho = withContext(Dispatchers.Default) { Fusao.brilhoMedio(primeiro.first) }
+                    noite = comHdr && brilho < Fusao.LIMIAR_ESCURO
                     val indices: List<Int?> = if (bracket && !noite) {
                         val passo = estadoEv.exposureCompensationStep.toFloat().takeIf { it > 0f } ?: 0.5f
                         listOf(-2f, 2f).map { ev -> Math.round(ev / passo).coerceIn(estadoEv.exposureCompensationRange.lower, estadoEv.exposureCompensationRange.upper) }
                     } else List(3) { null }
                     for ((i, idx) in indices.withIndex()) {
                         fase = (if (noite) "Noite" else if (comHdr) "HDR" else "Rajada") + " ${i + 2}/${indices.size + 1}: segure firme"
+                        tq = Telemetria.agora()
                         if (idx != null) cam?.cameraControl?.setExposureCompensationIndex(idx)?.let { f -> withContext(Dispatchers.IO) { runCatching { f.get() } } }
                         quadros += capturaBytes() ?: break
+                        tempos += Telemetria.ms(tq)
                     }
                 }
             } finally { if (comHdr) cam?.cameraControl?.setExposureCompensationIndex(evOriginal) }
-            if (quadros.size < 2) { fase = null; ocupado = false; Toast.makeText(contexto, "Não consegui capturar a sequência.", Toast.LENGTH_SHORT).show(); return@launch }
+            val tipoSeq = when { !comHdr -> "rajada"; noite -> "noite"; else -> "hdr" }
+            if (quadros.size < 2) { fase = null; ocupado = false; Telemetria.evento("erro", mapOf("onde" to "captura_" + tipoSeq, "quadros" to quadros.size, "ms_quadros" to tempos)); Toast.makeText(contexto, "Não consegui capturar a sequência.", Toast.LENGTH_SHORT).show(); return@launch }
             val scanner = modo == Modo.DOCUMENTO || modo == Modo.TELA
             val bracketReal = comHdr && !noite && quadros.size == 3
             fase = when { scanner -> "Guardando os quadros..."; bracketReal -> "Fundindo as exposições..."; noite -> "Noite: fundindo e levantando sombras..."; else -> "Fundindo ${quadros.size} quadros..." }
+            val tFusao = Telemetria.agora()
             val uri = withContext(Dispatchers.Default) {
                 runCatching {
                     // scanner: grava só o 1º quadro agora; a fusão acontece depois do recorte, com os cantos conferidos
@@ -390,6 +404,9 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 }.getOrNull()
             }
             fase = null
+            Telemetria.evento("sequencia", mapOf("tipo" to tipoSeq, "modo" to modo.name.lowercase(), "quadros" to quadros.size, "ms_quadros" to tempos, "ms_captura" to tempos.sum(),
+                "ms_fusao" to Telemetria.ms(tFusao), "ms_total" to Telemetria.ms(tInicio), "brilho" to brilho, "bytes_quadro" to quadros[0].first.size, "ok" to (uri != null),
+                "lente" to (if (lente == CameraSelector.LENS_FACING_FRONT) "frontal" else "traseira"), "flash" to flash, "zoom" to zoom))
             when {
                 uri == null -> { ocupado = false; Toast.makeText(contexto, "A fusão falhou; nada foi gravado.", Toast.LENGTH_SHORT).show() }
                 scanner -> trataDocumento(uri, quadros.map { it.first }, quadros[0].second)
@@ -402,22 +419,27 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         if (modo == Modo.FOTO && hdr) { tiraVarias(true); return }
         if (rajada && !modo.video && modo != Modo.RETRATO) { tiraVarias(false); return }
         ocupado = true
+        val tFoto = Telemetria.agora()
         val saida = ImageCapture.OutputFileOptions.Builder(contexto.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Fotos.novaEntrada()).build()
         imageCapture.takePicture(saida, ContextCompat.getMainExecutor(contexto), object : ImageCapture.OnImageSavedCallback {
             override fun onImageSaved(r: ImageCapture.OutputFileResults) {
                 val uri = r.savedUri
+                Telemetria.evento("foto", mapOf("modo" to modo.name.lowercase(), "ms" to Telemetria.ms(tFoto), "lente" to (if (lente == CameraSelector.LENS_FACING_FRONT) "frontal" else "traseira"),
+                    "flash" to flash, "zoom" to zoom, "bokeh_nativo" to bokehNativo, "iso" to proIso, "tempo_ns" to proTempoNs, "ev" to proEv, "ok" to (uri != null)))
                 if ((modo == Modo.DOCUMENTO || modo == Modo.TELA) && uri != null) {
                     trataDocumento(uri)
                 } else if (modo == Modo.RETRATO && !bokehNativo && uri != null) {
                     processandoRetrato = true
                     escopo.launch {
+                        val tR = Telemetria.agora()
                         val ok = Retrato.aplicar(contexto, uri)
+                        Telemetria.evento("retrato_software", mapOf("ms" to Telemetria.ms(tR), "achou_pessoa" to ok))
                         processandoRetrato = false; ocupado = false; ultima = uri
                         if (!ok) Toast.makeText(contexto, "Não achei uma pessoa na foto; salvei sem desfoque.", Toast.LENGTH_SHORT).show()
                     }
                 } else { ocupado = false; ultima = uri }
             }
-            override fun onError(e: ImageCaptureException) { ocupado = false; Toast.makeText(contexto, "Falhou: ${e.message}", Toast.LENGTH_LONG).show() }
+            override fun onError(e: ImageCaptureException) { ocupado = false; Telemetria.evento("erro", mapOf("onde" to "foto", "msg" to (e.message ?: ""))); Toast.makeText(contexto, "Falhou: ${e.message}", Toast.LENGTH_LONG).show() }
         })
     }
 
@@ -656,6 +678,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     item { Ajuste(iconeFlash(flash), "Flash", rotuloFlash(flash), flash != ImageCapture.FLASH_MODE_OFF) { flash = proximoFlash(flash) } }
                     item { Ajuste(Icons.Filled.Timer, "Timer", if (timer == 0) "Desativado" else "${timer} s", timer > 0) { timer = when (timer) { 0 -> 3; 3 -> 10; else -> 0 } } }
                     item { Ajuste(Icons.Filled.Crop, "Recorte", if (conferir) "Conferir cantos" else "Automático", conferir) { conferir = !conferir } }
+                    item { var tel by remember { mutableStateOf(Telemetria.ligada) }; Ajuste(Icons.Filled.Timeline, "Telemetria", if (tel) "Enviando" else "Desligada", tel) { tel = Telemetria.alternar() } }
                     item { Ajuste(Icons.Filled.Share, "Registro", "Scanner: ${RegistroScanner.linhas(contexto)}", false) { if (!RegistroScanner.compartilhar(contexto)) Toast.makeText(contexto, "Nenhuma digitalização registrada ainda.", Toast.LENGTH_SHORT).show(); gaveta = false } }
                     item { Ajuste(Icons.Filled.AspectRatio, "Proporção", if (proporcao == AspectRatio.RATIO_16_9) "16:9" else "4:3", true) { proporcao = if (proporcao == AspectRatio.RATIO_16_9) AspectRatio.RATIO_4_3 else AspectRatio.RATIO_16_9 } }
                     item { Ajuste(Icons.Filled.HdrAuto, "HDR", if (hdr) "3 exposições" else "Desligado", hdr) { hdr = !hdr } }

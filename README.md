@@ -32,6 +32,10 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
     diferença entre quadros). No scanner a fusão acontece DEPOIS do recorte, com as folhas já retificadas.
     Medido em rajada sintética: +3 a +4 dB sobre 1 quadro; média simples piorou 5 dB.
   Filtros seguem marcador.
+- **Telemetria** (`Telemetria.kt`, desligável na gaveta): cada foto, sequência (rajada/HDR/noite, tempo por quadro e
+  da fusão), scanner (detectar, aplicar, quadro detectado x usado), retrato por software, troca de câmera e erro
+  vira uma linha JSON com aparelho, versão e memória, enviada em lote ao coletor da bancada (token injetado pelo
+  CI; build local sem token não envia). Nunca envia imagem. É o que alimenta as melhorias medidas.
 - Zoom por pinça, foco/exposição por toque, **deslizar para o lado troca o modo** e **deslizar para cima abre os ajustes**.
 - Fotos em **Imagens/CameraEstudo**, vídeos em **Filmes/CameraEstudo** (aparecem na galeria do celular).
 - Galeria própria: grade de fotos e vídeos, tela cheia com **Compartilhar, Editar, Informações e
@@ -51,6 +55,7 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
 | `Documento.kt` | detectar (retinex, Otsu ou bordas, placar do quadrilátero) e aplicar (setPolyToPoly, realce) |
 | `EditorQuad.kt` | conferência dos cantos: alças, lupa, convexidade, Usar / Sem recorte / Descartar |
 | `Fusao.kt` | MTB, refino por ladrilho, merge robusto de rajada, Mertens em luminância |
+| `Telemetria.kt` | fila JSONL local + envio em lote (20 s ou 3 s após evento) com Bearer token do CI |
 | `RegistroScanner.kt` | uma linha JSON por digitalização; compartilhar pelo FileProvider |
 | `Pdf.kt` | PDF de várias páginas com o PdfDocument do Android (galeria: selecionar → PDF) |
 

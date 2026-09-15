@@ -19,6 +19,7 @@ jobs:
           echo "${{ secrets.SIGNING_KEY_BASE64 }}" | base64 -d > "$RUNNER_TEMP/camera.jks"
           echo "CAMERA_KEYSTORE=$RUNNER_TEMP/camera.jks" >> "$GITHUB_ENV"
           echo "CAMERA_KEYSTORE_SENHA=${{ secrets.SIGNING_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "TELEMETRIA_TOKEN=${{ secrets.TELEMETRIA_TOKEN }}" >> "$GITHUB_ENV"
       - name: Build (release assinado, compactado com R8)
         run: gradle :app:assembleRelease --no-daemon
       # Artifact é best-effort (cota de storage já estourou no passado); a entrega de verdade é o
