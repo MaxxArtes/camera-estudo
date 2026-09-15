@@ -11,8 +11,8 @@ android {
         applicationId = "br.maxymus.cameraestudo"
         minSdk = 26
         targetSdk = 34
-        versionCode = 5
-        versionName = "0.5"
+        versionCode = 6
+        versionName = "0.6"
     }
     // Assinatura fixa (secrets do repo): sem ela cada build teria chave aleatória e o celular
     // recusaria atualizar por cima. Localmente, sem as variáveis, cai na chave de debug.
@@ -54,6 +54,9 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.3.4")
     implementation("androidx.camera:camera-view:1.3.4")
     implementation("androidx.camera:camera-video:1.3.4")
+    implementation("androidx.camera:camera-extensions:1.3.4")           // bokeh/HDR nativos, quando o aparelho tem
+    implementation("androidx.exifinterface:exifinterface:1.3.7")
+    implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6") // retrato por software (pessoa x fundo)
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }

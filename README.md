@@ -6,8 +6,9 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
 - Desenho no estilo do app de câmera do iPhone: barra de cima (flash, gaveta, ajustes), visualização
   com **grade** e **nível de bolha** (acelerômetro), **chips de zoom** 0,5x / 1x / 2x, linha de modos,
   miniatura, obturador e trocar câmera.
-- Modos **Foto** e **Vídeo** funcionando (vídeo com áudio, se a permissão for dada); Lenta, Retrato e
-  Mais marcados como "em breve".
+- Modos **Foto**, **Vídeo** (com áudio, se a permissão for dada) e **Retrato**: usa o bokeh nativo do
+  aparelho pelo CameraX Extensions quando existe; senão, separa a pessoa do fundo com o ML Kit e
+  desfoca o fundo depois da foto (`Retrato.kt`). Lenta e Mais marcados como "em breve".
 - Gaveta de ajustes: flash (desligado/auto/ligado), **timer** (3 s / 10 s), **proporção** 4:3 ou 16:9,
   grade, nível; HDR e filtros são marcadores para estudo futuro.
 - Zoom por pinça e foco/exposição por toque.
@@ -24,6 +25,7 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
 | `Fotos.kt` | MediaStore: onde salvar, listar, apagar; favoritos locais |
 | `Nivel.kt` | acelerômetro → ângulo do nível de bolha |
 | `Atualizador.kt` | lê `releases.json`, compara a versão, baixa e instala a nova |
+| `Retrato.kt` | retrato por software: máscara do ML Kit + fundo desfocado |
 
 CameraX é a camada do Google em cima do Camera2: você declara os "casos de uso" e ele cuida de
 abrir, configurar e fechar a câmera. Para estudar o Camera2 puro depois, o lugar de trocar é só

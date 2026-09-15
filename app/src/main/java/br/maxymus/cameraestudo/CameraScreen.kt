@@ -14,6 +14,8 @@ import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
+import androidx.camera.extensions.ExtensionMode
+import androidx.camera.extensions.ExtensionsManager
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.MediaStoreOutputOptions
 import androidx.camera.video.Quality
@@ -93,7 +95,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import coil.compose.AsyncImage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
@@ -105,7 +109,7 @@ private val Fundo = Color(0xFF0E0E12)
 private val Painel = Color(0xFF16161B)
 
 enum class Modo(val rotulo: String, val pronto: Boolean) {
-    LENTA("LENTA", false), VIDEO("VÍDEO", true), FOTO("FOTO", true), RETRATO("RETRATO", false), MAIS("MAIS", false)
+    LENTA("LENTA", false), VIDEO("VÍDEO", true), FOTO("FOTO", true), RETRATO("RETRATO", true), MAIS("MAIS", false)
 }
 
 /**
@@ -139,6 +143,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var contagem by remember { mutableIntStateOf(0) }
     var gravacao by remember { mutableStateOf<Recording?>(null) }
     var segundosGravando by remember { mutableIntStateOf(0) }
+    var bokehNativo by remember { mutableStateOf(false) }      // o aparelho tem retrato de fábrica?
+    var processandoRetrato by remember { mutableStateOf(false) }
     val inclinacao by lembrarInclinacao(nivel)
     var novaVersao by remember { mutableStateOf<Atualizador.Versao?>(null) }
     var avisoAtualizacao by remember { mutableStateOf(true) }
@@ -168,7 +174,15 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         val provider = ProcessCameraProvider.getInstance(contexto).get()
         @Suppress("DEPRECATION")
         val preview = Preview.Builder().setTargetAspectRatio(proporcao).build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
-        val seletor = CameraSelector.Builder().requireLensFacing(lente).build()
+        var seletor = CameraSelector.Builder().requireLensFacing(lente).build()
+        bokehNativo = false
+        if (modo == Modo.RETRATO) {
+            // Extensions: o fabricante expõe o próprio modo retrato (bokeh) pelo CameraX, quando existe
+            val gerente = withContext(Dispatchers.IO) { runCatching { ExtensionsManager.getInstanceAsync(contexto, provider).get() }.getOrNull() }
+            if (gerente != null && gerente.isExtensionAvailable(seletor, ExtensionMode.BOKEH)) {
+                seletor = gerente.getExtensionEnabledCameraSelector(seletor, ExtensionMode.BOKEH); bokehNativo = true
+            }
+        }
         provider.unbindAll()
         camera = runCatching {
             if (modo == Modo.VIDEO) provider.bindToLifecycle(dono, seletor, preview, videoCapture)
@@ -191,7 +205,17 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         ocupado = true
         val saida = ImageCapture.OutputFileOptions.Builder(contexto.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Fotos.novaEntrada()).build()
         imageCapture.takePicture(saida, ContextCompat.getMainExecutor(contexto), object : ImageCapture.OnImageSavedCallback {
-            override fun onImageSaved(r: ImageCapture.OutputFileResults) { ocupado = false; ultima = r.savedUri }
+            override fun onImageSaved(r: ImageCapture.OutputFileResults) {
+                val uri = r.savedUri
+                if (modo == Modo.RETRATO && !bokehNativo && uri != null) {
+                    processandoRetrato = true
+                    escopo.launch {
+                        val ok = Retrato.aplicar(contexto, uri)
+                        processandoRetrato = false; ocupado = false; ultima = uri
+                        if (!ok) Toast.makeText(contexto, "Não achei uma pessoa na foto; salvei sem desfoque.", Toast.LENGTH_SHORT).show()
+                    }
+                } else { ocupado = false; ultima = uri }
+            }
             override fun onError(e: ImageCaptureException) { ocupado = false; Toast.makeText(contexto, "Falhou: ${e.message}", Toast.LENGTH_LONG).show() }
         })
     }
@@ -269,6 +293,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     Box(modifier = Modifier.align(Alignment.Center).width(140.dp).height(2.dp).rotate(-inclinacao).background(if (nivelado) Verde else Color.White.copy(alpha = 0.8f)))
                 }
                 if (contagem > 0) Text("$contagem", color = Color.White, fontSize = 96.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center))
+                if (modo == Modo.RETRATO) Text(
+                    if (processandoRetrato) "Desfocando o fundo..." else if (bokehNativo) "Retrato do aparelho" else "Retrato: enquadre uma pessoa",
+                    color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp)
+                )
                 val nv = novaVersao
                 if (nv != null && avisoAtualizacao) {
                     Row(
