@@ -3,9 +3,7 @@ package br.maxymus.cameraestudo
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Matrix
 import android.net.Uri
-import androidx.exifinterface.media.ExifInterface
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.segmentation.Segmentation
@@ -26,11 +24,10 @@ object Retrato {
 
     suspend fun aplicar(contexto: Context, uri: Uri): Boolean = withContext(Dispatchers.Default) {
         runCatching {
-            val original = contexto.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) } ?: return@runCatching false
-            val rotacao = contexto.contentResolver.openInputStream(uri)?.use { ExifInterface(it).rotationDegrees } ?: 0
-            val certa = if (rotacao != 0) Bitmap.createBitmap(original, 0, 0, original.width, original.height, Matrix().apply { postRotate(rotacao.toFloat()) }, true) else original
+            val certa = Documento.decodeReduzido(contexto, uri, LADO_MAX * 2) ?: return@runCatching false
             val escala = minOf(1f, LADO_MAX.toFloat() / maxOf(certa.width, certa.height))
             val base = if (escala < 1f) Bitmap.createScaledBitmap(certa, (certa.width * escala).toInt(), (certa.height * escala).toInt(), true) else certa
+            if (base !== certa) certa.recycle()
             val w = base.width; val h = base.height
 
             val segmentador = Segmentation.getClient(SelfieSegmenterOptions.Builder().setDetectorMode(SelfieSegmenterOptions.SINGLE_IMAGE_MODE).build())
@@ -60,8 +57,10 @@ object Retrato {
                     saida[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or bl
                 }
             }
+            pequeno.recycle(); fundo.recycle(); base.recycle()
             val resultado = Bitmap.createBitmap(saida, w, h, Bitmap.Config.ARGB_8888)
             contexto.contentResolver.openOutputStream(uri, "wt")?.use { resultado.compress(Bitmap.CompressFormat.JPEG, 92, it) } ?: return@runCatching false
+            resultado.recycle()
             true
         }.getOrDefault(false)
     }

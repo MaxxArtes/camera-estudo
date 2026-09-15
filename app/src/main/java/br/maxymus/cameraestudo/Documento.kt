@@ -58,9 +58,7 @@ object Documento {
 
     suspend fun processar(contexto: Context, uri: Uri): Resultado? = withContext(Dispatchers.Default) {
         runCatching {
-            val bruto = contexto.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it) } ?: return@runCatching null
-            val rot = contexto.contentResolver.openInputStream(uri)?.use { ExifInterface(it).rotationDegrees } ?: 0
-            val foto = if (rot != 0) Bitmap.createBitmap(bruto, 0, 0, bruto.width, bruto.height, Matrix().apply { postRotate(rot.toFloat()) }, true) else bruto
+            val foto = decodeReduzido(contexto, uri, 2400) ?: return@runCatching null
 
             // 1) pequena, cinza, iluminação normalizada
             val esc = LADO_ANALISE.toFloat() / max(foto.width, foto.height)
@@ -69,11 +67,14 @@ object Documento {
             val px = IntArray(pw * ph).also { pequena.getPixels(it, 0, pw, 0, 0, pw, ph) }
             val cinza = IntArray(pw * ph) { luma(px[it]) }
             val fundo = fundoBorrado(pequena, 40)
+            pequena.recycle()
             val norm = IntArray(pw * ph) { (cinza[it] * 200 / max(1, luma(fundo[it]))).coerceIn(0, 255) }   // 200 ≈ "branco" após dividir
 
-            // 2) candidatos
+            // 2) candidatos: folha clara, folha ESCURA (recibo amarelado em mesa branca — apontado pelo agy) e região lisa por bordas
             val candidatos = mutableListOf<Quad>()
-            maiorMancha(BooleanArray(pw * ph) { norm[it] > otsu(norm) }, pw, ph, "claro")?.let { candidatos += it }
+            val lim = otsu(norm)
+            maiorMancha(BooleanArray(pw * ph) { norm[it] > lim }, pw, ph, "claro")?.let { candidatos += it }
+            maiorMancha(BooleanArray(pw * ph) { norm[it] <= lim }, pw, ph, "escuro")?.let { candidatos += it }
             maiorMancha(regiaoLisa(cinza, pw, ph), pw, ph, "bordas")?.let { candidatos += it }
             val melhor = candidatos.maxByOrNull { it.placar(pw * ph) }?.takeIf { it.placar(pw * ph) > 0f }
 
@@ -82,21 +83,26 @@ object Documento {
             if (melhor != null) {
                 val f = 1f / esc
                 val tl = melhor.tl.map { it * f }; val tr = melhor.tr.map { it * f }; val br = melhor.br.map { it * f }; val bl = melhor.bl.map { it * f }
-                val larg = ((hypot(tr[0] - tl[0], tr[1] - tl[1]) + hypot(br[0] - bl[0], br[1] - bl[1])) / 2).toInt().coerceIn(200, 6000)
-                val alt = ((hypot(bl[0] - tl[0], bl[1] - tl[1]) + hypot(br[0] - tr[0], br[1] - tr[1])) / 2).toInt().coerceIn(200, 6000)
+                // lado = MAIOR dos dois opostos (o menor é o que a perspectiva encurtou); se a razão fica perto de A4/Carta, encaixa
+                var larg = max(hypot(tr[0] - tl[0], tr[1] - tl[1]), hypot(br[0] - bl[0], br[1] - bl[1])).toInt().coerceIn(200, 6000)
+                var alt = max(hypot(bl[0] - tl[0], bl[1] - tl[1]), hypot(br[0] - tr[0], br[1] - tr[1])).toInt().coerceIn(200, 6000)
+                val razao = larg.toFloat() / alt
+                for (papel in floatArrayOf(1.414f, 1f / 1.414f, 1.294f, 1f / 1.294f)) if (abs(razao / papel - 1f) < 0.12f) { if (papel > 1f) larg = (alt * papel).toInt() else alt = (larg / papel).toInt(); break }
                 val escS = min(1f, LADO_SAIDA.toFloat() / max(larg, alt))
                 val w = (larg * escS).toInt(); val h = (alt * escS).toInt()
                 val m = Matrix()
                 if (m.setPolyToPoly(floatArrayOf(tl[0], tl[1], tr[0], tr[1], br[0], br[1], bl[0], bl[1]), 0, floatArrayOf(0f, 0f, w.toFloat(), 0f, w.toFloat(), h.toFloat(), 0f, h.toFloat()), 0, 4)) {
                     val plano = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                     Canvas(plano).drawBitmap(foto, m, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
-                    saida = plano; recortou = true
+                    saida = plano; recortou = true; foto.recycle()
                 }
             }
 
             // 4) realce: sombras fora, fundo branco, contraste
             val realcada = realca(saida)
+            if (realcada !== saida) saida.recycle()
             contexto.contentResolver.openOutputStream(uri, "wt")?.use { realcada.compress(Bitmap.CompressFormat.JPEG, 92, it) } ?: return@runCatching null
+            realcada.recycle()
             Resultado(recortou, melhor?.metodo ?: "nenhum")
         }.getOrNull()
     }
@@ -165,38 +171,123 @@ object Documento {
             if (fim > melhorArea) { melhorArea = fim; melhorLista = fila.copyOf(fim) }
         }
         val lista = melhorLista ?: return null
-        var tl = 0; var tr = 0; var br = 0; var bl = 0
-        var minS = Int.MAX_VALUE; var maxS = Int.MIN_VALUE; var minD = Int.MAX_VALUE; var maxD = Int.MIN_VALUE
+        // só os pixels de BORDA da mancha entram na geometria (mancha de 100 mil pixels → uns 2 mil de contorno)
+        val marcaDaMancha = BooleanArray(w * h); for (p in lista) marcaDaMancha[p] = true
+        val contorno = ArrayList<FloatArray>()
         for (p in lista) {
-            val x = p % w; val y = p / w; val s = x + y; val d = x - y
-            if (s < minS) { minS = s; tl = p }; if (s > maxS) { maxS = s; br = p }
-            if (d > maxD) { maxD = d; tr = p }; if (d < minD) { minD = d; bl = p }
+            val x = p % w; val y = p / w
+            if (x == 0 || y == 0 || x == w - 1 || y == h - 1 || !marcaDaMancha[p - 1] || !marcaDaMancha[p + 1] || !marcaDaMancha[p - w] || !marcaDaMancha[p + w]) contorno += floatArrayOf(x.toFloat(), y.toFloat())
         }
-        val f = { p: Int -> floatArrayOf((p % w).toFloat(), (p / w).toFloat()) }
-        return Quad(f(tl), f(tr), f(br), f(bl), melhorArea, metodo)
+        val casco = fechoConvexo(contorno)
+        val quatro = reduzA4(casco)
+        val cantos = quatro?.let { ordena(it) } ?: run {
+            // reserva: extremos x±y (falha com a folha girada ~45°)
+            var tl = 0; var tr = 0; var br = 0; var bl = 0
+            var minS = Int.MAX_VALUE; var maxS = Int.MIN_VALUE; var minD = Int.MAX_VALUE; var maxD = Int.MIN_VALUE
+            for (p in lista) { val x = p % w; val y = p / w; val s = x + y; val d = x - y
+                if (s < minS) { minS = s; tl = p }; if (s > maxS) { maxS = s; br = p }; if (d > maxD) { maxD = d; tr = p }; if (d < minD) { minD = d; bl = p } }
+            val f = { p: Int -> floatArrayOf((p % w).toFloat(), (p / w).toFloat()) }
+            listOf(f(tl), f(tr), f(br), f(bl))
+        }
+        return Quad(cantos[0], cantos[1], cantos[2], cantos[3], melhorArea, metodo)
     }
 
-    /** Retinex simplificado por canal (pixel ÷ fundo borrado) + contraste por percentis: sombras somem, fundo fica branco. */
+    /** Fecho convexo (cadeia monótona de Andrew), O(n log n). */
+    private fun fechoConvexo(pts: List<FloatArray>): List<FloatArray> {
+        if (pts.size < 4) return pts
+        val p = pts.sortedWith(compareBy({ it[0] }, { it[1] }))
+        fun cruz(o: FloatArray, a: FloatArray, b: FloatArray) = (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+        val baixo = ArrayList<FloatArray>(); for (q in p) { while (baixo.size >= 2 && cruz(baixo[baixo.size - 2], baixo[baixo.size - 1], q) <= 0) baixo.removeAt(baixo.size - 1); baixo += q }
+        val cima = ArrayList<FloatArray>(); for (q in p.asReversed()) { while (cima.size >= 2 && cruz(cima[cima.size - 2], cima[cima.size - 1], q) <= 0) cima.removeAt(cima.size - 1); cima += q }
+        return baixo.dropLast(1) + cima.dropLast(1)
+    }
+
+    /** Douglas-Peucker em polígono fechado, aumentando a tolerância até sobrar 4 vértices (como o approxPolyDP do OpenCV). */
+    private fun reduzA4(casco: List<FloatArray>): List<FloatArray>? {
+        if (casco.size < 4) return null
+        if (casco.size == 4) return casco
+        // perímetro para calibrar a tolerância
+        var per = 0f; for (i in casco.indices) { val a = casco[i]; val b = casco[(i + 1) % casco.size]; per += hypot(b[0] - a[0], b[1] - a[1]) }
+        var eps = per * 0.01f
+        repeat(12) {
+            val r = dp(casco, eps)
+            if (r.size == 4) return r
+            if (r.size < 4) return null
+            eps *= 1.5f
+        }
+        return null
+    }
+
+    private fun dp(poli: List<FloatArray>, eps: Float): List<FloatArray> {
+        // abre o polígono no par de vértices mais distante entre si (âncoras) e simplifica as duas metades
+        var a = 0; var b = 0; var melhor = -1f
+        for (i in poli.indices) for (j in i + 1 until poli.size) { val d = hypot(poli[i][0] - poli[j][0], poli[i][1] - poli[j][1]); if (d > melhor) { melhor = d; a = i; b = j } }
+        val m1 = ArrayList<FloatArray>(); var i = a; while (true) { m1 += poli[i]; if (i == b) break; i = (i + 1) % poli.size }
+        val m2 = ArrayList<FloatArray>(); i = b; while (true) { m2 += poli[i]; if (i == a) break; i = (i + 1) % poli.size }
+        val s1 = simplifica(m1, eps); val s2 = simplifica(m2, eps)
+        return s1.dropLast(1) + s2.dropLast(1)
+    }
+
+    private fun simplifica(pts: List<FloatArray>, eps: Float): List<FloatArray> {
+        if (pts.size < 3) return pts
+        val a = pts.first(); val b = pts.last()
+        var maxD = -1f; var idx = 0
+        val len = hypot(b[0] - a[0], b[1] - a[1]).coerceAtLeast(1e-3f)
+        for (k in 1 until pts.size - 1) { val p = pts[k]; val d = abs((b[0] - a[0]) * (a[1] - p[1]) - (a[0] - p[0]) * (b[1] - a[1])) / len; if (d > maxD) { maxD = d; idx = k } }
+        return if (maxD > eps) simplifica(pts.subList(0, idx + 1), eps).dropLast(1) + simplifica(pts.subList(idx, pts.size), eps) else listOf(a, b)
+    }
+
+    /** Ordena 4 pontos como TL, TR, BR, BL (soma e diferença das coordenadas). */
+    private fun ordena(q: List<FloatArray>): List<FloatArray> {
+        val tl = q.minByOrNull { it[0] + it[1] }!!; val br = q.maxByOrNull { it[0] + it[1] }!!
+        val tr = q.maxByOrNull { it[0] - it[1] }!!; val bl = q.minByOrNull { it[0] - it[1] }!!
+        return listOf(tl, tr, br, bl)
+    }
+
+    /** Decodifica reduzido (inSampleSize) e já girado pelo EXIF: 12 Mpx inteiros estouram a memória de celular de entrada. */
+    fun decodeReduzido(contexto: Context, uri: Uri, ladoMax: Int): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        contexto.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+        var amostra = 1; while (max(bounds.outWidth, bounds.outHeight) / (amostra * 2) >= ladoMax) amostra *= 2
+        val opts = BitmapFactory.Options().apply { inSampleSize = amostra }
+        val bruto = contexto.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) } ?: return null
+        val rot = contexto.contentResolver.openInputStream(uri)?.use { ExifInterface(it).rotationDegrees } ?: 0
+        if (rot == 0) return bruto
+        val girado = Bitmap.createBitmap(bruto, 0, 0, bruto.width, bruto.height, Matrix().apply { postRotate(rot.toFloat()) }, true)
+        if (girado !== bruto) bruto.recycle()
+        return girado
+    }
+
+    /**
+     * Realce SÓ na luminância (agy: por canal corrompe o matiz sob luz amarela e estoura o fundo de RG/CNH):
+     * retinex simplificado na luma (Y ÷ fundo borrado de Y) e estiramento por percentis; R, G e B são
+     * escalados pela mesma razão Y'/Y, então a cor fica. Documento colorido (muita saturação) recebe
+     * branco mais brando (1%) do que folha de texto (8%).
+     */
     private fun realca(b: Bitmap): Bitmap {
         val w = b.width; val h = b.height
         val px = IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) }
         val fundo = fundoBorrado(b, 24)
-        val lum = IntArray(w * h)
+        val y0 = IntArray(w * h); val y1 = IntArray(w * h)
+        var satAcum = 0L
         for (i in px.indices) {
-            val c = px[i]; val f = fundo[i]
-            val r = ((c shr 16 and 255) * 235 / max(1, f shr 16 and 255)).coerceIn(0, 255)
-            val g = ((c shr 8 and 255) * 235 / max(1, f shr 8 and 255)).coerceIn(0, 255)
-            val bl = ((c and 255) * 235 / max(1, f and 255)).coerceIn(0, 255)
-            px[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or bl
-            lum[i] = (r * 30 + g * 59 + bl * 11) / 100
+            val c = px[i]; val r = c shr 16 and 255; val g = c shr 8 and 255; val bl = c and 255
+            y0[i] = (r * 30 + g * 59 + bl * 11) / 100
+            y1[i] = (y0[i] * 235 / max(1, luma(fundo[i]))).coerceIn(0, 255)
+            satAcum += (max(r, max(g, bl)) - min(r, min(g, bl)))
         }
-        val hist = IntArray(256); for (v in lum) hist[v]++
+        val colorido = satAcum / px.size > 28          // saturação média: RG, recibo colorido, foto de cartão
+        val hist = IntArray(256); for (v in y1) hist[v]++
         val n = px.size; var acc = 0; var lo = 0; var hi = 255
-        for (i in 0..255) { acc += hist[i]; if (acc >= n * 0.02) { lo = i; break } }
-        acc = 0; for (i in 255 downTo 0) { acc += hist[i]; if (acc >= n * 0.10) { hi = i; break } }
-        if (hi - lo >= 40) {
-            val tabela = IntArray(256) { ((it - lo) * 255 / (hi - lo)).coerceIn(0, 255) }
-            for (i in px.indices) { val c = px[i]; px[i] = (0xFF shl 24) or (tabela[c shr 16 and 255] shl 16) or (tabela[c shr 8 and 255] shl 8) or tabela[c and 255] }
+        for (i in 0..255) { acc += hist[i]; if (acc >= n * 0.01) { lo = i; break } }
+        val corteBranco = if (colorido) 0.01 else 0.08
+        acc = 0; for (i in 255 downTo 0) { acc += hist[i]; if (acc >= n * corteBranco) { hi = i; break } }
+        val tabela = if (hi - lo >= 40) IntArray(256) { ((it - lo) * 255 / (hi - lo)).coerceIn(0, 255) } else IntArray(256) { it }
+        for (i in px.indices) {
+            val c = px[i]; val r = c shr 16 and 255; val g = c shr 8 and 255; val bl = c and 255
+            val alvo = tabela[y1[i]]; val base = max(1, y0[i])
+            val rr = (r * alvo / base).coerceIn(0, 255); val gg = (g * alvo / base).coerceIn(0, 255); val bb = (bl * alvo / base).coerceIn(0, 255)
+            px[i] = (0xFF shl 24) or (rr shl 16) or (gg shl 8) or bb
         }
         return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
     }
