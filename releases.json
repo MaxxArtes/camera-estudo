@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.18",
+      "build": 21,
+      "tag": "v0.18-build21",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.18-build21.apk",
+      "mudou": [
+        "Modo Tela medido na foto real: monitor por Otsu suavizado + fechamento, anti-moiré (reamostra, caixa 4 px, dessatura 15%)"
+      ]
+    },
+    {
       "versao": "0.17",
       "build": 20,
       "tag": "v0.17-build20",
@@ -145,11 +154,11 @@
       ]
     }
   ],
-  "versionName": "0.17",
-  "versionCode": 17,
-  "build": 20,
+  "versionName": "0.18",
+  "versionCode": 18,
+  "build": 21,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.17-build20.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.18-build21.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T21:23:05Z"
+  "publicadoEm": "2026-09-15T21:32:12Z"
 }
