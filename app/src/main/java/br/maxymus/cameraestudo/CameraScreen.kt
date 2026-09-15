@@ -62,6 +62,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.SlowMotionVideo
+import androidx.compose.material.icons.filled.Monitor
 import androidx.compose.material.icons.filled.Cameraswitch
 import androidx.compose.material.icons.filled.FlashAuto
 import androidx.compose.material.icons.filled.FlashOff
@@ -124,7 +125,7 @@ private val Painel = Color(0xFF16161B)
 /** Modos da linha (naLinha) e do menu "Mais" (LENTA e MACRO). `video` = usa VideoCapture. */
 enum class Modo(val rotulo: String, val naLinha: Boolean, val video: Boolean) {
     PRO("PRO", true, false), VIDEO("VÍDEO", true, true), FOTO("FOTO", true, false), RETRATO("RETRATO", true, false),
-    DOCUMENTO("DOCUMENTO", true, false), LENTA("LENTA", false, true), MACRO("MACRO", false, false)
+    DOCUMENTO("DOCUMENTO", true, false), LENTA("LENTA", false, true), MACRO("MACRO", false, false), TELA("TELA", false, false)
 }
 
 /**
@@ -234,6 +235,11 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 opts.setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
                 opts.setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, focoMin)
             }
+            if (modo == Modo.TELA) {
+                // tela: sem flash (reflexo) e antibanding automático (faixas do refresh/luz)
+                flash = ImageCapture.FLASH_MODE_OFF
+                opts.setCaptureRequestOption(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_AUTO)
+            }
             if (modo != Modo.PRO) { proIso = null; proTempoNs = null; proFoco = null; proEv = 0; proWb = CaptureRequest.CONTROL_AWB_MODE_AUTO }
             Camera2CameraControl.from(cam.cameraControl).setCaptureRequestOptions(opts.build())
             cam.cameraControl.setExposureCompensationIndex(0)
@@ -281,12 +287,13 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         imageCapture.takePicture(saida, ContextCompat.getMainExecutor(contexto), object : ImageCapture.OnImageSavedCallback {
             override fun onImageSaved(r: ImageCapture.OutputFileResults) {
                 val uri = r.savedUri
-                if (modo == Modo.DOCUMENTO && uri != null) {
+                if ((modo == Modo.DOCUMENTO || modo == Modo.TELA) && uri != null) {
                     processandoDoc = true
                     escopo.launch {
-                        val r = Documento.processar(contexto, uri)
+                        val r = if (modo == Modo.TELA) Documento.processarTela(contexto, uri) else Documento.processar(contexto, uri)
                         processandoDoc = false; ocupado = false; ultima = uri
-                        Toast.makeText(contexto, when { r == null -> "Não consegui tratar; salvei a foto."; r.recortou -> "Documento recortado (${r.metodo}) e realçado."; else -> "Não achei a folha; salvei com realce e sem sombras." }, Toast.LENGTH_SHORT).show()
+                        val alvo = if (modo == Modo.TELA) "tela" else "folha"
+                        Toast.makeText(contexto, when { r == null -> "Não consegui tratar; salvei a foto."; r.recortou -> "${alvo.replaceFirstChar { it.uppercase() }} recortada (${r.metodo})."; else -> "Não achei a $alvo; salvei a foto tratada." }, Toast.LENGTH_SHORT).show()
                     }
                 } else if (modo == Modo.RETRATO && !bokehNativo && uri != null) {
                     processandoRetrato = true
@@ -411,6 +418,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 if (contagem > 0) Text("$contagem", color = Color.White, fontSize = 96.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center))
                 if (processandoLenta) Text("Esticando o vídeo (4x)...", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
                 if (modo == Modo.MACRO) Text(if (focoMin > 0f) "Macro: chegue perto (foco no mínimo)" else "Macro: esta lente não informa foco mínimo", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
+                if (modo == Modo.TELA) Text(if (processandoDoc) "Recortando a tela e tirando o moiré..." else "Tela: enquadre o monitor inteiro, evite reflexo", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
                 if (modo == Modo.DOCUMENTO) Text(if (processandoDoc) "Recortando e realçando..." else "Documento: folha inteira no quadro", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
                 if (modo == Modo.RETRATO) Text(
                     if (processandoRetrato) "Desfocando o fundo..." else if (bokehNativo) "Retrato do aparelho" else "Retrato: enquadre uma pessoa",
@@ -512,6 +520,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 Row(modifier = Modifier.fillMaxWidth().padding(bottom = 36.dp), horizontalArrangement = Arrangement.Center) {
                     Ajuste(Icons.Filled.SlowMotionVideo, "Lenta", "Vídeo 4x mais lento", modo == Modo.LENTA) { modo = Modo.LENTA; menuMais = false }
                     Ajuste(Icons.Filled.CenterFocusStrong, "Macro", "Bem de perto", modo == Modo.MACRO) { modo = Modo.MACRO; menuMais = false }
+                    Ajuste(Icons.Filled.Monitor, "Tela", "Scanner de monitor", modo == Modo.TELA) { modo = Modo.TELA; menuMais = false }
                 }
             }
         }

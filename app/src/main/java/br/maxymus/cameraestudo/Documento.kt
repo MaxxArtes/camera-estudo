@@ -56,6 +56,77 @@ object Documento {
         }
     }
 
+    /**
+     * Modo TELA (monitor, notebook, outro celular): a tela é o retângulo mais claro e uniforme da foto;
+     * não há sombra a tirar (a tela emite luz), o fundo pode ser escuro de propósito, e o inimigo é o
+     * moiré. Passos: detecção sem retinex (claro + bordas), recorte, reamostragem a 1400 px (mata a trama
+     * de alta frequência), realce só de contraste leve na luminância, sem clarear o fundo.
+     */
+    suspend fun processarTela(contexto: Context, uri: Uri): Resultado? = withContext(Dispatchers.Default) {
+        runCatching {
+            val foto = decodeReduzido(contexto, uri, 2400) ?: return@runCatching null
+            val esc = LADO_ANALISE.toFloat() / max(foto.width, foto.height)
+            val pw = max(1, (foto.width * esc).toInt()); val ph = max(1, (foto.height * esc).toInt())
+            val pequena = Bitmap.createScaledBitmap(foto, pw, ph, true)
+            val px = IntArray(pw * ph).also { pequena.getPixels(it, 0, pw, 0, 0, pw, ph) }; pequena.recycle()
+            val cinza = IntArray(pw * ph) { luma(px[it]) }
+            val candidatos = mutableListOf<Quad>()
+            val lim = otsu(cinza)
+            maiorMancha(BooleanArray(pw * ph) { cinza[it] > lim }, pw, ph, "tela clara")?.let { candidatos += it }
+            maiorMancha(regiaoLisa(cinza, pw, ph), pw, ph, "bordas")?.let { candidatos += it }
+            val melhor = candidatos.maxByOrNull { it.placar(pw * ph) }?.takeIf { it.placar(pw * ph) > 0f }
+            var saida: Bitmap = foto; var recortou = false
+            if (melhor != null) {
+                val f = 1f / esc
+                val tl = melhor.tl.map { it * f }; val tr = melhor.tr.map { it * f }; val br = melhor.br.map { it * f }; val bl = melhor.bl.map { it * f }
+                var larg = max(hypot(tr[0] - tl[0], tr[1] - tl[1]), hypot(br[0] - bl[0], br[1] - bl[1])).toInt().coerceIn(200, 6000)
+                var alt = max(hypot(bl[0] - tl[0], bl[1] - tl[1]), hypot(br[0] - tr[0], br[1] - tr[1])).toInt().coerceIn(200, 6000)
+                val razao = larg.toFloat() / alt
+                for (tela in floatArrayOf(16f / 9f, 9f / 16f, 16f / 10f, 10f / 16f, 4f / 3f, 3f / 4f)) if (abs(razao / tela - 1f) < 0.1f) { if (tela > 1f) larg = (alt * tela).toInt() else alt = (larg / tela).toInt(); break }
+                val escS = min(1f, 1400f / max(larg, alt))       // 1400 px: reamostrar aqui já derruba boa parte do moiré
+                val w = (larg * escS).toInt(); val h = (alt * escS).toInt()
+                val m = Matrix()
+                if (m.setPolyToPoly(floatArrayOf(tl[0], tl[1], tr[0], tr[1], br[0], br[1], bl[0], bl[1]), 0, floatArrayOf(0f, 0f, w.toFloat(), 0f, w.toFloat(), h.toFloat(), 0f, h.toFloat()), 0, 4)) {
+                    val plano = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+                    Canvas(plano).drawBitmap(foto, m, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
+                    saida = plano; recortou = true; foto.recycle()
+                }
+            }
+            val semMoire = suavizaMoire(saida); if (semMoire !== saida) saida.recycle()
+            val realcada = realcaTela(semMoire); if (realcada !== semMoire) semMoire.recycle()
+            contexto.contentResolver.openOutputStream(uri, "wt")?.use { realcada.compress(Bitmap.CompressFormat.JPEG, 92, it) } ?: return@runCatching null
+            realcada.recycle()
+            Resultado(recortou, melhor?.metodo ?: "nenhum")
+        }.getOrNull()
+    }
+
+    /** Moiré: reduz 30% e volta com filtro bilinear (passa-baixa barato); o texto de tela sobrevive, a trama não. */
+    private fun suavizaMoire(b: Bitmap): Bitmap {
+        val w = b.width; val h = b.height
+        val menor = Bitmap.createScaledBitmap(b, max(1, (w * 0.7f).toInt()), max(1, (h * 0.7f).toInt()), true)
+        val volta = Bitmap.createScaledBitmap(menor, w, h, true); menor.recycle()
+        return volta
+    }
+
+    /** Tela: só um estiramento leve de contraste na luminância (0,5% preto, 0,5% branco), cores intactas, fundo escuro respeitado. */
+    private fun realcaTela(b: Bitmap): Bitmap {
+        val w = b.width; val h = b.height
+        val px = IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) }
+        val y = IntArray(w * h) { luma(px[it]) }
+        val hist = IntArray(256); for (v in y) hist[v]++
+        val n = px.size; var acc = 0; var lo = 0; var hi = 255
+        for (i in 0..255) { acc += hist[i]; if (acc >= n * 0.005) { lo = i; break } }
+        acc = 0; for (i in 255 downTo 0) { acc += hist[i]; if (acc >= n * 0.005) { hi = i; break } }
+        if (hi - lo < 40 || (lo < 8 && hi > 247)) return b
+        val tabela = IntArray(256) { ((it - lo) * 255 / (hi - lo)).coerceIn(0, 255) }
+        for (i in px.indices) {
+            val c = px[i]; val r = c shr 16 and 255; val g = c shr 8 and 255; val bl = c and 255
+            val alvo = tabela[y[i]]; val base = max(1, y[i])
+            px[i] = (0xFF shl 24) or ((r * alvo / base).coerceIn(0, 255) shl 16) or ((g * alvo / base).coerceIn(0, 255) shl 8) or (bl * alvo / base).coerceIn(0, 255)
+        }
+        return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
+    }
+
     suspend fun processar(contexto: Context, uri: Uri): Resultado? = withContext(Dispatchers.Default) {
         runCatching {
             val foto = decodeReduzido(contexto, uri, 2400) ?: return@runCatching null

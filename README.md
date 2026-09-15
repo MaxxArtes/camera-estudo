@@ -12,7 +12,9 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
   acha a folha por dois caminhos, mancha clara ou região fechada por bordas, escolhe pelo placar,
   corta, endireita a perspectiva e realça tirando sombras, `Documento.kt`; ideias estudadas no
   FairScan, OpenScan e OpenNoteScanner, sem copiar código nem OpenCV). **Mais** abre **Lenta** (vídeo esticado 4x sem recodificar,
-  `Lenta.kt`) e **Macro** (escolhe a lente traseira que foca mais perto e trava o foco no mínimo).
+  `Lenta.kt`) e **Macro** (escolhe a lente traseira que foca mais perto e trava o foco no mínimo) e **Tela**
+  (scanner de monitor/celular: retângulo iluminado, sem flash, antibanding, recorte com encaixe
+  16:9/16:10/4:3, redução de moiré por reamostragem, realce suave que respeita fundo escuro).
 - Gaveta de ajustes: flash (desligado/auto/ligado), **timer** (3 s / 10 s), **proporção** 4:3 ou 16:9,
   grade, nível; HDR e filtros são marcadores para estudo futuro.
 - Zoom por pinça, foco/exposição por toque, **deslizar para o lado troca o modo** e **deslizar para cima abre os ajustes**.
