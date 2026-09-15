@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.12",
+      "build": 15,
+      "tag": "v0.12-build15",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.12-build15.apk",
+      "mudou": [
+        "Ordem dos modos: Pro, Vídeo, Foto, Retrato, Documento, Mais"
+      ]
+    },
+    {
       "versao": "0.11",
       "build": 14,
       "tag": "v0.11-build14",
@@ -91,11 +100,11 @@
       ]
     }
   ],
-  "versionName": "0.11",
-  "versionCode": 11,
-  "build": 14,
+  "versionName": "0.12",
+  "versionCode": 12,
+  "build": 15,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.11-build14.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.12-build15.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T20:33:52Z"
+  "publicadoEm": "2026-09-15T20:37:13Z"
 }
