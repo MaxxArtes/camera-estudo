@@ -286,7 +286,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     escopo.launch {
                         val r = Documento.processar(contexto, uri)
                         processandoDoc = false; ocupado = false; ultima = uri
-                        Toast.makeText(contexto, when { r == null -> "Não consegui tratar; salvei a foto."; r.recortou -> "Documento recortado e realçado."; else -> "Não achei a folha; salvei com realce." }, Toast.LENGTH_SHORT).show()
+                        Toast.makeText(contexto, when { r == null -> "Não consegui tratar; salvei a foto."; r.recortou -> "Documento recortado (${r.metodo}) e realçado."; else -> "Não achei a folha; salvei com realce e sem sombras." }, Toast.LENGTH_SHORT).show()
                     }
                 } else if (modo == Modo.RETRATO && !bokehNativo && uri != null) {
                     processandoRetrato = true
@@ -411,7 +411,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 if (contagem > 0) Text("$contagem", color = Color.White, fontSize = 96.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center))
                 if (processandoLenta) Text("Esticando o vídeo (4x)...", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
                 if (modo == Modo.MACRO) Text(if (focoMin > 0f) "Macro: chegue perto (foco no mínimo)" else "Macro: esta lente não informa foco mínimo", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
-                if (modo == Modo.DOCUMENTO) Text(if (processandoDoc) "Recortando e realçando..." else "Documento: folha inteira no quadro, fundo mais escuro que a folha", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
+                if (modo == Modo.DOCUMENTO) Text(if (processandoDoc) "Recortando e realçando..." else "Documento: folha inteira no quadro", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
                 if (modo == Modo.RETRATO) Text(
                     if (processandoRetrato) "Desfocando o fundo..." else if (bokehNativo) "Retrato do aparelho" else "Retrato: enquadre uma pessoa",
                     color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp)

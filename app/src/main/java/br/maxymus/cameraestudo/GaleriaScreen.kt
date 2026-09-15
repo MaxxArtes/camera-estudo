@@ -27,6 +27,9 @@ import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,6 +42,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
+import android.net.Uri
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -63,6 +69,14 @@ fun GaleriaScreen(voltar: () -> Unit) {
     var favoritos by remember { mutableStateOf(Fotos.favoritos(contexto)) }
     var aberta by remember { mutableStateOf<Midia?>(null) }
     var mostrarInfo by remember { mutableStateOf(false) }
+    var selecionando by remember { mutableStateOf(false) }
+    var selecionadas by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var gerandoPdf by remember { mutableStateOf(false) }
+    val escopo = rememberCoroutineScope()
+    fun compartilhaPdf(uri: Uri) {
+        val envio = Intent(Intent.ACTION_SEND).apply { type = "application/pdf"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        contexto.startActivity(Intent.createChooser(envio, "PDF"))
+    }
 
     LaunchedEffect(Unit) { midias = Fotos.listar(contexto) }
 
@@ -72,9 +86,22 @@ fun GaleriaScreen(voltar: () -> Unit) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
             }
             Text(
-                if (aberta != null) "" else "Suas fotos (${midias.size})",
+                if (aberta != null) "" else if (selecionando) "${selecionadas.size} selecionada(s)" else "Suas fotos (${midias.size})",
                 color = Color.White, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f)
             )
+            if (aberta == null && midias.isNotEmpty()) {
+                if (selecionando && selecionadas.isNotEmpty()) IconButton(enabled = !gerandoPdf, onClick = {
+                    gerandoPdf = true
+                    escopo.launch {
+                        val pdf = Pdf.gerar(contexto, selecionadas); gerandoPdf = false
+                        if (pdf != null) { Toast.makeText(contexto, "PDF salvo em Documentos/${Fotos.PASTA}", Toast.LENGTH_SHORT).show(); compartilhaPdf(pdf); selecionando = false; selecionadas = emptyList() }
+                        else Toast.makeText(contexto, "Não consegui gerar o PDF", Toast.LENGTH_SHORT).show()
+                    }
+                }) { Icon(Icons.Filled.PictureAsPdf, contentDescription = "Gerar PDF", tint = Color(0xFFFF5A5F)) }
+                IconButton(onClick = { selecionando = !selecionando; if (!selecionando) selecionadas = emptyList() }) {
+                    Icon(Icons.Filled.Checklist, contentDescription = "Selecionar várias", tint = if (selecionando) Color(0xFFFF5A5F) else Color.White)
+                }
+            }
             if (aberta != null) {
                 IconButton(onClick = {
                     val alvo = aberta ?: return@IconButton
@@ -107,6 +134,9 @@ fun GaleriaScreen(voltar: () -> Unit) {
                         .onFailure { Toast.makeText(contexto, "Nenhum editor instalado", Toast.LENGTH_SHORT).show() }
                 }
                 Acao(Icons.Filled.Info, "Informações") { mostrarInfo = true }
+                if (!atual.ehVideo) Acao(Icons.Filled.PictureAsPdf, "PDF") {
+                    escopo.launch { val pdf = Pdf.gerar(contexto, listOf(atual.uri)); if (pdf != null) compartilhaPdf(pdf) else Toast.makeText(contexto, "Não consegui gerar o PDF", Toast.LENGTH_SHORT).show() }
+                }
                 val ehFavorita = atual.uri.toString() in favoritos
                 Acao(if (ehFavorita) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favorito", if (ehFavorita) Color(0xFFF0325A) else Color.White) {
                     Fotos.alternaFavorito(contexto, atual.uri); favoritos = Fotos.favoritos(contexto)
@@ -141,8 +171,12 @@ fun GaleriaScreen(voltar: () -> Unit) {
                 horizontalArrangement = Arrangement.spacedBy(2.dp), verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 items(midias, key = { it.uri.toString() }) { m ->
-                    Box(modifier = Modifier.aspectRatio(1f).clickable { aberta = m }) {
+                    val marcada = m.uri in selecionadas
+                    Box(modifier = Modifier.aspectRatio(1f).clickable {
+                        if (selecionando) { if (m.ehVideo) return@clickable; selecionadas = if (marcada) selecionadas - m.uri else selecionadas + m.uri } else aberta = m
+                    }) {
                         AsyncImage(model = m.uri, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        if (selecionando && !m.ehVideo) Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = if (marcada) Color(0xFFFF5A5F) else Color(0x99FFFFFF), modifier = Modifier.align(Alignment.TopStart).padding(4.dp).size(22.dp))
                         if (m.ehVideo) Icon(Icons.Filled.PlayArrow, contentDescription = "Vídeo", tint = Color.White, modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp))
                         if (m.uri.toString() in favoritos) Icon(Icons.Filled.Favorite, contentDescription = "Favorita", tint = Color(0xFFF0325A), modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(16.dp))
                     }

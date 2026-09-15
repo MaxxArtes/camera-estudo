@@ -8,8 +8,10 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
   miniatura, obturador e trocar câmera.
 - Modos na linha: **Vídeo** (com áudio), **Foto**, **Retrato** (bokeh nativo via Extensions ou pessoa x
   fundo pelo ML Kit, `Retrato.kt`), **Pro** (EV, ISO, tempo de exposição, foco manual e balanço de
-  branco pelo Camera2 Interop) e **Documento** (scanner próprio, na nossa tela: acha a folha, corta,
-  endireita a perspectiva e realça o contraste, `Documento.kt`). **Mais** abre **Lenta** (vídeo esticado 4x sem recodificar,
+  branco pelo Camera2 Interop) e **Documento** (scanner próprio, na nossa tela: normaliza a iluminação,
+  acha a folha por dois caminhos, mancha clara ou região fechada por bordas, escolhe pelo placar,
+  corta, endireita a perspectiva e realça tirando sombras, `Documento.kt`; ideias estudadas no
+  FairScan, OpenScan e OpenNoteScanner, sem copiar código nem OpenCV). **Mais** abre **Lenta** (vídeo esticado 4x sem recodificar,
   `Lenta.kt`) e **Macro** (escolhe a lente traseira que foca mais perto e trava o foco no mínimo).
 - Gaveta de ajustes: flash (desligado/auto/ligado), **timer** (3 s / 10 s), **proporção** 4:3 ou 16:9,
   grade, nível; HDR e filtros são marcadores para estudo futuro.
@@ -29,7 +31,8 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
 | `Atualizador.kt` | lê `releases.json`, compara a versão, baixa e instala a nova |
 | `Retrato.kt` | retrato por software: máscara do ML Kit + fundo desfocado |
 | `Lenta.kt` | estica os tempos dos quadros do vídeo (câmera lenta de estudo) |
-| `Documento.kt` | Otsu + maior mancha clara + cantos extremos + setPolyToPoly + realce |
+| `Documento.kt` | retinex simplificado, Otsu ou bordas (Sobel), placar do quadrilátero, setPolyToPoly, realce |
+| `Pdf.kt` | PDF de várias páginas com o PdfDocument do Android (galeria: selecionar → PDF) |
 
 CameraX é a camada do Google em cima do Camera2: você declara os "casos de uso" e ele cuida de
 abrir, configurar e fechar a câmera. Para estudar o Camera2 puro depois, o lugar de trocar é só
