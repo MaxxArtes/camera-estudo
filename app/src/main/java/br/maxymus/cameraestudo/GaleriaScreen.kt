@@ -66,7 +66,7 @@ fun GaleriaScreen(voltar: () -> Unit) {
 
     LaunchedEffect(Unit) { midias = Fotos.listar(contexto) }
 
-    Column(modifier = Modifier.fillMaxSize().background(Color.Black).statusBarsPadding()) {
+    Column(modifier = Modifier.fillMaxSize().background(Color(0xFF0E0E12)).statusBarsPadding()) {
         Row(modifier = Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { if (aberta != null) aberta = null else voltar() }) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
@@ -108,7 +108,7 @@ fun GaleriaScreen(voltar: () -> Unit) {
                 }
                 Acao(Icons.Filled.Info, "Informações") { mostrarInfo = true }
                 val ehFavorita = atual.uri.toString() in favoritos
-                Acao(if (ehFavorita) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favorito", if (ehFavorita) Color(0xFFFF375F) else Color.White) {
+                Acao(if (ehFavorita) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favorito", if (ehFavorita) Color(0xFFF0325A) else Color.White) {
                     Fotos.alternaFavorito(contexto, atual.uri); favoritos = Fotos.favoritos(contexto)
                 }
             }
@@ -144,7 +144,7 @@ fun GaleriaScreen(voltar: () -> Unit) {
                     Box(modifier = Modifier.aspectRatio(1f).clickable { aberta = m }) {
                         AsyncImage(model = m.uri, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                         if (m.ehVideo) Icon(Icons.Filled.PlayArrow, contentDescription = "Vídeo", tint = Color.White, modifier = Modifier.align(Alignment.BottomEnd).padding(4.dp))
-                        if (m.uri.toString() in favoritos) Icon(Icons.Filled.Favorite, contentDescription = "Favorita", tint = Color(0xFFFF375F), modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(16.dp))
+                        if (m.uri.toString() in favoritos) Icon(Icons.Filled.Favorite, contentDescription = "Favorita", tint = Color(0xFFF0325A), modifier = Modifier.align(Alignment.TopEnd).padding(4.dp).size(16.dp))
                     }
                 }
             }

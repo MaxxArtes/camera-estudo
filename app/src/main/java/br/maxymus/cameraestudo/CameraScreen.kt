@@ -97,7 +97,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 
-private val Amarelo = Color(0xFFFFD60A)
+// Paleta do ícone: coral → rosa no corpo, fundo quase preto, aro branco, LED verde.
+private val Amarelo = Color(0xFFFF5A5F)       // nome mantido no código; a cor é o coral do ícone
+private val Rosa = Color(0xFFF0325A)
+private val Verde = Color(0xFF22C55E)
+private val Fundo = Color(0xFF0E0E12)
+private val Painel = Color(0xFF16161B)
 
 enum class Modo(val rotulo: String, val pronto: Boolean) {
     LENTA("LENTA", false), VIDEO("VÍDEO", true), FOTO("FOTO", true), RETRATO("RETRATO", false), MAIS("MAIS", false)
@@ -219,7 +224,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         } else tiraFoto()
     }
 
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+    Box(modifier = Modifier.fillMaxSize().background(Fundo)) {
         Column(modifier = Modifier.fillMaxSize()) {
             // ---- barra de cima ----
             Row(
@@ -261,7 +266,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 }
                 if (nivel) {
                     val nivelado = abs(inclinacao) < 1.5f
-                    Box(modifier = Modifier.align(Alignment.Center).width(140.dp).height(2.dp).rotate(-inclinacao).background(if (nivelado) Amarelo else Color.White.copy(alpha = 0.8f)))
+                    Box(modifier = Modifier.align(Alignment.Center).width(140.dp).height(2.dp).rotate(-inclinacao).background(if (nivelado) Verde else Color.White.copy(alpha = 0.8f)))
                 }
                 if (contagem > 0) Text("$contagem", color = Color.White, fontSize = 96.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center))
                 val nv = novaVersao
@@ -280,7 +285,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     }
                 }
                 if (gravacao != null) {
-                    Row(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xCCFF3B30)).padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(modifier = Modifier.align(Alignment.TopCenter).padding(12.dp).clip(RoundedCornerShape(12.dp)).background(Rosa.copy(alpha = 0.85f)).padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text(String.format("%02d:%02d", segundosGravando / 60, segundosGravando % 60), color = Color.White, fontWeight = FontWeight.Bold)
                     }
                 }
@@ -330,7 +335,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 Box(
                     modifier = Modifier.size(80.dp).clip(CircleShape).border(3.dp, Color.White, CircleShape).padding(6.dp)
                         .clip(if (gravando) RoundedCornerShape(10.dp) else CircleShape)
-                        .background(when { gravando -> Color(0xFFFF3B30); modo == Modo.VIDEO -> Color(0xFFFF3B30); ocupado -> Color.Gray; else -> Color.White })
+                        .background(when { gravando -> Rosa; modo == Modo.VIDEO -> Rosa; ocupado -> Color.Gray; else -> Color.White })
                         .clickable { disparar() }
                 )
                 Box(modifier = Modifier.size(52.dp).clip(CircleShape).background(Color(0x33FFFFFF)).clickable {
@@ -344,7 +349,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         // ---- gaveta de ajustes ----
         if (gaveta) {
             val estadoGaveta = rememberModalBottomSheetState()
-            ModalBottomSheet(onDismissRequest = { gaveta = false }, sheetState = estadoGaveta, containerColor = Color(0xFF1C1C1E)) {
+            ModalBottomSheet(onDismissRequest = { gaveta = false }, sheetState = estadoGaveta, containerColor = Painel) {
                 LazyVerticalGrid(columns = GridCells.Fixed(4), modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp), horizontalArrangement = Arrangement.Center) {
                     item { Ajuste(iconeFlash(flash), "Flash", rotuloFlash(flash), flash != ImageCapture.FLASH_MODE_OFF) { flash = proximoFlash(flash) } }
                     item { Ajuste(Icons.Filled.Timer, "Timer", if (timer == 0) "Desativado" else "${timer} s", timer > 0) { timer = when (timer) { 0 -> 3; 3 -> 10; else -> 0 } } }
@@ -375,8 +380,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
 @Composable
 private fun Ajuste(icone: ImageVector, titulo: String, valor: String, ativo: Boolean, aoTocar: () -> Unit) {
     Column(modifier = Modifier.padding(vertical = 14.dp).clickable(onClick = aoTocar), horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(modifier = Modifier.size(58.dp).clip(CircleShape).background(if (ativo) Amarelo else Color(0xFF2C2C2E)), contentAlignment = Alignment.Center) {
-            Icon(icone, contentDescription = titulo, tint = if (ativo) Color.Black else Color.White)
+        Box(modifier = Modifier.size(58.dp).clip(CircleShape).background(if (ativo) Amarelo else Color(0xFF26262C)), contentAlignment = Alignment.Center) {
+            Icon(icone, contentDescription = titulo, tint = Color.White)
         }
         Text(titulo, color = Color.White, fontSize = 13.sp, modifier = Modifier.padding(top = 8.dp))
         Text(valor, color = Color(0xFF9E9E9E), fontSize = 11.sp)
