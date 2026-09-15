@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.25",
+      "build": 29,
+      "tag": "v0.25-build29",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.25-build29.apk",
+      "mudou": [
+        "Retrato: régua de desfoque (1 a 10) no retrato por software e botão para usá-lo no lugar do bokeh do aparelho"
+      ]
+    },
+    {
       "versao": "0.24",
       "build": 28,
       "tag": "v0.24-build28",
@@ -217,11 +226,11 @@
       ]
     }
   ],
-  "versionName": "0.24",
-  "versionCode": 24,
-  "build": 28,
+  "versionName": "0.25",
+  "versionCode": 25,
+  "build": 29,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.24-build28.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.25-build29.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T23:06:16Z"
+  "publicadoEm": "2026-09-15T23:16:48Z"
 }
