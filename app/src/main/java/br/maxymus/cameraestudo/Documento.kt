@@ -68,13 +68,14 @@ object Documento {
             val esc = LADO_ANALISE.toFloat() / max(foto.width, foto.height)
             val pw = max(1, (foto.width * esc).toInt()); val ph = max(1, (foto.height * esc).toInt())
             val pequena = Bitmap.createScaledBitmap(foto, pw, ph, true)
-            val px = IntArray(pw * ph).also { pequena.getPixels(it, 0, pw, 0, 0, pw, ph) }; pequena.recycle()
+            // suaviza antes do limiar (o moiré quebra a mancha em tiras): reduz a 1/3 e volta
+            val suave = Bitmap.createScaledBitmap(Bitmap.createScaledBitmap(pequena, max(1, pw / 3), max(1, ph / 3), true), pw, ph, true)
+            val px = IntArray(pw * ph).also { suave.getPixels(it, 0, pw, 0, 0, pw, ph) }; pequena.recycle(); suave.recycle()
             val cinza = IntArray(pw * ph) { luma(px[it]) }
-            val candidatos = mutableListOf<Quad>()
             val lim = otsu(cinza)
-            maiorMancha(BooleanArray(pw * ph) { cinza[it] > lim }, pw, ph, "tela clara")?.let { candidatos += it }
-            maiorMancha(regiaoLisa(cinza, pw, ph), pw, ph, "bordas")?.let { candidatos += it }
-            val melhor = candidatos.maxByOrNull { it.placar(pw * ph) }?.takeIf { it.placar(pw * ph) > 0f }
+            // monitor = maior mancha clara, com fechamento (dilata+erode 6 px) para o texto não furar a mancha
+            val mascara = fecha(BooleanArray(pw * ph) { cinza[it] > lim }, pw, ph, 6)
+            val melhor = maiorMancha(mascara, pw, ph, "monitor")?.takeIf { it.placar(pw * ph) > 0f }
             var saida: Bitmap = foto; var recortou = false
             if (melhor != null) {
                 val f = 1f / esc
@@ -100,12 +101,56 @@ object Documento {
         }.getOrNull()
     }
 
-    /** Moiré: reduz 30% e volta com filtro bilinear (passa-baixa barato); o texto de tela sobrevive, a trama não. */
+    /**
+     * Moiré (medido na foto do dono, monitor com PDF): reamostra a 70% e volta (tira a trama fina), filtro de
+     * caixa 4×4 (tira as listras da grade de pixels) e dessatura a 15% (tira as faixas coloridas). O texto
+     * de tela segue legível a 1400–1600 px.
+     */
     private fun suavizaMoire(b: Bitmap): Bitmap {
         val w = b.width; val h = b.height
         val menor = Bitmap.createScaledBitmap(b, max(1, (w * 0.7f).toInt()), max(1, (h * 0.7f).toInt()), true)
         val volta = Bitmap.createScaledBitmap(menor, w, h, true); menor.recycle()
-        return volta
+        val px = IntArray(w * h).also { volta.getPixels(it, 0, w, 0, 0, w, h) }; volta.recycle()
+        val out = caixa(px, w, h, 2)          // janela 4 (raio 2) em x e em y
+        for (i in out.indices) {               // dessatura: cor = cinza + 15% da diferença
+            val c = out[i]; val r = c shr 16 and 255; val g = c shr 8 and 255; val bl = c and 255; val y = (r * 30 + g * 59 + bl * 11) / 100
+            out[i] = (0xFF shl 24) or ((y + (r - y) * 15 / 100).coerceIn(0, 255) shl 16) or ((y + (g - y) * 15 / 100).coerceIn(0, 255) shl 8) or (y + (bl - y) * 15 / 100).coerceIn(0, 255)
+        }
+        return Bitmap.createBitmap(out, w, h, Bitmap.Config.ARGB_8888)
+    }
+
+    /** Filtro de caixa separável por canal (somas acumuladas): O(n), independe do raio. */
+    private fun caixa(px: IntArray, w: Int, h: Int, r: Int): IntArray {
+        fun passa(src: IntArray, horizontal: Boolean): IntArray {
+            val dst = IntArray(src.size)
+            val n = if (horizontal) w else h; val m = if (horizontal) h else w
+            val soma = IntArray(3)
+            for (linha in 0 until m) {
+                fun idx(k: Int) = if (horizontal) linha * w + k else k * w + linha
+                soma.fill(0); var cnt = 0
+                for (k in 0 until min(r, n - 1)) { val c = src[idx(k)]; soma[0] += c shr 16 and 255; soma[1] += c shr 8 and 255; soma[2] += c and 255; cnt++ }
+                for (k in 0 until n) {
+                    val entra = k + r; if (entra < n) { val c = src[idx(entra)]; soma[0] += c shr 16 and 255; soma[1] += c shr 8 and 255; soma[2] += c and 255; cnt++ }
+                    val sai = k - r - 1; if (sai >= 0) { val c = src[idx(sai)]; soma[0] -= c shr 16 and 255; soma[1] -= c shr 8 and 255; soma[2] -= c and 255; cnt-- }
+                    dst[idx(k)] = (0xFF shl 24) or ((soma[0] / cnt) shl 16) or ((soma[1] / cnt) shl 8) or (soma[2] / cnt)
+                }
+            }
+            return dst
+        }
+        return passa(passa(px, true), false)
+    }
+
+    /** Fechamento morfológico (dilata e erode) separável, para a mancha da folha/tela ficar sólida apesar do texto. */
+    private fun fecha(m: BooleanArray, w: Int, h: Int, r: Int): BooleanArray {
+        fun dilata(src: BooleanArray): BooleanArray {
+            val a = BooleanArray(src.size)
+            for (y in 0 until h) for (x in 0 until w) { var v = false; var k = -r; while (!v && k <= r) { val xx = x + k; if (xx in 0 until w && src[y * w + xx]) v = true; k++ }; a[y * w + x] = v }
+            val b = BooleanArray(src.size)
+            for (y in 0 until h) for (x in 0 until w) { var v = false; var k = -r; while (!v && k <= r) { val yy = y + k; if (yy in 0 until h && a[yy * w + x]) v = true; k++ }; b[y * w + x] = v }
+            return b
+        }
+        val inv = { s: BooleanArray -> BooleanArray(s.size) { !s[it] } }
+        return inv(dilata(inv(dilata(m))))
     }
 
     /** Tela: só um estiramento leve de contraste na luminância (0,5% preto, 0,5% branco), cores intactas, fundo escuro respeitado. */
