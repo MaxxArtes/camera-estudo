@@ -42,7 +42,10 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
     Medido em rajada sintética: +3 a +4 dB sobre 1 quadro; média simples piorou 5 dB.
   **Resolução** escolhe o lado maior da imagem fundida: 1300 px (rápida), 2000 px (padrão) ou 2600 px (alta, teto com todos
   os quadros em memória, ~48 B/px). Resolução cheia do sensor exige fundir um quadro por vez (não feito).
-  Filtros seguem marcador.
+- **Embelezador e Filtros** (`Acabamento.kt`, botão de varinha no canto da prévia, como na câmera da Xiaomi): filtros são
+  matrizes de cor 4x5, a mesma matriz colore a miniatura ao vivo e a foto gravada (Original, Vívido, Natural, Quente, Frio,
+  Cinema, Positivo, P&B, Sépia); embelezador 0 a 100 = suavização de pele que preserva bordas (máscara pessoa x tom de pele
+  x não-borda, borrão por imagem integral). Aplicados depois da captura em Foto, Pro, Macro, Retrato e nas fusões; não no scanner.
 - **Telemetria** (`Telemetria.kt`, desligável na gaveta): cada foto, sequência (rajada/HDR/noite, tempo por quadro e
   da fusão), scanner (detectar, aplicar, quadro detectado x usado), retrato por software, troca de câmera e erro
   vira uma linha JSON com aparelho, versão e memória, enviada em lote ao coletor da bancada (token injetado pelo
@@ -77,6 +80,7 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
 | `EditorQuad.kt` | conferência dos cantos: alças, lupa, convexidade, Usar / Sem recorte / Descartar |
 | `Fusao.kt` | MTB, refino por ladrilho, merge robusto de rajada, Mertens em luminância |
 | `Telemetria.kt` | fila JSONL local + envio em lote (20 s ou 3 s após evento) com Bearer token do CI |
+| `Acabamento.kt` | filtros por matriz de cor e embelezador (surface blur com máscara de pele e pessoa) |
 | `RegistroScanner.kt` | uma linha JSON por digitalização; compartilhar pelo FileProvider |
 | `Pdf.kt` | PDF de várias páginas com o PdfDocument do Android (galeria: selecionar → PDF) |
 

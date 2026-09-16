@@ -62,7 +62,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -190,6 +194,12 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var qualidadeMax by remember { mutableStateOf(true) }
     var desfoque by remember { mutableIntStateOf(5) }                   // Retrato por software: 1..10
     var resolucao by remember { mutableIntStateOf(1) }                 // lado maior da fusão: 0 rápida, 1 padrão, 2 alta
+    // acabamento (como na câmera da Xiaomi): embelezador 0..100 e filtro por matriz de cor, aplicados depois da captura
+    var painelAcabamento by remember { mutableStateOf(false) }
+    var abaAcabamento by remember { mutableIntStateOf(0) }             // 0 embelezador, 1 filtros
+    var embelezar by remember { mutableIntStateOf(0) }
+    var filtro by remember { mutableStateOf("Original") }
+    var processandoAcabamento by remember { mutableStateOf(false) }
     var retratoSoftware by remember { mutableStateOf(false) }          // força o nosso retrato mesmo com bokeh do aparelho
     // intensidade da extensão do fabricante (bokeh/HDR/noite): CameraX 1.4 + Android 14 + apoio do fabricante
     var gerenteExt by remember { mutableStateOf<ExtensionsManager?>(null) }
@@ -457,7 +467,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                             val bitmaps = ordem.mapNotNull { Fusao.decodifica(it.first, lado) }
                             when { bracketReal -> Fusao.hdr(bitmaps, reciclar = true); noite -> Fusao.noite(bitmaps, reciclar = true, dessatura = if (muitoEscuro) 0.3f else 0.1f); else -> Fusao.rajada(bitmaps, reciclar = true) }
                         }
-                    val pronto = Fusao.gira(if (scanner) fundido else Fusao.nitidezLeve(fundido), quadros[0].second)
+                    val pronto = Fusao.gira(if (scanner) fundido else Acabamento.aplicar(Fusao.nitidezLeve(fundido), filtro, embelezar), quadros[0].second)
                     val destino = contexto.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Fotos.novaEntrada())
                     if (destino != null) contexto.contentResolver.openOutputStream(destino)?.use { pronto.compress(Bitmap.CompressFormat.JPEG, 93, it) }
                     pronto.recycle()
@@ -497,8 +507,16 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                         val tR = Telemetria.agora()
                         val erro = Retrato.aplicar(contexto, uri, desfoque)
                         Telemetria.evento("retrato_software", mapOf("ms" to Telemetria.ms(tR), "achou_pessoa" to (erro == null), "desfoque" to desfoque, "erro" to erro))
+                        if (embelezar > 0 || filtro != "Original") withContext(Dispatchers.Default) { Acabamento.aplicarEmArquivo(contexto, uri, filtro, embelezar) }
                         processandoRetrato = false; ocupado = false; ultima = uri
                         if (erro != null) Toast.makeText(contexto, "Retrato por software falhou ($erro); salvei sem desfoque.", Toast.LENGTH_LONG).show()
+                    }
+                } else if (uri != null && (embelezar > 0 || filtro != "Original")) {
+                    processandoAcabamento = true
+                    escopo.launch {
+                        val ms = withContext(Dispatchers.Default) { Acabamento.aplicarEmArquivo(contexto, uri, filtro, embelezar) }
+                        Telemetria.evento("acabamento", mapOf("filtro" to filtro, "embelezador" to embelezar, "ms" to ms, "modo" to modo.name.lowercase()))
+                        processandoAcabamento = false; ocupado = false; ultima = uri
                     }
                 } else { ocupado = false; ultima = uri }
             }
@@ -650,6 +668,9 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     }
                     if (focoTravado) Text("AE/AF TRAVADO", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.TopCenter).padding(top = 14.dp).clip(RoundedCornerShape(6.dp)).background(Amarelo).padding(horizontal = 8.dp, vertical = 3.dp))
                 }
+                if (!modo.video && modo != Modo.DOCUMENTO && modo != Modo.TELA) IconButton(onClick = { painelAcabamento = !painelAcabamento }, modifier = Modifier.align(Alignment.BottomEnd).padding(10.dp)) {
+                    Icon(Icons.Filled.AutoFixHigh, contentDescription = "Embelezador e filtros", tint = if (embelezar > 0 || filtro != "Original" || painelAcabamento) Amarelo else Color.White)
+                }
                 if (contagem > 0) Text("$contagem", color = Color.White, fontSize = 96.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center))
                 // card de progresso: sequência, scanner, retrato por software, lenta
                 val textoProcesso = fase ?: when {
@@ -657,6 +678,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     processandoDoc -> "Recortando e realçando..."
                     processandoRetrato -> "Desfocando o fundo..."
                     processandoLenta -> "Esticando o vídeo (4x)..."
+                    processandoAcabamento -> "Aplicando acabamento..."
                     else -> null
                 }
                 textoProcesso?.let {
@@ -715,6 +737,27 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             }
 
             // ---- modos ----
+            if (painelAcabamento && !modo.video && modo != Modo.DOCUMENTO && modo != Modo.TELA) Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    Text("Embelezador", color = if (abaAcabamento == 0) Amarelo else Color(0xFFBDBDBD), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { abaAcabamento = 0 }.padding(horizontal = 14.dp, vertical = 4.dp))
+                    Text("Filtros", color = if (abaAcabamento == 1) Amarelo else Color(0xFFBDBDBD), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { abaAcabamento = 1 }.padding(horizontal = 14.dp, vertical = 4.dp))
+                }
+                if (abaAcabamento == 0) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().height(36.dp)) {
+                    Text(if (embelezar == 0) "Off" else "$embelezar", color = Color.White, fontSize = 12.sp, modifier = Modifier.width(34.dp))
+                    Slider(value = embelezar.toFloat(), onValueChange = { embelezar = it.roundToInt().coerceIn(0, 100) }, valueRange = 0f..100f,
+                        colors = SliderDefaults.colors(thumbColor = Amarelo, activeTrackColor = Amarelo, inactiveTrackColor = Color(0x33FFFFFF)), modifier = Modifier.weight(1f))
+                } else LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    items(Acabamento.FILTROS.size) { i ->
+                        val f = Acabamento.FILTROS[i]
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.clickable { filtro = f.nome }) {
+                            Box(modifier = Modifier.size(56.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFF333333)).border(if (filtro == f.nome) 2.dp else 0.dp, if (filtro == f.nome) Amarelo else Color.Transparent, RoundedCornerShape(8.dp))) {
+                                if (ultima != null) AsyncImage(model = ultima, contentDescription = f.nome, contentScale = ContentScale.Crop, colorFilter = ColorFilter.colorMatrix(ColorMatrix(f.matriz)), modifier = Modifier.fillMaxSize())
+                            }
+                            Text(f.nome, color = if (filtro == f.nome) Amarelo else Color.White, fontSize = 10.sp, modifier = Modifier.padding(top = 2.dp))
+                        }
+                    }
+                }
+            }
             if (modo == Modo.RETRATO) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(36.dp)) {
                 if (bokehNativo && forcaDisponivel) {
                     Text("Desfoque", color = Color(0xFFBDBDBD), fontSize = 12.sp, modifier = Modifier.width(64.dp))
@@ -826,7 +869,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     item { Ajuste(Icons.Filled.BurstMode, "Rajada", if (rajada) "4 quadros" else "Desligada", rajada) { rajada = !rajada } }
                     item { Ajuste(Icons.Filled.Grid3x3, "Grade", if (grade) "Ativado" else "Desativado", grade) { grade = !grade } }
                     item { Ajuste(Icons.Filled.Straighten, "Nível", if (nivel) "Ativado" else "Desativado", nivel) { nivel = !nivel } }
-                    item { Ajuste(Icons.Filled.Tonality, "Filtro", "Nenhum", false) { Toast.makeText(contexto, "Filtros: em breve", Toast.LENGTH_SHORT).show() } }
+                    item { Ajuste(Icons.Filled.Tonality, "Filtro", filtro, filtro != "Original") { painelAcabamento = true; abaAcabamento = 1; gaveta = false } }
                     item {
                         val nv = novaVersao
                         Ajuste(Icons.Filled.SystemUpdate, "Atualizar", if (nv != null) "Nova ${nv.nome}" else "Atual ${instalada.first}", nv != null) {
