@@ -91,6 +91,7 @@ import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Tonality
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.HighQuality
+import androidx.compose.material.icons.filled.PhotoSizeSelectLarge
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -187,6 +188,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var extensoesDisponiveis by remember { mutableStateOf(listOf(ExtensionMode.NONE)) }
     var qualidadeMax by remember { mutableStateOf(true) }
     var desfoque by remember { mutableIntStateOf(5) }                   // Retrato por software: 1..10
+    var resolucao by remember { mutableIntStateOf(1) }                 // lado maior da fusão: 0 rápida, 1 padrão, 2 alta
     var retratoSoftware by remember { mutableStateOf(false) }          // força o nosso retrato mesmo com bokeh do aparelho
     // intensidade da extensão do fabricante (bokeh/HDR/noite): CameraX 1.4 + Android 14 + apoio do fabricante
     var gerenteExt by remember { mutableStateOf<ExtensionsManager?>(null) }
@@ -446,7 +448,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                             val ordem = if (bracketReal) listOf(quadros[1], quadros[0], quadros[2]) else quadros
                             val muitoEscuro = noite && brilho < Fusao.LIMIAR_MUITO_ESCURO
                             // soma 2x2 no escuro fundo: decodifica na metade do lado (4 pixels virando 1 = 4x mais luz por pixel, como os bastonetes)
-                            val bitmaps = ordem.mapNotNull { Fusao.decodifica(it.first, when { bracketReal -> 1600; muitoEscuro -> 1200; else -> 2000 }) }
+                            // lado maior conforme o ajuste "Resolução"; o bracket trabalha a 80% (pirâmide de 3 exposições pesa mais) e o escuro fundo a 60% (soma 2x2)
+                            val base = LADOS_FUSAO[resolucao]
+                            val lado = when { bracketReal -> base * 4 / 5; muitoEscuro -> base * 3 / 5; else -> base }
+                            val bitmaps = ordem.mapNotNull { Fusao.decodifica(it.first, lado) }
                             when { bracketReal -> Fusao.hdr(bitmaps, reciclar = true); noite -> Fusao.noite(bitmaps, reciclar = true, dessatura = if (muitoEscuro) 0.3f else 0.1f); else -> Fusao.rajada(bitmaps, reciclar = true) }
                         }
                     val pronto = Fusao.gira(if (scanner) fundido else Fusao.nitidezLeve(fundido), quadros[0].second)
@@ -459,7 +464,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             }
             fase = null
             Telemetria.evento("sequencia", mapOf("sequencia" to tipoSeq, "modo" to modo.name.lowercase(), "quadros" to quadros.size, "ms_quadros" to tempos, "ms_captura" to tempos.sum(),
-                "ms_fusao" to Telemetria.ms(tFusao), "ms_total" to Telemetria.ms(tInicio), "brilho" to brilho, "estouro_permil" to estouro, "sombras_permil" to sombras, "bytes_quadro" to quadros[0].first.size, "ok" to (uri != null),
+                "ms_fusao" to Telemetria.ms(tFusao), "ms_total" to Telemetria.ms(tInicio), "brilho" to brilho, "estouro_permil" to estouro, "sombras_permil" to sombras, "bytes_quadro" to quadros[0].first.size, "ok" to (uri != null), "lado" to LADOS_FUSAO[resolucao],
                 "lente" to (if (lente == CameraSelector.LENS_FACING_FRONT) "frontal" else "traseira"), "flash" to flash, "zoom" to zoom))
             when {
                 uri == null -> { ocupado = false; Toast.makeText(contexto, "A fusão falhou; nada foi gravado.", Toast.LENGTH_SHORT).show() }
@@ -809,6 +814,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                         val i = extensoesDisponiveis.indexOf(extensao); extensao = extensoesDisponiveis[(i + 1) % extensoesDisponiveis.size]
                         if (extensoesDisponiveis.size == 1) Toast.makeText(contexto, "Este aparelho não expõe HDR/Noite pelo CameraX Extensions.", Toast.LENGTH_SHORT).show()
                     } }
+                    item { Ajuste(Icons.Filled.PhotoSizeSelectLarge, "Resolução", listOf("1300 px, rápida", "2000 px", "2600 px, alta")[resolucao], resolucao != 1) { resolucao = (resolucao + 1) % 3 } }
                     item { Ajuste(Icons.Filled.HighQuality, "Qualidade", if (qualidadeMax) "Máxima" else "Rápida", qualidadeMax) { qualidadeMax = !qualidadeMax } }
                     item { Ajuste(Icons.Filled.HdrAuto, "HDR", if (hdr) "3 exposições" else "Desligado", hdr) { hdr = !hdr } }
                     item { Ajuste(Icons.Filled.BurstMode, "Rajada", if (rajada) "4 quadros" else "Desligada", rajada) { rajada = !rajada } }
@@ -840,6 +846,9 @@ private fun ReguaForca(valor: Int, aoMudar: (Int) -> Unit, modifier: Modifier) {
     Slider(value = valor.toFloat(), onValueChange = { aoMudar(it.roundToInt().coerceIn(0, 100)) }, valueRange = 0f..100f,
         colors = SliderDefaults.colors(thumbColor = Amarelo, activeTrackColor = Amarelo, inactiveTrackColor = Color(0x33FFFFFF)), modifier = modifier)
 }
+
+/** Lado maior da imagem fundida (rajada, HDR, noite). 2600 é o teto com todos os quadros em memória (~48 B/px, ~250 MB). */
+private val LADOS_FUSAO = intArrayOf(1300, 2000, 2600)
 
 private fun nomeExtensao(m: Int) = when (m) { ExtensionMode.AUTO -> "Auto"; ExtensionMode.HDR -> "HDR"; ExtensionMode.NIGHT -> "Noite"; ExtensionMode.FACE_RETOUCH -> "Retoque"; ExtensionMode.BOKEH -> "Bokeh"; else -> "Desligado" }
 

@@ -40,6 +40,8 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
     MTB + refino por ladrilho (128 px, ±2 px); merge robusto com peso exp(−(d/τ)²), τ = 2,5 σ (σ pela mediana da
     diferença entre quadros). No scanner a fusão acontece DEPOIS do recorte, com as folhas já retificadas.
     Medido em rajada sintética: +3 a +4 dB sobre 1 quadro; média simples piorou 5 dB.
+  **Resolução** escolhe o lado maior da imagem fundida: 1300 px (rápida), 2000 px (padrão) ou 2600 px (alta, teto com todos
+  os quadros em memória, ~48 B/px). Resolução cheia do sensor exige fundir um quadro por vez (não feito).
   Filtros seguem marcador.
 - **Telemetria** (`Telemetria.kt`, desligável na gaveta): cada foto, sequência (rajada/HDR/noite, tempo por quadro e
   da fusão), scanner (detectar, aplicar, quadro detectado x usado), retrato por software, troca de câmera e erro
