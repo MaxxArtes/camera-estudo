@@ -396,7 +396,11 @@ object Documento {
     /** Decodifica reduzido (inSampleSize) e já girado pelo EXIF: 12 Mpx inteiros estouram a memória de celular de entrada. */
     fun decodeReduzido(contexto: Context, uri: Uri, ladoMax: Int): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        contexto.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) } ?: return null
+        // Com inJustDecodeBounds o decodeStream devolve null POR DEFINIÇÃO: um "?: return null" aqui fazia a função
+        // falhar sempre (15/09 a 16/09: retrato por software e scanner mudos; achado pela telemetria, "decode nulo").
+        val medida = contexto.contentResolver.openInputStream(uri) ?: return null
+        medida.use { BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         var amostra = 1; while (max(bounds.outWidth, bounds.outHeight) / (amostra * 2) >= ladoMax) amostra *= 2
         val opts = BitmapFactory.Options().apply { inSampleSize = amostra }
         val bruto = contexto.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) } ?: return null

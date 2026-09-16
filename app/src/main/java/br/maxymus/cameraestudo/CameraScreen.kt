@@ -178,6 +178,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var ultima by remember { mutableStateOf<Uri?>(null) }
     var zoom by remember { mutableStateOf(1f) }
     var camera by remember { mutableStateOf<Camera?>(null) }
+    var ligando by remember { mutableStateOf(true) }                  // religando a câmera: disparo bloqueado (telemetria: HDR falhou com 0 quadros logo após trocar ajuste)
     // foco por toque: anel no ponto, trava por toque longo (AE/AF), régua de luz ao lado do anel
     var focoPonto by remember { mutableStateOf<Offset?>(null) }
     var focoTravado by remember { mutableStateOf(false) }
@@ -245,6 +246,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
 
     // (Re)liga a câmera quando muda lente, modo ou proporção.
     LaunchedEffect(lente, modo, proporcao, capturaRapida, extensao, retratoSoftware) {
+        ligando = true
         val provider = ProcessCameraProvider.getInstance(contexto).get()
         @Suppress("DEPRECATION")
         val preview = Preview.Builder().setTargetAspectRatio(proporcao).build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
@@ -288,6 +290,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             "extensao" to nomeExtensao(extensaoAtiva), "extensoes" to extensoesDisponiveis.map { nomeExtensao(it) }, "captura_rapida" to capturaRapida, "forca_disponivel" to forcaDisponivel, "android" to android.os.Build.VERSION.SDK_INT))
         zoom = 1f
         camera?.cameraControl?.setZoomRatio(1f)
+        ligando = false
         // faixas do sensor para o modo Pro (e foco mais perto para o Macro)
         camera?.let { cam ->
             val c2 = Camera2CameraInfo.from(cam.cameraInfo)
@@ -475,7 +478,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     }
 
     fun tiraFoto() {
-        if (camera == null) { Toast.makeText(contexto, "A câmera ainda está abrindo; tente de novo.", Toast.LENGTH_SHORT).show(); return }
+        if (camera == null || ligando) { Toast.makeText(contexto, "A câmera ainda está abrindo; tente de novo.", Toast.LENGTH_SHORT).show(); return }
         if (modo == Modo.FOTO && hdr) { tiraVarias(true); return }
         if (rajada && !modo.video && modo != Modo.RETRATO) { tiraVarias(false); return }
         ocupado = true
