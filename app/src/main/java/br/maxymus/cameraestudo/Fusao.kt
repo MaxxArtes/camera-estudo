@@ -35,12 +35,23 @@ object Fusao {
     class Plano(val w: Int, val h: Int, val v: FloatArray)
 
     // ---------- utilidades ----------
-    /** JPEG do CameraX → Bitmap com lado maior ≤ ladoMax (inSampleSize), SEM girar: gira-se só o resultado fundido. */
+    /**
+     * JPEG do CameraX → Bitmap com lado maior = ladoMax (inSampleSize em potência de 2 e depois escala exata),
+     * SEM girar: gira-se só o resultado fundido. A escala exata importa: na frontal do dono (quadros de 2592 px)
+     * "2000" e "2600" davam a mesma imagem de 2592 px e 394 MB de pico com 6 quadros.
+     */
     fun decodifica(bytes: ByteArray, ladoMax: Int): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        var amostra = 1; while (max(bounds.outWidth, bounds.outHeight) / (amostra * 2) >= ladoMax) amostra *= 2
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = amostra })
+        val maior = max(bounds.outWidth, bounds.outHeight)
+        var amostra = 1; while (maior / (amostra * 2) >= ladoMax) amostra *= 2
+        val bruto = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = amostra }) ?: return null
+        val lado = max(bruto.width, bruto.height)
+        if (lado <= ladoMax * 1.04f) return bruto
+        val esc = ladoMax.toFloat() / lado
+        val menor = Bitmap.createScaledBitmap(bruto, max(1, (bruto.width * esc).toInt()), max(1, (bruto.height * esc).toInt()), true)
+        if (menor !== bruto) bruto.recycle()
+        return menor
     }
 
     /**
@@ -84,11 +95,12 @@ object Fusao {
 
     /**
      * Máscara de nitidez só na luminância (raio 1 px, quantidade q): depois de fundir, a imagem fica limpa
-     * mas macia. Medido 16/09 na selfie fundida do dono: q 0,6 deu 0,0004 de nitidez (Xiaomi 0,0019); q 2,0 leva
-     * a 0,0012 com ruído 0,0037, ainda abaixo do 0,0038 da Xiaomi; acima disso o ruído passa dela. Na luminância
-     * não cria franja colorida; o ganho é limitado a ±60 níveis para não virar halo.
+     * mas macia. Medido 16/09 na selfie fundida do dono: q 0,6 deu 0,0004 de nitidez (Xiaomi 0,0019); q 2,2 deu
+     * 0,0006 com ruído 0,0033. A varredura em Python (q 2,0 sobre a foto que já tinha q 0,6, efetivo ~3,8) chegou a
+     * 0,0012 com ruído 0,0037, ainda abaixo do 0,0038 da Xiaomi; por isso q 3,5. Na luminância não cria franja
+     * colorida; o ganho é limitado a ±60 níveis para não virar halo.
      */
-    fun nitidezLeve(b: Bitmap, q: Float = 2.2f): Bitmap {
+    fun nitidezLeve(b: Bitmap, q: Float = 3.5f): Bitmap {
         val w = b.width; val h = b.height
         val px = IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) }
         val lu = luminancia(px)

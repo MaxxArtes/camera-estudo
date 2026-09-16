@@ -33,7 +33,7 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
     O bracket só entra quando o 1º quadro tem ≥ 2% de estouro ou ≥ 10% de sombra fechada; cena comportada vira rajada.
     Quando entra, o resultado fica ancorado no ev0: mesmo brilho médio (ganho 0,85 a 1,25) e saturação por pixel até 1,1x
     (medido 16/09 num auditório: o bracket antigo clareou 50% e saturou 43% sem nada a recuperar). Sem esticamento; 7 níveis.
-    Depois de qualquer fusão (fora do scanner) entra uma máscara de nitidez só na luminância (`Fusao.nitidezLeve`, q 2,2, medida na selfie do dono):
+    Depois de qualquer fusão (fora do scanner) entra uma máscara de nitidez só na luminância (`Fusao.nitidezLeve`, q 3,5, medida na selfie do dono):
     a selfie fundida saía limpa mas macia (nitidez 0,0004 contra 0,0019 da câmera da Xiaomi). As fotos montadas pelo app
     ganham EXIF (fabricante, modelo, "Camera Estudo <versão> (<sequência>)", data) via `Fotos.gravaExif`.
   - Rajada (Foto, Pro, Documento, Tela, Macro): 4 capturas iguais; referência = quadro mais nítido; alinhamento
