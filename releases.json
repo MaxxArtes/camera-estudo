@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.36",
+      "build": 41,
+      "tag": "v0.36-build41",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.36-build41.apk",
+      "mudou": [
+        "Fusão: escala exata para o lado escolhido (2000 e 2600 davam a mesma imagem na frontal); nitidez recalibrada (q 3,5)"
+      ]
+    },
+    {
       "versao": "0.35",
       "build": 40,
       "tag": "v0.35-build40",
@@ -316,11 +325,11 @@
       ]
     }
   ],
-  "versionName": "0.35",
-  "versionCode": 35,
-  "build": 40,
+  "versionName": "0.36",
+  "versionCode": 36,
+  "build": 41,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.35-build40.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.36-build41.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-16T13:50:18Z"
+  "publicadoEm": "2026-09-16T13:59:20Z"
 }
