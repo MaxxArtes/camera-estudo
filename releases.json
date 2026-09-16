@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.32",
+      "build": 37,
+      "tag": "v0.32-build37",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.32-build37.apk",
+      "mudou": [
+        "HDR só com estouro ou sombra a recuperar (senão rajada); resultado ancorado no brilho e na saturação do ev0; 7 níveis; sem esticamento"
+      ]
+    },
+    {
       "versao": "0.31",
       "build": 36,
       "tag": "v0.31-build36",
@@ -280,11 +289,11 @@
       ]
     }
   ],
-  "versionName": "0.31",
-  "versionCode": 31,
-  "build": 36,
+  "versionName": "0.32",
+  "versionCode": 32,
+  "build": 37,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.31-build36.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.32-build37.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-16T09:23:38Z"
+  "publicadoEm": "2026-09-16T13:04:42Z"
 }
