@@ -8,7 +8,9 @@ import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.segmentation.Segmentation
 import com.google.mlkit.vision.segmentation.selfie.SelfieSegmenterOptions
+import android.graphics.BitmapFactory
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 /**
@@ -26,7 +28,20 @@ object Retrato {
     /** Devolve null quando deu certo; senão o motivo (vai para a telemetria). */
     suspend fun aplicar(contexto: Context, uri: Uri, intensidade: Int = 5): String? = withContext(Dispatchers.Default) {
         runCatching {
-            val certa = Documento.decodeReduzido(contexto, uri, LADO_MAX * 2) ?: return@runCatching "decode nulo"
+            // Android 16 (telemetria do dono, v0.27): a foto recém-gravada veio nula em 8 ms; tenta de novo com espera
+            var certa: Bitmap? = null
+            for (tentativa in 0 until 4) { certa = Documento.decodeReduzido(contexto, uri, LADO_MAX * 2); if (certa != null) break; delay(250) }
+            if (certa == null) {
+                val diag = runCatching {
+                    val fd = contexto.contentResolver.openFileDescriptor(uri, "r")
+                    val bytes = fd?.statSize ?: -1L; fd?.close()
+                    val b = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    val stream = contexto.contentResolver.openInputStream(uri)
+                    stream?.use { BitmapFactory.decodeStream(it, null, b) }
+                    "stream=${stream != null} bytes=$bytes w=${b.outWidth} mime=${b.outMimeType} uri=${uri.scheme}"
+                }.getOrElse { "diag: " + it::class.java.simpleName + " " + it.message }
+                return@runCatching "decode nulo ($diag)"
+            }
             val escala = minOf(1f, LADO_MAX.toFloat() / maxOf(certa.width, certa.height))
             val base = if (escala < 1f) Bitmap.createScaledBitmap(certa, (certa.width * escala).toInt(), (certa.height * escala).toInt(), true) else certa
             if (base !== certa) certa.recycle()
