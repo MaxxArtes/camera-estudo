@@ -513,6 +513,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                             when { bracketReal -> Fusao.hdr(bitmaps, reciclar = true); noite -> Fusao.noite(bitmaps, reciclar = true, dessatura = if (muitoEscuro) 0.3f else 0.1f); else -> Fusao.rajada(bitmaps, reciclar = true) }
                         }
                     val pronto = Fusao.gira(if (scanner) fundido else Acabamento.aplicar(Fusao.nitidezLeve(fundido), filtro, embelezar), quadros[0].second)
+                    if (!scanner && (embelezar > 0 || filtro != "Original")) Telemetria.evento("acabamento", mapOf("filtro" to filtro, "embelezador" to embelezar, "modo" to "sequencia"))
                     val destino = contexto.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Fotos.novaEntrada())
                     if (destino != null) contexto.contentResolver.openOutputStream(destino)?.use { pronto.compress(Bitmap.CompressFormat.JPEG, 93, it) }
                     pronto.recycle()
@@ -552,7 +553,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                         val tR = Telemetria.agora()
                         val erro = Retrato.aplicar(contexto, uri, desfoque)
                         Telemetria.evento("retrato_software", mapOf("ms" to Telemetria.ms(tR), "achou_pessoa" to (erro == null), "desfoque" to desfoque, "erro" to erro))
-                        if (embelezar > 0 || filtro != "Original") withContext(Dispatchers.Default) { Acabamento.aplicarEmArquivo(contexto, uri, filtro, embelezar) }
+                        if (embelezar > 0 || filtro != "Original") {
+                            val ms = withContext(Dispatchers.Default) { Acabamento.aplicarEmArquivo(contexto, uri, filtro, embelezar) }
+                            Telemetria.evento("acabamento", mapOf("filtro" to filtro, "embelezador" to embelezar, "ms" to ms, "modo" to "retrato_software"))
+                        }
                         processandoRetrato = false; ocupado = false; ultima = uri
                         if (erro != null) Toast.makeText(contexto, "Retrato por software falhou ($erro); salvei sem desfoque.", Toast.LENGTH_LONG).show()
                     }

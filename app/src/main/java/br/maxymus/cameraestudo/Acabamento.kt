@@ -40,14 +40,15 @@ object Acabamento {
 
     val FILTROS: List<Filtro> = listOf(
         Filtro("Original", floatArrayOf(1f, 0f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0f, 1f, 0f)),
-        Filtro("Vívido", mult(sat(1.3f), ganho(1f, 1f, 1f, 1.08f))),
-        Filtro("Natural", mult(sat(0.85f), ganho(1.02f, 1f, 0.97f))),
-        Filtro("Quente", ganho(1.08f, 1.0f, 0.88f)),
-        Filtro("Frio", ganho(0.9f, 0.98f, 1.1f)),
-        Filtro("Cinema", mult(sat(0.8f), ganho(1.06f, 0.98f, 0.9f, 0.92f, 14f))),
-        Filtro("Positivo", mult(sat(1.1f), ganho(1.03f, 1f, 0.95f, 0.9f, 22f))),
-        Filtro("P&B", mult(sat(0f), ganho(1f, 1f, 1f, 1.1f))),
-        Filtro("Sépia", mult(sat(0f), ganho(1.1f, 1.0f, 0.82f, 0.95f, 10f)))
+        // 16/09: o dono achou que "não aplicava" — o Vívido a 1,3 de saturação era sutil demais perto dos filtros da Xiaomi. Reforçados.
+        Filtro("Vívido", mult(sat(1.6f), ganho(1f, 1f, 1f, 1.15f))),
+        Filtro("Natural", mult(sat(0.75f), ganho(1.03f, 1f, 0.95f))),
+        Filtro("Quente", mult(sat(1.1f), ganho(1.15f, 1.0f, 0.8f))),
+        Filtro("Frio", mult(sat(1.05f), ganho(0.85f, 0.97f, 1.18f))),
+        Filtro("Cinema", mult(sat(0.75f), ganho(1.1f, 0.96f, 0.85f, 0.88f, 22f))),
+        Filtro("Positivo", mult(sat(1.25f), ganho(1.05f, 1f, 0.92f, 0.85f, 34f))),
+        Filtro("P&B", mult(sat(0f), ganho(1f, 1f, 1f, 1.2f))),
+        Filtro("Sépia", mult(sat(0f), ganho(1.15f, 1.0f, 0.78f, 0.95f, 12f)))
     )
     fun filtro(nome: String): Filtro = FILTROS.firstOrNull { it.nome == nome } ?: FILTROS[0]
 
@@ -107,6 +108,9 @@ object Acabamento {
             (s / ((x1 - x0) * (y1 - y0))).toInt() }
     }
 
+    /** EXIF só aceita ASCII no campo Software ("Vívido" virava "V?vido"). */
+    fun semAcento(s: String): String = java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD).replace(Regex("[^\\p{ASCII}]"), "")
+
     /** Pipeline completo sobre um bitmap: embelezador e depois filtro. */
     fun aplicar(b: Bitmap, filtro: String, forca: Int): Bitmap = aplicaFiltro(embelezar(b, forca), filtro(filtro))
 
@@ -118,7 +122,7 @@ object Acabamento {
         val pronto = aplicar(b, filtro, forca)
         contexto.contentResolver.openOutputStream(uri, "wt")?.use { pronto.compress(Bitmap.CompressFormat.JPEG, 93, it) }
         pronto.recycle()
-        Fotos.gravaExif(contexto, uri, "Camera Estudo (filtro $filtro, embelezador $forca)")
+        Fotos.gravaExif(contexto, uri, "Camera Estudo (filtro ${semAcento(filtro)}, embelezador $forca)")
         return (System.nanoTime() - t) / 1_000_000
     }
 }
