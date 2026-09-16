@@ -11,6 +11,11 @@ import androidx.exifinterface.media.ExifInterface
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.roundToInt
+import kotlin.math.sin
+import kotlin.math.sqrt
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -160,6 +165,7 @@ object Documento {
         maiorMancha(BooleanArray(pw * ph) { norm[it] > lim }, pw, ph, "claro")?.let { candidatos += it }
         maiorMancha(BooleanArray(pw * ph) { norm[it] <= lim }, pw, ph, "escuro")?.let { candidatos += it }
         maiorMancha(regiaoLisa(cinza, pw, ph), pw, ph, "bordas")?.let { candidatos += it }
+        linhasHough(cinza, pw, ph)?.let { candidatos += it }
         val melhor = candidatos.maxByOrNull { it.placar(pw * ph) }?.takeIf { it.placar(pw * ph) > 0f }
         return melhor to estatisticas(cinza, lim)
     }
@@ -259,6 +265,29 @@ object Documento {
     private fun luma(c: Int) = ((c shr 16 and 255) * 30 + (c shr 8 and 255) * 59 + (c and 255) * 11) / 100
 
     /** "Fundo" da imagem = versão muito borrada (reduz a 1/fator e amplia com filtro). Barato e suficiente. */
+    /**
+     * Estimativa do fundo (papel) em luminância: média por blocos de `fator` px só dos pixels acima da média local
+     * menos 8 (exclui texto), depois ampliação bilinear. Equivale a borrar (y·w)/(w) com w = "é claro".
+     */
+    private fun fundoClaro(y: IntArray, w: Int, h: Int, fator: Int): IntArray {
+        val sw = max(1, w / fator); val sh = max(1, h / fator)
+        val somaTudo = FloatArray(sw * sh); val cont = FloatArray(sw * sh)
+        for (yy in 0 until h) { val by = min(sh - 1, yy / fator); for (xx in 0 until w) { val k = by * sw + min(sw - 1, xx / fator); somaTudo[k] += y[yy * w + xx]; cont[k]++ } }
+        val mediaBloco = FloatArray(sw * sh) { if (cont[it] > 0) somaTudo[it] / cont[it] else 128f }
+        val soma = FloatArray(sw * sh); val peso = FloatArray(sw * sh)
+        for (yy in 0 until h) { val by = min(sh - 1, yy / fator); for (xx in 0 until w) { val k = by * sw + min(sw - 1, xx / fator); val v = y[yy * w + xx]
+            if (v >= mediaBloco[k] - 8) { soma[k] += v; peso[k]++ } } }
+        val peq = FloatArray(sw * sh) { if (peso[it] > 0) soma[it] / peso[it] else mediaBloco[it] }
+        // suaviza a grade pequena (3x3) e amplia bilinear
+        val suave = FloatArray(sw * sh) { k -> val bx = k % sw; val by = k / sw; var s = 0f; var c = 0
+            for (dy in -1..1) for (dx in -1..1) { val x = bx + dx; val yv = by + dy; if (x in 0 until sw && yv in 0 until sh) { s += peq[yv * sw + x]; c++ } }; s / c }
+        return IntArray(w * h) { k -> val x = k % w; val yy = k / w
+            val fx = ((x + 0.5f) / fator - 0.5f).coerceIn(0f, sw - 1f); val fy = ((yy + 0.5f) / fator - 0.5f).coerceIn(0f, sh - 1f)
+            val x0 = fx.toInt(); val y0i = fy.toInt(); val x1 = min(sw - 1, x0 + 1); val y1i = min(sh - 1, y0i + 1); val tx = fx - x0; val ty = fy - y0i
+            val v = (suave[y0i * sw + x0] * (1 - tx) + suave[y0i * sw + x1] * tx) * (1 - ty) + (suave[y1i * sw + x0] * (1 - tx) + suave[y1i * sw + x1] * tx) * ty
+            v.roundToInt().coerceIn(1, 255) }
+    }
+
     private fun fundoBorrado(b: Bitmap, fator: Int): IntArray {
         val w = b.width; val h = b.height
         val peq = Bitmap.createScaledBitmap(b, max(1, w / fator), max(1, h / fator), true)
@@ -279,6 +308,83 @@ object Documento {
             if (entre > melhor) { melhor = entre; limiar = i }
         }
         return limiar
+    }
+
+    /**
+     * Candidato por LINHAS (Hough): folha branca em piso claro não vira mancha (Otsu junta folha e chão; a região
+     * lisa é quebrada pelo texto), mas as quatro bordas da folha são retas fortes. Medido 16/09 na foto do dono
+     * (TRE, folha branca em piso cinza-claro): claro/lisa/textura deram fração 0,95-1,0 (imagem inteira); as linhas
+     * acharam a folha (fração 0,65, apoio 0,81). Pixels de borda votam só nos ângulos próximos da normal do próprio
+     * gradiente (±20°); picos quase verticais e quase horizontais; entre os pares, vence apoio (fração do perímetro
+     * com borda forte a ±2 px) + fração da imagem — a linha de texto tem apoio parcial, a borda da folha é contínua.
+     */
+    private fun linhasHough(cinza: IntArray, w: Int, h: Int): Quad? {
+        val n = w * h; val gx = IntArray(n); val gy = IntArray(n); val mag = IntArray(n)
+        for (y in 1 until h - 1) for (x in 1 until w - 1) { val k = y * w + x
+            gx[k] = cinza[k + 1] - cinza[k - 1]; gy[k] = cinza[k + w] - cinza[k - w]; mag[k] = sqrt((gx[k] * gx[k] + gy[k] * gy[k]).toFloat()).toInt() }
+        val limiar = 51                                  // 0,10 x 255 x 2 (gradiente central soma dois vizinhos)
+        val diag = hypot(w.toFloat(), h.toFloat()).toInt(); val largRho = 2 * diag + 1
+        val cosT = FloatArray(180) { cos(Math.toRadians(it - 90.0)).toFloat() }; val sinT = FloatArray(180) { sin(Math.toRadians(it - 90.0)).toFloat() }
+        val acc = IntArray(180 * largRho)
+        for (y in 1 until h - 1) for (x in 1 until w - 1) { val k = y * w + x
+            if (mag[k] < limiar) continue
+            val ang = Math.toDegrees(atan2(gy[k].toFloat(), gx[k].toFloat()).toDouble()).roundToInt()   // normal da borda = direção do gradiente
+            for (dt in -20..20) { var t = ang + dt; while (t < -90) t += 180; while (t >= 90) t -= 180
+                val ti = t + 90; val rho = (x * cosT[ti] + y * sinT[ti]).roundToInt() + diag
+                if (rho in 0 until largRho) acc[ti * largRho + rho]++ } }
+        // picos por faixa de ângulo, com supressão de vizinhança
+        fun picos(faixas: List<IntRange>, nMax: Int): List<FloatArray> {
+            val a = acc.copyOf(); val saida = ArrayList<FloatArray>()
+            repeat(nMax) {
+                var melhor = 0; var mi = -1; var mr = -1
+                for (f in faixas) for (t in f) { val ti = t + 90; val base = ti * largRho
+                    for (r in 0 until largRho) { val v = a[base + r]; if (v > melhor) { melhor = v; mi = ti; mr = r } } }
+                if (melhor < 30) return saida
+                saida += floatArrayOf((mi - 90).toFloat(), (mr - diag).toFloat(), melhor.toFloat())
+                for (ti in max(0, mi - 8) until min(180, mi + 8)) for (r in max(0, mr - 12) until min(largRho, mr + 12)) a[ti * largRho + r] = 0
+            }
+            return saida
+        }
+        val vert = picos(listOf(-25..25), 8); val horiz = picos(listOf(65..89, -90..-65), 8)
+        if (vert.size < 2 || horiz.size < 2) return null
+        fun xEm(l: FloatArray, y: Float): Float { val t = Math.toRadians(l[0].toDouble()); return ((l[1] - y * sin(t)) / cos(t)).toFloat() }
+        fun yEm(l: FloatArray, x: Float): Float { val t = Math.toRadians(l[0].toDouble()); val s = sin(t); return ((l[1] - x * cos(t)) / (if (abs(s) > 1e-6) s else 1e-6)).toFloat() }
+        fun inter(l1: FloatArray, l2: FloatArray): FloatArray? {
+            val t1 = Math.toRadians(l1[0].toDouble()); val t2 = Math.toRadians(l2[0].toDouble())
+            val a11 = cos(t1); val a12 = sin(t1); val a21 = cos(t2); val a22 = sin(t2); val det = a11 * a22 - a12 * a21
+            if (abs(det) < 1e-6) return null
+            return floatArrayOf(((l1[1] * a22 - a12 * l2[1]) / det).toFloat(), ((a11 * l2[1] - l1[1] * a21) / det).toFloat())
+        }
+        var melhorPlacar = 0f; var melhorQuad: List<FloatArray>? = null; var melhorApoio = 0f
+        for (i in vert.indices) for (j in i + 1 until vert.size) {
+            val (l, r) = if (xEm(vert[i], h / 2f) < xEm(vert[j], h / 2f)) vert[i] to vert[j] else vert[j] to vert[i]
+            if (xEm(r, h / 2f) - xEm(l, h / 2f) < 0.3f * w) continue
+            for (a in horiz.indices) for (b in a + 1 until horiz.size) {
+                val (tp, bt) = if (yEm(horiz[a], w / 2f) < yEm(horiz[b], w / 2f)) horiz[a] to horiz[b] else horiz[b] to horiz[a]
+                if (yEm(bt, w / 2f) - yEm(tp, w / 2f) < 0.3f * h) continue
+                val q = listOf(inter(tp, l), inter(tp, r), inter(bt, r), inter(bt, l))
+                if (q.any { it == null || it[0] < -5f || it[0] > w + 5f || it[1] < -5f || it[1] > h + 5f }) continue
+                val pts = q.map { floatArrayOf(it!![0].coerceIn(0f, w - 1f), it[1].coerceIn(0f, h - 1f)) }
+                val quad = Quad(pts[0], pts[1], pts[2], pts[3], 0, "linhas"); val fr = quad.areaQuad() / n
+                if (fr < 0.15f || fr > 0.97f) continue
+                // apoio: perímetro com borda forte a ±2 px
+                var ok = 0; var tot = 0
+                for (k in 0 until 4) { val p0 = pts[k]; val p1 = pts[(k + 1) % 4]; val passos = max(2, (max(abs(p1[0] - p0[0]), abs(p1[1] - p0[1])) / 2).toInt())
+                    for (s in 0..passos) { val x = (p0[0] + (p1[0] - p0[0]) * s / passos).roundToInt(); val y = (p0[1] + (p1[1] - p0[1]) * s / passos).roundToInt()
+                        if (x !in 0 until w || y !in 0 until h) continue
+                        tot++; var forte = false
+                        for (dy in -2..2) for (dx in -2..2) { val xx = x + dx; val yy = y + dy; if (xx in 0 until w && yy in 0 until h && mag[yy * w + xx] > 30) forte = true }
+                        if (forte) ok++ } }
+                val apoio = if (tot > 0) ok.toFloat() / tot else 0f
+                val placar = apoio + fr
+                if (placar > melhorPlacar) { melhorPlacar = placar; melhorQuad = pts; melhorApoio = apoio }
+            }
+        }
+        val q = melhorQuad ?: return null
+        if (melhorApoio < 0.6f) return null
+        val quad = Quad(q[0], q[1], q[2], q[3], 0, "linhas")
+        // preenchimento do placar geral = apoio (borda da folha contínua)
+        return Quad(q[0], q[1], q[2], q[3], (melhorApoio * quad.areaQuad()).toInt(), "linhas")
     }
 
     /** Região "lisa": pixels sem borda forte por perto (gradiente de Sobel abaixo do limiar, dilatado 2 px). */
@@ -420,15 +526,14 @@ object Documento {
     private fun realca(b: Bitmap): Bitmap {
         val w = b.width; val h = b.height
         val px = IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) }
-        val fundo = fundoBorrado(b, 24)
-        val y0 = IntArray(w * h); val y1 = IntArray(w * h)
-        var satAcum = 0L
-        for (i in px.indices) {
-            val c = px[i]; val r = c shr 16 and 255; val g = c shr 8 and 255; val bl = c and 255
-            y0[i] = (r * 30 + g * 59 + bl * 11) / 100
-            y1[i] = (y0[i] * 235 / max(1, luma(fundo[i]))).coerceIn(0, 255)
-            satAcum += (max(r, max(g, bl)) - min(r, min(g, bl)))
-        }
+        val y0 = IntArray(w * h); var satAcum = 0L
+        for (i in px.indices) { val c = px[i]; val r = c shr 16 and 255; val g = c shr 8 and 255; val bl = c and 255
+            y0[i] = (r * 30 + g * 59 + bl * 11) / 100; satAcum += (max(r, max(g, bl)) - min(r, min(g, bl))) }
+        // fundo por convolução normalizada só com pixels claros: o texto não puxa a estimativa para baixo
+        // (halo branco em volta das letras e papel manchado, visto na folha do TRE em 16/09; medido: mancha 0,059 → 0,055,
+        // contraste do texto 0,70 → 0,73)
+        val fundo = fundoClaro(y0, w, h, 24)
+        val y1 = IntArray(w * h) { (y0[it] * 235 / max(1, fundo[it])).coerceIn(0, 255) }
         val colorido = satAcum / px.size > 28          // saturação média: RG, recibo colorido, foto de cartão
         val hist = IntArray(256); for (v in y1) hist[v]++
         val n = px.size; var acc = 0; var lo = 0; var hi = 255

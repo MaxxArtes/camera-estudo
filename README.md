@@ -73,7 +73,7 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
 | `Atualizador.kt` | lê `releases.json`, compara a versão, baixa e instala a nova |
 | `Retrato.kt` | retrato por software: máscara do ML Kit + fundo desfocado |
 | `Lenta.kt` | estica os tempos dos quadros do vídeo (câmera lenta de estudo) |
-| `Documento.kt` | detectar (retinex, Otsu ou bordas, placar do quadrilátero) e aplicar (setPolyToPoly, realce) |
+| `Documento.kt` | detectar (retinex, Otsu, bordas e LINHAS por Hough, placar do quadrilátero) e aplicar (setPolyToPoly, realce com fundo por convolução normalizada) |
 | `EditorQuad.kt` | conferência dos cantos: alças, lupa, convexidade, Usar / Sem recorte / Descartar |
 | `Fusao.kt` | MTB, refino por ladrilho, merge robusto de rajada, Mertens em luminância |
 | `Telemetria.kt` | fila JSONL local + envio em lote (20 s ou 3 s após evento) com Bearer token do CI |
