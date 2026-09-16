@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.38",
+      "build": 43,
+      "tag": "v0.38-build43",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.38-build43.apk",
+      "mudou": [
+        "Conserta decodeReduzido (devolvia nulo sempre desde 15/09: retrato por software e scanner mudos); bloqueia disparo enquanto a câmera religa"
+      ]
+    },
+    {
       "versao": "0.37",
       "build": 42,
       "tag": "v0.37-build42",
@@ -334,11 +343,11 @@
       ]
     }
   ],
-  "versionName": "0.37",
-  "versionCode": 37,
-  "build": 42,
+  "versionName": "0.38",
+  "versionCode": 38,
+  "build": 43,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.37-build42.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.38-build43.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-16T14:09:24Z"
+  "publicadoEm": "2026-09-16T14:23:36Z"
 }
