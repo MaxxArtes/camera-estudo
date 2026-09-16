@@ -565,8 +565,11 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 Box(modifier = Modifier.size(40.dp).clip(CircleShape).clickable { proporcao = if (proporcao == AspectRatio.RATIO_16_9) AspectRatio.RATIO_4_3 else AspectRatio.RATIO_16_9 }, contentAlignment = Alignment.Center) {
                     Text(if (proporcao == AspectRatio.RATIO_16_9) "16:9" else "4:3", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
-                IconButton(onClick = { grade = !grade }) { Icon(Icons.Filled.Grid3x3, contentDescription = "Grade", tint = if (grade) Amarelo else Color.White) }
-                IconButton(onClick = { nivel = !nivel }) { Icon(Icons.Filled.Straighten, contentDescription = "Nível", tint = if (nivel) Amarelo else Color.White) }
+                // pedido do dono (16/09): Resolução no lugar da grade e HDR no lugar do nível; grade e nível ficam na gaveta
+                IconButton(onClick = { resolucao = (resolucao + 1) % 3 }) {
+                    Text(listOf("1300", "2000", "2600")[resolucao], color = if (resolucao != 1) Amarelo else Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+                IconButton(onClick = { hdr = !hdr }) { Icon(Icons.Filled.HdrAuto, contentDescription = "HDR", tint = if (hdr) Amarelo else Color.White) }
                 IconButton(onClick = { gaveta = true }) { Icon(Icons.Filled.Settings, contentDescription = "Ajustes", tint = Color.White) }
             }
 
