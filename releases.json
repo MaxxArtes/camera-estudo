@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.46",
+      "build": 51,
+      "tag": "v0.46-build51",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.46-build51.apk",
+      "mudou": [
+        "Vívido e Positivo por vibrância com proteção de pele (saturação pura deixava a pele laranja no modo Foto); Natural com identidade"
+      ]
+    },
+    {
       "versao": "0.45",
       "build": 50,
       "tag": "v0.45-build50",
@@ -406,11 +415,11 @@
       ]
     }
   ],
-  "versionName": "0.45",
-  "versionCode": 45,
-  "build": 50,
+  "versionName": "0.46",
+  "versionCode": 46,
+  "build": 51,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.45-build50.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.46-build51.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-16T16:34:22Z"
+  "publicadoEm": "2026-09-16T16:45:30Z"
 }
