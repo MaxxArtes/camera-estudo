@@ -84,10 +84,11 @@ object Fusao {
 
     /**
      * Máscara de nitidez só na luminância (raio 1 px, quantidade q): depois de fundir, a imagem fica limpa
-     * mas macia (medido 16/09: nitidez do rosto 0,0004 contra 0,0019 na câmera da Xiaomi). Na luminância
-     * não cria franja colorida; o ganho é limitado a ±40 níveis para não virar halo.
+     * mas macia. Medido 16/09 na selfie fundida do dono: q 0,6 deu 0,0004 de nitidez (Xiaomi 0,0019); q 2,0 leva
+     * a 0,0012 com ruído 0,0037, ainda abaixo do 0,0038 da Xiaomi; acima disso o ruído passa dela. Na luminância
+     * não cria franja colorida; o ganho é limitado a ±60 níveis para não virar halo.
      */
-    fun nitidezLeve(b: Bitmap, q: Float = 0.6f): Bitmap {
+    fun nitidezLeve(b: Bitmap, q: Float = 2.2f): Bitmap {
         val w = b.width; val h = b.height
         val px = IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) }
         val lu = luminancia(px)
@@ -97,7 +98,7 @@ object Fusao {
             val c = px[k]; val r = c shr 16 and 255; val g = c shr 8 and 255; val bl = c and 255
             if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) { saida[k] = c; continue }
             val media = (lu[k - w - 1] + lu[k - w] + lu[k - w + 1] + lu[k - 1] + lu[k] + lu[k + 1] + lu[k + w - 1] + lu[k + w] + lu[k + w + 1]) / 9f
-            val delta = ((lu[k] - media) * q).coerceIn(-40f, 40f)
+            val delta = ((lu[k] - media) * q).coerceIn(-60f, 60f)
             val f = if (lu[k] > 0) (lu[k] + delta) / lu[k] else 1f
             saida[k] = (0xFF shl 24) or ((r * f + 0.5f).toInt().coerceIn(0, 255) shl 16) or ((g * f + 0.5f).toInt().coerceIn(0, 255) shl 8) or (bl * f + 0.5f).toInt().coerceIn(0, 255)
         }

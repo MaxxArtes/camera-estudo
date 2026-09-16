@@ -36,6 +36,7 @@ object Telemetria {
 
     private val escopo = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val trava = Mutex()
+    private val travaEnvio = Mutex()   // um envio por vez: o periódico e o agendado corriam juntos e o lote ia em dobro
     private var contexto: Context? = null
     private var idAparelho = ""
     private var versao = "?"
@@ -83,7 +84,9 @@ object Telemetria {
     fun agora() = System.nanoTime()
     fun ms(inicio: Long) = (System.nanoTime() - inicio) / 1_000_000
 
-    private suspend fun enviar() {
+    private suspend fun enviar() = travaEnvio.withLock { enviarLote() }
+
+    private suspend fun enviarLote() {
         val ctx = contexto ?: return
         if (BuildConfig.TELEMETRIA_TOKEN.isEmpty()) return
         val arq = File(ctx.filesDir, FILA)
