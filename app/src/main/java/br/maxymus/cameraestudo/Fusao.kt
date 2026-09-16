@@ -82,6 +82,29 @@ object Fusao {
         Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
     }
 
+    /**
+     * Máscara de nitidez só na luminância (raio 1 px, quantidade q): depois de fundir, a imagem fica limpa
+     * mas macia (medido 16/09: nitidez do rosto 0,0004 contra 0,0019 na câmera da Xiaomi). Na luminância
+     * não cria franja colorida; o ganho é limitado a ±40 níveis para não virar halo.
+     */
+    fun nitidezLeve(b: Bitmap, q: Float = 0.6f): Bitmap {
+        val w = b.width; val h = b.height
+        val px = IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) }
+        val lu = luminancia(px)
+        val saida = IntArray(w * h)
+        for (y in 0 until h) for (x in 0 until w) {
+            val k = y * w + x
+            val c = px[k]; val r = c shr 16 and 255; val g = c shr 8 and 255; val bl = c and 255
+            if (x < 1 || y < 1 || x >= w - 1 || y >= h - 1) { saida[k] = c; continue }
+            val media = (lu[k - w - 1] + lu[k - w] + lu[k - w + 1] + lu[k - 1] + lu[k] + lu[k + 1] + lu[k + w - 1] + lu[k + w] + lu[k + w + 1]) / 9f
+            val delta = ((lu[k] - media) * q).coerceIn(-40f, 40f)
+            val f = if (lu[k] > 0) (lu[k] + delta) / lu[k] else 1f
+            saida[k] = (0xFF shl 24) or ((r * f + 0.5f).toInt().coerceIn(0, 255) shl 16) or ((g * f + 0.5f).toInt().coerceIn(0, 255) shl 8) or (bl * f + 0.5f).toInt().coerceIn(0, 255)
+        }
+        b.recycle()
+        return Bitmap.createBitmap(saida, w, h, Bitmap.Config.ARGB_8888)
+    }
+
     fun gira(b: Bitmap, graus: Int): Bitmap {
         if (graus == 0) return b
         val g = Bitmap.createBitmap(b, 0, 0, b.width, b.height, Matrix().apply { postRotate(graus.toFloat()) }, true)

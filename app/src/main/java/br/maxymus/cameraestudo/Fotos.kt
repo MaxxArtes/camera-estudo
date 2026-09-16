@@ -96,6 +96,20 @@ object Fotos {
         return (fotos + videos).sortedByDescending { it.data }.take(limite)
     }
 
+    /** EXIF nas fotos que o app monta (fusão, retrato): fabricante, modelo, software e data. Sem isso a origem se perde. */
+    fun gravaExif(contexto: Context, uri: Uri, software: String) {
+        runCatching {
+            contexto.contentResolver.openFileDescriptor(uri, "rw")?.use { fd ->
+                val exif = androidx.exifinterface.media.ExifInterface(fd.fileDescriptor)
+                exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_MAKE, Build.MANUFACTURER)
+                exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_MODEL, Build.MODEL)
+                exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_SOFTWARE, software)
+                exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_DATETIME_ORIGINAL, SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(Date()))
+                exif.saveAttributes()
+            }
+        }
+    }
+
     fun apagar(contexto: Context, uri: Uri): Boolean =
         runCatching { contexto.contentResolver.delete(uri, null, null) > 0 }.getOrDefault(false)
 

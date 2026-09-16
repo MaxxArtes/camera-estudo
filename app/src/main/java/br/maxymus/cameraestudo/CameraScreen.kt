@@ -449,10 +449,11 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                             val bitmaps = ordem.mapNotNull { Fusao.decodifica(it.first, when { bracketReal -> 1600; muitoEscuro -> 1200; else -> 2000 }) }
                             when { bracketReal -> Fusao.hdr(bitmaps, reciclar = true); noite -> Fusao.noite(bitmaps, reciclar = true, dessatura = if (muitoEscuro) 0.3f else 0.1f); else -> Fusao.rajada(bitmaps, reciclar = true) }
                         }
-                    val pronto = Fusao.gira(fundido, quadros[0].second)
+                    val pronto = Fusao.gira(if (scanner) fundido else Fusao.nitidezLeve(fundido), quadros[0].second)
                     val destino = contexto.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Fotos.novaEntrada())
                     if (destino != null) contexto.contentResolver.openOutputStream(destino)?.use { pronto.compress(Bitmap.CompressFormat.JPEG, 93, it) }
                     pronto.recycle()
+                    if (destino != null) Fotos.gravaExif(contexto, destino, "Camera Estudo " + (runCatching { contexto.packageManager.getPackageInfo(contexto.packageName, 0).versionName }.getOrNull() ?: "") + " (" + tipoSeq + ")")
                     destino
                 }.getOrNull()
             }
