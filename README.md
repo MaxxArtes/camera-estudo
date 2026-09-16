@@ -27,6 +27,9 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
     peso menor para o quadro mais ruidoso. Cena escura (luminância média < 70): vira **Noite**, mais 3 quadros
     iguais fundidos como rajada e sombras levantadas (gama 0,7). Medido em cena noturna sintética: bracket
     saía mais ruidoso que a foto simples; a rajada sai menos ruidosa.
+    "Olho" (16/09, medido 200 ms por quadro no aparelho do dono): penumbra = 6 quadros; escuro fundo (luminância < 35) =
+    8 quadros, soma 2x2 (decodifica na metade do lado, 4x mais luz por pixel) e dessaturação de 30%, como os bastonetes.
+    A extensão do fabricante é desligada durante rajada/HDR: com ela cada quadro levou 1,8 a 2,3 s em vez de 0,2 s.
   - Rajada (Foto, Pro, Documento, Tela, Macro): 4 capturas iguais; referência = quadro mais nítido; alinhamento
     MTB + refino por ladrilho (128 px, ±2 px); merge robusto com peso exp(−(d/τ)²), τ = 2,5 σ (σ pela mediana da
     diferença entre quadros). No scanner a fusão acontece DEPOIS do recorte, com as folhas já retificadas.
