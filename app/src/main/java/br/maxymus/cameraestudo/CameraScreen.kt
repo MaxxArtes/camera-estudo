@@ -71,6 +71,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.Face
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -201,6 +202,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var resolucao by remember { mutableIntStateOf(1) }                 // lado maior da fusão: 0 rápida, 1 padrão, 2 alta
     // acabamento (como na câmera da Xiaomi): embelezador 0..100 e filtro por matriz de cor, aplicados depois da captura
     var painelAcabamento by remember { mutableStateOf(false) }
+    var telaPessoas by remember { mutableStateOf(false) }
     var abaAcabamento by remember { mutableIntStateOf(0) }             // 0 embelezador, 1 filtros
     var embelezar by remember { mutableIntStateOf(0) }
     var filtro by remember { mutableStateOf("Original") }
@@ -523,7 +525,14 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                             // referência da rajada = quadro nítido E de olhos abertos (fase 1 dos rostos)
                             when { bracketReal -> Fusao.hdr(bitmaps, reciclar = true); noite -> Fusao.noite(bitmaps, reciclar = true, dessatura = if (muitoEscuro) 0.3f else 0.1f, notaQuadro = Rostos::notaOlhos); else -> Fusao.rajada(bitmaps, reciclar = true, notaQuadro = Rostos::notaOlhos) }
                         }
-                    val pronto = Fusao.gira(if (scanner) fundido else Acabamento.aplicar(Fusao.nitidezLeve(fundido), filtro, embelezar), quadros[0].second)
+                    val pronto = Fusao.gira(if (scanner) fundido else {
+                        val nitido = Fusao.nitidezLeve(fundido)
+                        if (Pessoas.ligado) { val girado = Fusao.gira(nitido, quadros[0].second); val rec = Pessoas.processar(contexto, girado)
+                            Telemetria.evento("rostos", mapOf("n" to rec.reconhecidos.size, "reconhecidos" to rec.reconhecidos.count { it.pessoa != null && !it.novo }, "novos" to rec.reconhecidos.count { it.novo }, "pele_correcao" to Math.round(rec.correcaoPele * 10) / 10.0, "modo" to "sequencia"))
+                            // já girado: desfaz para o gira() abaixo não girar duas vezes
+                            Fusao.gira(Acabamento.aplicar(girado, filtro, embelezar), (360 - quadros[0].second) % 360)
+                        } else Acabamento.aplicar(nitido, filtro, embelezar)
+                    }, quadros[0].second)
                     if (!scanner && (embelezar > 0 || filtro != "Original")) Telemetria.evento("acabamento", mapOf("filtro" to filtro, "embelezador" to embelezar, "modo" to "sequencia"))
                     val destino = contexto.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Fotos.novaEntrada())
                     if (destino != null) contexto.contentResolver.openOutputStream(destino)?.use { pronto.compress(Bitmap.CompressFormat.JPEG, 93, it) }
@@ -564,14 +573,14 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                         val tR = Telemetria.agora()
                         val erro = Retrato.aplicar(contexto, uri, desfoque)
                         Telemetria.evento("retrato_software", mapOf("ms" to Telemetria.ms(tR), "achou_pessoa" to (erro == null), "desfoque" to desfoque, "erro" to erro))
-                        if (embelezar > 0 || filtro != "Original") {
+                        if (embelezar > 0 || filtro != "Original" || Pessoas.ligado) {
                             val ms = withContext(Dispatchers.Default) { Acabamento.aplicarEmArquivo(contexto, uri, filtro, embelezar) }
                             Telemetria.evento("acabamento", mapOf("filtro" to filtro, "embelezador" to embelezar, "ms" to ms, "modo" to "retrato_software"))
                         }
                         processandoRetrato = false; ocupado = false; ultima = uri
                         if (erro != null) Toast.makeText(contexto, "Retrato por software falhou ($erro); salvei sem desfoque.", Toast.LENGTH_LONG).show()
                     }
-                } else if (uri != null && (embelezar > 0 || filtro != "Original")) {
+                } else if (uri != null && (embelezar > 0 || filtro != "Original" || Pessoas.ligado)) {
                     processandoAcabamento = true
                     escopo.launch {
                         val ms = withContext(Dispatchers.Default) { Acabamento.aplicarEmArquivo(contexto, uri, filtro, embelezar) }
@@ -909,6 +918,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 aoDescartar = { Fotos.apagar(contexto, e.uri); e.deteccao.previa.recycle(); edicao = null; ocupado = false })
         }
 
+        if (telaPessoas) TelaPessoas(aoFechar = { telaPessoas = false })
+
         // ---- menu "Mais": modos que não cabem na linha ----
         if (menuMais) {
             ModalBottomSheet(onDismissRequest = { menuMais = false }, containerColor = Painel) {
@@ -930,6 +941,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     item { Ajuste(Icons.Filled.Timer, "Timer", if (timer == 0) "Desativado" else "${timer} s", timer > 0) { timer = when (timer) { 0 -> 3; 3 -> 10; else -> 0 } } }
                     item { Ajuste(Icons.Filled.Crop, "Recorte", if (conferir) "Conferir cantos" else "Automático", conferir) { conferir = !conferir } }
                     item { var tel by remember { mutableStateOf(Telemetria.ligada) }; Ajuste(Icons.Filled.Timeline, "Telemetria", if (tel) "Enviando" else "Desligada", tel) { tel = Telemetria.alternar() } }
+                    item { Ajuste(Icons.Filled.Face, "Pessoas", if (Pessoas.ligado) "Reconhecendo" else "Desligado", Pessoas.ligado) { telaPessoas = true; gaveta = false } }
                     item { Ajuste(Icons.Filled.Share, "Registro", "Scanner: ${RegistroScanner.linhas(contexto)}", false) { if (!RegistroScanner.compartilhar(contexto)) Toast.makeText(contexto, "Nenhuma digitalização registrada ainda.", Toast.LENGTH_SHORT).show(); gaveta = false } }
                     item { Ajuste(Icons.Filled.AspectRatio, "Proporção", if (proporcao == AspectRatio.RATIO_16_9) "16:9" else "4:3", true) { proporcao = if (proporcao == AspectRatio.RATIO_16_9) AspectRatio.RATIO_4_3 else AspectRatio.RATIO_16_9 } }
                     item { Ajuste(Icons.Filled.AutoAwesome, "Aparelho", if (extensoesDisponiveis.size == 1) "Sem extensão" else nomeExtensao(extensao), extensao != ExtensionMode.NONE) {

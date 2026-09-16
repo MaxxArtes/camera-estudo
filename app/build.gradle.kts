@@ -11,8 +11,8 @@ android {
         applicationId = "br.maxymus.cameraestudo"
         minSdk = 26
         targetSdk = 34
-        versionCode = 49
-        versionName = "0.49"
+        versionCode = 50
+        versionName = "0.50"
         // Só arm64: todo celular Android de 2017 em diante. Sem isto o ML Kit traz 20 MB de
         // biblioteca nativa por arquitetura (x86, x86_64, armeabi-v7a) que ninguém usa no aparelho.
         ndk { abiFilters += listOf("arm64-v8a") }
@@ -41,6 +41,7 @@ android {
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true; buildConfig = true }
+    androidResources { noCompress += "tflite" }   // o TFLite mapeia o modelo direto do APK; comprimido não abre
     packaging { resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" } }
 }
 
@@ -63,6 +64,7 @@ dependencies {
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6") // retrato por software (pessoa x fundo)
     implementation("com.google.mlkit:face-detection:16.1.7")            // rostos: olhos abertos na rajada, cadastro de pessoas
+    implementation("org.tensorflow:tensorflow-lite:2.16.1")             // embedding facial (MobileFaceNet em assets, BSD-3)
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }
