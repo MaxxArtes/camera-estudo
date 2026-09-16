@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.45",
+      "build": 50,
+      "tag": "v0.45-build50",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.45-build50.apk",
+      "mudou": [
+        "Filtros mais fortes (Vívido 1,3 de saturação passava despercebido), EXIF em ASCII, telemetria do acabamento em todos os caminhos"
+      ]
+    },
+    {
       "versao": "0.44",
       "build": 49,
       "tag": "v0.44-build49",
@@ -397,11 +406,11 @@
       ]
     }
   ],
-  "versionName": "0.44",
-  "versionCode": 44,
-  "build": 49,
+  "versionName": "0.45",
+  "versionCode": 45,
+  "build": 50,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.44-build49.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.45-build50.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-16T16:28:08Z"
+  "publicadoEm": "2026-09-16T16:34:22Z"
 }
