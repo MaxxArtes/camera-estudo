@@ -98,9 +98,10 @@ object Fusao {
      * mas macia. Medido 16/09 na selfie fundida do dono: q 0,6 deu 0,0004 de nitidez (Xiaomi 0,0019); q 2,2 deu
      * 0,0006 com ruído 0,0033. A varredura em Python (q 2,0 sobre a foto que já tinha q 0,6, efetivo ~3,8) chegou a
      * 0,0012 com ruído 0,0037, ainda abaixo do 0,0038 da Xiaomi; por isso q 3,5. Na luminância não cria franja
-     * colorida; o ganho é limitado a ±60 níveis para não virar halo.
+     * colorida; o ganho é limitado a ±60 níveis para não virar halo. q 3,5 medido na v0.36: nitidez 0,0010, ruído 0,0041 (passou
+     * o 0,0038 da Xiaomi) → q 3,0.
      */
-    fun nitidezLeve(b: Bitmap, q: Float = 3.5f): Bitmap {
+    fun nitidezLeve(b: Bitmap, q: Float = 3.0f): Bitmap {
         val w = b.width; val h = b.height
         val px = IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) }
         val lu = luminancia(px)
