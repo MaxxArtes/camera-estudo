@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.48",
+      "build": 53,
+      "tag": "v0.48-build53",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.48-build53.apk",
+      "mudou": [
+        "Ícone do timer no formato da câmera da Xiaomi: cronômetro com os segundos dentro, cortado quando desligado"
+      ]
+    },
+    {
       "versao": "0.47",
       "build": 52,
       "tag": "v0.47-build52",
@@ -424,11 +433,11 @@
       ]
     }
   ],
-  "versionName": "0.47",
-  "versionCode": 47,
-  "build": 52,
+  "versionName": "0.48",
+  "versionCode": 48,
+  "build": 53,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.47-build52.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.48-build53.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-16T17:06:59Z"
+  "publicadoEm": "2026-09-16T17:20:29Z"
 }
