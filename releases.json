@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.39",
+      "build": 44,
+      "tag": "v0.39-build44",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.39-build44.apk",
+      "mudou": [
+        "Scanner: candidato por linhas (Hough) acha folha branca em piso claro; realce com fundo só de pixels claros (sem halo no texto)"
+      ]
+    },
+    {
       "versao": "0.38",
       "build": 43,
       "tag": "v0.38-build43",
@@ -343,11 +352,11 @@
       ]
     }
   ],
-  "versionName": "0.38",
-  "versionCode": 38,
-  "build": 43,
+  "versionName": "0.39",
+  "versionCode": 39,
+  "build": 44,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.38-build43.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.39-build44.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-16T14:23:36Z"
+  "publicadoEm": "2026-09-16T14:47:42Z"
 }
