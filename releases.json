@@ -2,6 +2,15 @@
   "releases": [
     {
       "versao": "0.50",
+      "build": 56,
+      "tag": "v0.50-build56",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.50-build56.apk",
+      "mudou": [
+        "README: rostos e pessoas"
+      ]
+    },
+    {
+      "versao": "0.50",
       "build": 55,
       "tag": "v0.50-build55",
       "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.50-build55.apk",
@@ -453,9 +462,9 @@
   ],
   "versionName": "0.50",
   "versionCode": 50,
-  "build": 55,
+  "build": 56,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.50-build55.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.50-build56.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-16T17:43:17Z"
+  "publicadoEm": "2026-09-16T17:47:24Z"
 }
