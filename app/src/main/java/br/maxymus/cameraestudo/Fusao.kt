@@ -77,8 +77,8 @@ object Fusao {
      * Noite: N quadros na MESMA exposição fundidos (rajada) e sombras levantadas (gama 0,7 na luminância,
      * cor preservada pela razão). É o caminho do HDR+: à noite o bracket só traz o ruído do quadro longo.
      */
-    suspend fun noite(quadros: List<Bitmap>, reciclar: Boolean = false, gama: Float = 0.7f, dessatura: Float = 0.1f): Bitmap = withContext(Dispatchers.Default) {
-        val fundido = rajada(quadros, reciclar)
+    suspend fun noite(quadros: List<Bitmap>, reciclar: Boolean = false, gama: Float = 0.7f, dessatura: Float = 0.1f, notaQuadro: ((Bitmap) -> Float)? = null): Bitmap = withContext(Dispatchers.Default) {
+        val fundido = rajada(quadros, reciclar, notaQuadro)
         val w = fundido.width; val h = fundido.height
         val px = IntArray(w * h).also { fundido.getPixels(it, 0, w, 0, 0, w, h) }; fundido.recycle()
         val tabela = FloatArray(256) { 255f * Math.pow(it / 255.0, gama.toDouble()).toFloat() }
@@ -212,11 +212,13 @@ object Fusao {
 
     // ---------- rajada ----------
     /** Funde N quadros da mesma exposição (mesmo tamanho). Devolve bitmap novo; não recicla as entradas. */
-    suspend fun rajada(quadros: List<Bitmap>, reciclar: Boolean = false, aoProgresso: (Int) -> Unit = {}): Bitmap = withContext(Dispatchers.Default) {
+    /** notaQuadro: fator extra na escolha da referência (ex.: olhos abertos, Rostos.notaOlhos); avaliado em cada quadro antes de reciclar. */
+    suspend fun rajada(quadros: List<Bitmap>, reciclar: Boolean = false, notaQuadro: ((Bitmap) -> Float)? = null, aoProgresso: (Int) -> Unit = {}): Bitmap = withContext(Dispatchers.Default) {
         val w = quadros[0].width; val h = quadros[0].height
+        val notas = quadros.map { b -> notaQuadro?.invoke(b) ?: 1f }
         val pxs = quadros.map { b -> IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h); if (reciclar) b.recycle() } }
         val lums = pxs.map { luminancia(it) }
-        val r = lums.indices.maxByOrNull { nitidez(lums[it], w, h) } ?: 0
+        val r = lums.indices.maxByOrNull { nitidez(lums[it], w, h) * notas[it] } ?: 0
         val ref = pxs[r]; val lref = lums[r]
         val accR = FloatArray(w * h); val accG = FloatArray(w * h); val accB = FloatArray(w * h); val peso = FloatArray(w * h)
         for (i in 0 until w * h) { val c = ref[i]; accR[i] = (c shr 16 and 255).toFloat(); accG[i] = (c shr 8 and 255).toFloat(); accB[i] = (c and 255).toFloat(); peso[i] = 1f }

@@ -520,7 +520,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                             val base = LADOS_FUSAO[resolucao]
                             val lado = when { bracketReal -> base * 4 / 5; muitoEscuro -> base * 3 / 5; else -> base }
                             val bitmaps = ordem.mapNotNull { Fusao.decodifica(it.first, lado) }
-                            when { bracketReal -> Fusao.hdr(bitmaps, reciclar = true); noite -> Fusao.noite(bitmaps, reciclar = true, dessatura = if (muitoEscuro) 0.3f else 0.1f); else -> Fusao.rajada(bitmaps, reciclar = true) }
+                            // referência da rajada = quadro nítido E de olhos abertos (fase 1 dos rostos)
+                            when { bracketReal -> Fusao.hdr(bitmaps, reciclar = true); noite -> Fusao.noite(bitmaps, reciclar = true, dessatura = if (muitoEscuro) 0.3f else 0.1f, notaQuadro = Rostos::notaOlhos); else -> Fusao.rajada(bitmaps, reciclar = true, notaQuadro = Rostos::notaOlhos) }
                         }
                     val pronto = Fusao.gira(if (scanner) fundido else Acabamento.aplicar(Fusao.nitidezLeve(fundido), filtro, embelezar), quadros[0].second)
                     if (!scanner && (embelezar > 0 || filtro != "Original")) Telemetria.evento("acabamento", mapOf("filtro" to filtro, "embelezador" to embelezar, "modo" to "sequencia"))
