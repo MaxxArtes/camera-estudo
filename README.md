@@ -15,6 +15,9 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
   `Lenta.kt`) e **Macro** (escolhe a lente traseira que foca mais perto e trava o foco no mínimo) e **Tela**
   (scanner de monitor/celular: retângulo iluminado, sem flash, antibanding, recorte com encaixe
   16:9/16:10/4:3, redução de moiré por reamostragem, realce suave que respeita fundo escuro).
+- Documento e Tela têm **detecção ao vivo**: o fluxo de análise do CameraX (plano Y, ≤ 640 px, a cada 150 ms) roda o mesmo
+  detector da foto e desenha o quadrilátero na prévia; se a foto não achar a folha, o editor abre com o quadro da prévia.
+  Chips **Original / P&B / Aprimorado** escolhem o acabamento antes de fotografar, como na câmera da Xiaomi.
 - Documento e Tela param antes de gravar: a prévia aparece com os **4 cantos como alças** (lupa 2,5x no canto
   arrastado, só aceita quadrilátero convexo), e o usuário escolhe **Usar**, **Sem recorte** ou **Descartar**
   (`EditorQuad.kt`; desligável na gaveta, "Recorte: Automático"). Cada digitalização grava uma linha em

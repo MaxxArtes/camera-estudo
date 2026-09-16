@@ -153,6 +153,18 @@ object Documento {
         }.getOrNull()
     }
 
+    /**
+     * Detecção AO VIVO (fluxo de análise do CameraX, quadro em cinza já reduzido): mesmo detector, sem gravar nada.
+     * Devolve o quadrilátero normalizado (0..1) no referencial do quadro recebido, ou null.
+     */
+    fun detectarVivo(cinza: IntArray, w: Int, h: Int, tela: Boolean): FloatArray? = runCatching {
+        val px = IntArray(w * h) { val v = cinza[it].coerceIn(0, 255); (0xFF shl 24) or (v shl 16) or (v shl 8) or v }
+        val b = Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
+        val (melhor, _) = if (tela) analisaTela(b) else analisaFolha(b)
+        b.recycle()
+        melhor?.let { q -> floatArrayOf(q.tl[0] / w, q.tl[1] / h, q.tr[0] / w, q.tr[1] / h, q.br[0] / w, q.br[1] / h, q.bl[0] / w, q.bl[1] / h) }
+    }.getOrNull()
+
     /** Folha: retinex por divisão pelo fundo, Otsu e três candidatos (mancha clara, mancha escura, região lisa por bordas). */
     private fun analisaFolha(pequena: Bitmap): Pair<Quad?, IntArray> {
         val pw = pequena.width; val ph = pequena.height
@@ -202,7 +214,8 @@ object Documento {
      * Lado de saída = MAIOR dos dois lados opostos (o menor é o que a perspectiva encurtou); razão perto de
      * papel (A4/Carta) ou de tela (16:9, 16:10, 4:3) é encaixada.
      */
-    suspend fun aplicar(contexto: Context, uri: Uri, quad: FloatArray?, tela: Boolean, metodo: String, rajada: List<ByteArray>? = null, rotRajada: Int = 0): Resultado? = withContext(Dispatchers.Default) {
+    /** estilo: "aprimorado" (padrão: sombras fora, fundo branco), "original" (só recorte) ou "pb" (aprimorado em preto e branco). */
+    suspend fun aplicar(contexto: Context, uri: Uri, quad: FloatArray?, tela: Boolean, metodo: String, rajada: List<ByteArray>? = null, rotRajada: Int = 0, estilo: String = "aprimorado"): Resultado? = withContext(Dispatchers.Default) {
         runCatching {
             // rajada (agy): fundir DEPOIS do recorte — as folhas retificadas no mesmo retângulo já saem alinhadas
             val fontes: List<() -> Bitmap?> = if (rajada != null && rajada.size >= 2) rajada.map { bytes -> { Fusao.decodifica(bytes, 2000)?.let { Fusao.gira(it, rotRajada) } } }
@@ -237,12 +250,18 @@ object Documento {
                 val todos = arrayListOf(foto); for (i in 1 until fontes.size) fontes[i]()?.let { todos += it }
                 if (todos.size >= 2) saida = Fusao.rajada(todos, reciclar = true)
             }
-            val pronta = if (tela) {
+            val realcada = if (estilo == "original") saida else if (tela) {
                 val semMoire = suavizaMoire(saida); if (semMoire !== saida) saida.recycle()
                 val r = realcaTela(semMoire); if (r !== semMoire) semMoire.recycle(); r
             } else {
                 val r = realca(saida); if (r !== saida) saida.recycle(); r
             }
+            val pronta = if (estilo == "pb") {
+                val w = realcada.width; val h = realcada.height
+                val px = IntArray(w * h).also { realcada.getPixels(it, 0, w, 0, 0, w, h) }; realcada.recycle()
+                for (i in px.indices) { val v = luma(px[i]); px[i] = (0xFF shl 24) or (v shl 16) or (v shl 8) or v }
+                Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
+            } else realcada
             contexto.contentResolver.openOutputStream(uri, "wt")?.use { pronta.compress(Bitmap.CompressFormat.JPEG, 92, it) } ?: return@runCatching null
             pronta.recycle()
             Resultado(recortou, if (recortou) metodo else "nenhum")

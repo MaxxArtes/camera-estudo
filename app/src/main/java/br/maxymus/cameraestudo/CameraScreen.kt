@@ -20,7 +20,11 @@ import androidx.camera.core.AspectRatio
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.FocusMeteringAction
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import java.util.concurrent.Executors
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
@@ -140,6 +144,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
 import kotlin.math.abs
+import kotlin.math.max
 import kotlin.math.roundToInt
 
 // Paleta do ícone: coral → rosa no corpo, fundo quase preto, aro branco, LED verde.
@@ -200,6 +205,13 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var embelezar by remember { mutableIntStateOf(0) }
     var filtro by remember { mutableStateOf("Original") }
     var processandoAcabamento by remember { mutableStateOf(false) }
+    // scanner ao vivo: quadrilátero achado no fluxo de análise (normalizado no referencial já girado), com carimbo e dimensões
+    var quadVivo by remember { mutableStateOf<FloatArray?>(null) }
+    var quadVivoEm by remember { mutableStateOf(0L) }
+    var quadVivoDims by remember { mutableStateOf(intArrayOf(3, 4)) }
+    var estiloDoc by remember { mutableStateOf("aprimorado") }         // Original / P&B / Aprimorado, como na câmera da Xiaomi
+    val executorAnalise = remember { Executors.newSingleThreadExecutor() }
+    DisposableEffect(Unit) { onDispose { executorAnalise.shutdown() } }
     var retratoSoftware by remember { mutableStateOf(false) }          // força o nosso retrato mesmo com bokeh do aparelho
     // intensidade da extensão do fabricante (bokeh/HDR/noite): CameraX 1.4 + Android 14 + apoio do fabricante
     var gerenteExt by remember { mutableStateOf<ExtensionsManager?>(null) }
@@ -247,6 +259,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         @Suppress("DEPRECATION")
         ImageCapture.Builder().setCaptureMode(if (capturaRapida) ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY else ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY).setTargetAspectRatio(proporcao).build()
     }
+    val imageAnalysis = remember(proporcao) {
+        @Suppress("DEPRECATION")
+        ImageAnalysis.Builder().setTargetAspectRatio(proporcao).setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build()
+    }
     val videoCapture = remember {
         VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HIGHEST)).build())
     }
@@ -283,8 +299,34 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         } else extensoesDisponiveis = listOf(ExtensionMode.NONE)
         focoPonto = null; focoTravado = false; focoEv = 0
         provider.unbindAll()
+        val scannerVivo = modo == Modo.DOCUMENTO || modo == Modo.TELA
+        quadVivo = null
+        if (scannerVivo) {
+            // detecção ao vivo: plano Y do quadro (já é a luminância), no máximo a cada 150 ms, mesmo detector da foto
+            val telaVivo = modo == Modo.TELA; val frontal = lente == CameraSelector.LENS_FACING_FRONT
+            var ultimoMs = 0L
+            imageAnalysis.setAnalyzer(executorAnalise) { img ->
+                val agora = System.currentTimeMillis()
+                if (agora - ultimoMs < 150) { img.close(); return@setAnalyzer }
+                ultimoMs = agora
+                val w = img.width; val h = img.height; val plano = img.planes[0]; val buf = plano.buffer; val passo = plano.rowStride; val pp = plano.pixelStride
+                val fator = if (max(w, h) > 700) 2 else 1; val cw = w / fator; val ch = h / fator
+                val cinza = IntArray(cw * ch) { k -> val x = (k % cw) * fator; val y = (k / cw) * fator; buf.get(y * passo + x * pp).toInt() and 255 }
+                val rot = img.imageInfo.rotationDegrees; img.close()
+                val q = Documento.detectarVivo(cinza, cw, ch, telaVivo)
+                if (q == null) { if (agora - quadVivoEm > 800) quadVivo = null; return@setAnalyzer }
+                // gira para o referencial da tela e espelha na frontal
+                val g = FloatArray(8)
+                for (i in 0 until 4) { val x = q[i * 2]; val y = q[i * 2 + 1]
+                    val (nx, ny) = when (rot) { 90 -> (1f - y) to x; 180 -> (1f - x) to (1f - y); 270 -> y to (1f - x); else -> x to y }
+                    g[i * 2] = if (frontal) 1f - nx else nx; g[i * 2 + 1] = ny }
+                quadVivoDims = if (rot == 90 || rot == 270) intArrayOf(ch, cw) else intArrayOf(cw, ch)
+                quadVivo = g; quadVivoEm = agora
+            }
+        } else imageAnalysis.clearAnalyzer()
         camera = runCatching {
             if (modo.video) provider.bindToLifecycle(dono, seletor, preview, videoCapture)
+            else if (scannerVivo) provider.bindToLifecycle(dono, seletor, preview, imageCapture, imageAnalysis)
             else provider.bindToLifecycle(dono, seletor, preview, imageCapture)
         }.onFailure { Telemetria.evento("erro", mapOf("onde" to "abrir_camera", "modo" to modo.name.lowercase(), "msg" to (it.message ?: ""))); Toast.makeText(contexto, "Não consegui abrir a câmera: ${it.message}", Toast.LENGTH_LONG).show() }.getOrNull()
         // intensidade da extensão: o próprio aparelho diz se aceita (Android 14+, fabricante); só então a régua aparece
@@ -363,8 +405,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         edicao = null; processandoDoc = true
         escopo.launch {
             val t = Telemetria.agora()
-            val r = Documento.aplicar(contexto, uri, quad, tela, d.metodo, quadros, rot)
-            Telemetria.evento("scanner_aplicar", mapOf("ms" to Telemetria.ms(t), "quadros" to (quadros?.size ?: 1), "recortou" to (r?.recortou ?: false), "modo" to (if (tela) "tela" else "folha")))
+            val r = Documento.aplicar(contexto, uri, quad, tela, d.metodo, quadros, rot, estiloDoc)
+            Telemetria.evento("scanner_aplicar", mapOf("ms" to Telemetria.ms(t), "quadros" to (quadros?.size ?: 1), "recortou" to (r?.recortou ?: false), "modo" to (if (tela) "tela" else "folha"), "estilo" to estiloDoc))
             RegistroScanner.anota(contexto, tela, d, quad, conferido, r)
             d.previa.recycle()
             processandoDoc = false; ocupado = false; ultima = uri
@@ -379,8 +421,11 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         processandoDoc = true
         escopo.launch {
             val t = Telemetria.agora()
-            val d = Documento.detectar(contexto, uri, tela)
-            Telemetria.evento("scanner_detectar", mapOf("ms" to Telemetria.ms(t), "achou" to (d?.quad != null), "metodo" to (d?.metodo ?: "falha"), "modo" to (if (tela) "tela" else "folha")))
+            val d0 = Documento.detectar(contexto, uri, tela)
+            // a foto não achou, mas a prévia ao vivo achou há pouco: o editor abre com o quadro da prévia em vez do padrão
+            val vivo = quadVivo
+            val d = if (d0 != null && d0.quad == null && vivo != null && System.currentTimeMillis() - quadVivoEm < 1500) Documento.Deteccao(vivo, "vivo", d0.previa, d0.brilho, d0.contraste, d0.fracClara) else d0
+            Telemetria.evento("scanner_detectar", mapOf("ms" to Telemetria.ms(t), "achou" to (d?.quad != null), "metodo" to (d?.metodo ?: "falha"), "modo" to (if (tela) "tela" else "folha"), "vivo" to (vivo != null)))
             processandoDoc = false
             when {
                 d == null -> { ocupado = false; ultima = uri; Toast.makeText(contexto, "Não consegui analisar; salvei a foto.", Toast.LENGTH_SHORT).show() }
@@ -634,6 +679,14 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     }
             ) {
                 AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+                if ((modo == Modo.DOCUMENTO || modo == Modo.TELA) && quadVivo != null) Canvas(modifier = Modifier.fillMaxSize()) {
+                    val q = quadVivo ?: return@Canvas
+                    // a prévia é FILL_CENTER: escala pelo maior fator e centraliza; o quadro é normalizado no referencial girado
+                    val fw = quadVivoDims[0].toFloat(); val fh = quadVivoDims[1].toFloat()
+                    val esc = max(size.width / fw, size.height / fh); val ox = (size.width - fw * esc) / 2; val oy = (size.height - fh * esc) / 2
+                    val caminho = Path().apply { moveTo(ox + q[0] * fw * esc, oy + q[1] * fh * esc); for (i in 1 until 4) lineTo(ox + q[i * 2] * fw * esc, oy + q[i * 2 + 1] * fh * esc); close() }
+                    drawPath(caminho, Amarelo.copy(alpha = 0.15f)); drawPath(caminho, Amarelo, style = Stroke(width = 2.dp.toPx()))
+                }
                 if (grade) Canvas(modifier = Modifier.fillMaxSize()) {
                     val cor = Color.White.copy(alpha = 0.55f)
                     for (i in 1..2) {
@@ -690,7 +743,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 if (processandoLenta) Text("Esticando o vídeo (4x)...", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
                 if (modo == Modo.MACRO) Text(if (focoMin > 0f) "Macro: chegue perto (foco no mínimo)" else "Macro: esta lente não informa foco mínimo", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
                 if (modo == Modo.TELA) Text(if (processandoDoc) "Recortando a tela e tirando o moiré..." else "Tela: encha o quadro com a página, sem reflexo", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
-                if (modo == Modo.DOCUMENTO) Text(if (processandoDoc) "Recortando e realçando..." else "Documento: folha inteira no quadro", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
+                if (modo == Modo.DOCUMENTO) Text(if (processandoDoc) "Recortando e realçando..." else if (quadVivo != null) "Folha encontrada" else "Documento: folha inteira no quadro", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
                 if (modo == Modo.RETRATO) Text(
                     if (processandoRetrato) "Desfocando o fundo..." else if (bokehNativo) "Retrato do aparelho" else "Retrato: enquadre uma pessoa",
                     color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp)
@@ -756,6 +809,12 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                             Text(f.nome, color = if (filtro == f.nome) Amarelo else Color.White, fontSize = 10.sp, modifier = Modifier.padding(top = 2.dp))
                         }
                     }
+                }
+            }
+            if (modo == Modo.DOCUMENTO || modo == Modo.TELA) Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.Center) {
+                listOf("original" to "Original", "pb" to "P&B", "aprimorado" to "Aprimorado").forEach { (v, r) ->
+                    Text(r, color = if (estiloDoc == v) Color.Black else Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 4.dp).clip(RoundedCornerShape(14.dp)).background(if (estiloDoc == v) Amarelo else Color(0x22FFFFFF)).clickable { estiloDoc = v }.padding(horizontal = 14.dp, vertical = 6.dp))
                 }
             }
             if (modo == Modo.RETRATO) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(36.dp)) {
