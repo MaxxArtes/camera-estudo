@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.28",
+      "build": 32,
+      "tag": "v0.28-build32",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.28-build32.apk",
+      "mudou": [
+        "Voltar do sistema navega dentro do app (galeria, seleção, editor de cantos); teclas de volume disparam"
+      ]
+    },
+    {
       "versao": "0.27",
       "build": 31,
       "tag": "v0.27-build31",
@@ -244,11 +253,11 @@
       ]
     }
   ],
-  "versionName": "0.27",
-  "versionCode": 27,
-  "build": 31,
+  "versionName": "0.28",
+  "versionCode": 28,
+  "build": 32,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.27-build31.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.28-build32.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-15T23:35:54Z"
+  "publicadoEm": "2026-09-16T00:09:16Z"
 }
