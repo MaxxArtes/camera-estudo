@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.35",
+      "build": 40,
+      "tag": "v0.35-build40",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.35-build40.apk",
+      "mudou": [
+        "Nitidez pós-fusão calibrada na selfie do dono (q 2,2, teto ±60); telemetria envia um lote por vez (eventos iam em dobro)"
+      ]
+    },
+    {
       "versao": "0.34",
       "build": 39,
       "tag": "v0.34-build39",
@@ -307,11 +316,11 @@
       ]
     }
   ],
-  "versionName": "0.34",
-  "versionCode": 34,
-  "build": 39,
+  "versionName": "0.35",
+  "versionCode": 35,
+  "build": 40,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.34-build39.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.35-build40.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-16T13:45:06Z"
+  "publicadoEm": "2026-09-16T13:50:18Z"
 }
