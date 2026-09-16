@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.31",
+      "build": 36,
+      "tag": "v0.31-build36",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.31-build36.apk",
+      "mudou": [
+        "Noite 'Olho' (6 ou 8 quadros, soma 2x2 e dessaturação no escuro fundo), extensão do fabricante fora durante rajada/HDR, campo da telemetria corrigido (o build 35 saiu sem estas mudanças)"
+      ]
+    },
+    {
       "versao": "0.30",
       "build": 35,
       "tag": "v0.30-build35",
@@ -271,11 +280,11 @@
       ]
     }
   ],
-  "versionName": "0.30",
-  "versionCode": 30,
-  "build": 35,
+  "versionName": "0.31",
+  "versionCode": 31,
+  "build": 36,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.30-build35.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.31-build36.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-16T09:19:08Z"
+  "publicadoEm": "2026-09-16T09:23:38Z"
 }
