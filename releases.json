@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.47",
+      "build": 52,
+      "tag": "v0.47-build52",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.47-build52.apk",
+      "mudou": [
+        "Scanner: candidatos crus (sem normalização) para papel em mesa escura, rejeita quadro colado em 3 bordas, detecção ao vivo estabilizada (2 análises + suavização), botão Girar no editor"
+      ]
+    },
+    {
       "versao": "0.46",
       "build": 51,
       "tag": "v0.46-build51",
@@ -415,11 +424,11 @@
       ]
     }
   ],
-  "versionName": "0.46",
-  "versionCode": 46,
-  "build": 51,
+  "versionName": "0.47",
+  "versionCode": 47,
+  "build": 52,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.46-build51.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.47-build52.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-16T16:45:30Z"
+  "publicadoEm": "2026-09-16T17:06:59Z"
 }
