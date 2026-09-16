@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.41",
+      "build": 46,
+      "tag": "v0.41-build46",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.41-build46.apk",
+      "mudou": [
+        "Barra de cima: Resolução no lugar da grade e HDR no lugar do nível (grade e nível seguem na gaveta)"
+      ]
+    },
+    {
       "versao": "0.40",
       "build": 45,
       "tag": "v0.40-build45",
@@ -361,11 +370,11 @@
       ]
     }
   ],
-  "versionName": "0.40",
-  "versionCode": 40,
-  "build": 45,
+  "versionName": "0.41",
+  "versionCode": 41,
+  "build": 46,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.40-build45.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.41-build46.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-16T15:28:42Z"
+  "publicadoEm": "2026-09-16T15:32:48Z"
 }
