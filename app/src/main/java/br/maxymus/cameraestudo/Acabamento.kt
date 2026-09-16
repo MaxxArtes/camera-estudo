@@ -25,7 +25,10 @@ import kotlin.math.min
  *    caminha em direção ao borrão na medida da força. Sem modelo de rosto; é o "surface blur" clássico.
  */
 object Acabamento {
-    class Filtro(val nome: String, val matriz: FloatArray)
+    /** matriz: cor por 4x5 (miniatura e foto). vibrancia > 0: antes da matriz, reforça as cores fracas mais que as fortes e
+     *  protege a pele (medido 16/09: Vívido por saturação pura deixou a pele 0,69/0,39/0,29, laranja; na miniatura a
+     *  vibrância é aproximada por uma saturação leve dentro da própria matriz). */
+    class Filtro(val nome: String, val matriz: FloatArray, val vibrancia: Float = 0f)
 
     private fun sat(s: Float): FloatArray {   // matriz de saturação (luma Rec.601)
         val ir = 0.299f * (1 - s); val ig = 0.587f * (1 - s); val ib = 0.114f * (1 - s)
@@ -41,12 +44,12 @@ object Acabamento {
     val FILTROS: List<Filtro> = listOf(
         Filtro("Original", floatArrayOf(1f, 0f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0f, 1f, 0f, 0f, 0f, 0f, 0f, 1f, 0f)),
         // 16/09: o dono achou que "não aplicava" — o Vívido a 1,3 de saturação era sutil demais perto dos filtros da Xiaomi. Reforçados.
-        Filtro("Vívido", mult(sat(1.6f), ganho(1f, 1f, 1f, 1.15f))),
-        Filtro("Natural", mult(sat(0.75f), ganho(1.03f, 1f, 0.95f))),
+        Filtro("Vívido", mult(sat(1.15f), ganho(1f, 1f, 1f, 1.06f)), vibrancia = 0.9f),
+        Filtro("Natural", mult(sat(0.78f), ganho(1.04f, 1f, 0.94f, 0.94f, 12f))),   // suave: menos cor, morno, preto levantado
         Filtro("Quente", mult(sat(1.1f), ganho(1.15f, 1.0f, 0.8f))),
         Filtro("Frio", mult(sat(1.05f), ganho(0.85f, 0.97f, 1.18f))),
         Filtro("Cinema", mult(sat(0.75f), ganho(1.1f, 0.96f, 0.85f, 0.88f, 22f))),
-        Filtro("Positivo", mult(sat(1.25f), ganho(1.05f, 1f, 0.92f, 0.85f, 34f))),
+        Filtro("Positivo", mult(sat(1.05f), ganho(1.05f, 1f, 0.92f, 0.85f, 34f)), vibrancia = 0.6f),
         Filtro("P&B", mult(sat(0f), ganho(1f, 1f, 1f, 1.2f))),
         Filtro("Sépia", mult(sat(0f), ganho(1.15f, 1.0f, 0.78f, 0.95f, 12f)))
     )
@@ -55,10 +58,29 @@ object Acabamento {
     /** Aplica a matriz do filtro; devolve o mesmo bitmap se for "Original". */
     fun aplicaFiltro(b: Bitmap, f: Filtro): Bitmap {
         if (f.nome == "Original") return b
-        val saida = Bitmap.createBitmap(b.width, b.height, Bitmap.Config.ARGB_8888)
-        Canvas(saida).drawBitmap(b, 0f, 0f, Paint().apply { colorFilter = ColorMatrixColorFilter(ColorMatrix(f.matriz)) })
-        b.recycle()
+        val fonte = if (f.vibrancia > 0f) vibrancia(b, f.vibrancia) else b
+        val saida = Bitmap.createBitmap(fonte.width, fonte.height, Bitmap.Config.ARGB_8888)
+        Canvas(saida).drawBitmap(fonte, 0f, 0f, Paint().apply { colorFilter = ColorMatrixColorFilter(ColorMatrix(f.matriz)) })
+        fonte.recycle()
         return saida
+    }
+
+    /** Vibrância: ganho de croma = v x (1 − saturação atual) x (1 − 0,75 x pele). Cinza fica cinza; cor já forte quase não muda. */
+    private fun vibrancia(b: Bitmap, v: Float): Bitmap {
+        val w = b.width; val h = b.height
+        val px = IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) }; b.recycle()
+        for (k in px.indices) {
+            val c = px[k]; val r = c shr 16 and 255; val g = c shr 8 and 255; val bl = c and 255
+            val mx = max(r, max(g, bl)); val mn = min(r, min(g, bl)); if (mx == 0) continue
+            val s = (mx - mn) / mx.toFloat()
+            val cb = 128 - 0.1687f * r - 0.3313f * g + 0.5f * bl; val cr = 128 + 0.5f * r - 0.4187f * g - 0.0813f * bl
+            val pele = suave(cb, 77f, 85f, 120f, 130f) * suave(cr, 130f, 138f, 170f, 178f)
+            val ganho = 1f + v * (1f - s) * (1f - 0.75f * pele)
+            val y = (r * 54 + g * 183 + bl * 19) shr 8
+            val rr = (y + (r - y) * ganho).toInt().coerceIn(0, 255); val gg = (y + (g - y) * ganho).toInt().coerceIn(0, 255); val bb = (y + (bl - y) * ganho).toInt().coerceIn(0, 255)
+            px[k] = (0xFF shl 24) or (rr shl 16) or (gg shl 8) or bb
+        }
+        return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
     }
 
     /** Suavização de pele. forca 0..100. Usa a segmentação de pessoa quando disponível (falha em silêncio sem ela). */
