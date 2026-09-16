@@ -49,6 +49,11 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
   matrizes de cor 4x5, a mesma matriz colore a miniatura ao vivo e a foto gravada (Original, Vívido, Natural, Quente, Frio,
   Cinema, Positivo, P&B, Sépia); embelezador 0 a 100 = suavização de pele que preserva bordas (máscara pessoa x tom de pele
   x não-borda, borrão por imagem integral). Aplicados depois da captura em Foto, Pro, Macro, Retrato e nas fusões; não no scanner.
+- **Rostos e Pessoas** (`Rostos.kt`, `Pessoas.kt`, `TelaPessoas.kt`): detecção de rosto do ML Kit escolhe a referência da
+  rajada com olhos abertos; embedding facial no aparelho (MobileFaceNet TFLite em `assets/`, BSD-3, 112x112 → 192 números)
+  cadastra pessoas sozinho (casa ≥ 0,65, nova < 0,50, faixa do meio ignorada; medido em medicao/rosto_embedding.py),
+  aprende a cor da pele de cada uma em cena neutra e corrige 40% da diferença de croma no rosto nas fotos seguintes.
+  Tudo em files/ do app; a telemetria só recebe contagens e desvios. Gaveta > Pessoas: lista, renomeia, apaga, liga/desliga.
 - **Telemetria** (`Telemetria.kt`, desligável na gaveta): cada foto, sequência (rajada/HDR/noite, tempo por quadro e
   da fusão), scanner (detectar, aplicar, quadro detectado x usado), retrato por software, troca de câmera e erro
   vira uma linha JSON com aparelho, versão e memória, enviada em lote ao coletor da bancada (token injetado pelo
