@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.37",
+      "build": 42,
+      "tag": "v0.37-build42",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.37-build42.apk",
+      "mudou": [
+        "Nitidez pós-fusão q 3,0: com 3,5 o ruído passou o da câmera Xiaomi (0,0041 x 0,0038)"
+      ]
+    },
+    {
       "versao": "0.36",
       "build": 41,
       "tag": "v0.36-build41",
@@ -325,11 +334,11 @@
       ]
     }
   ],
-  "versionName": "0.36",
-  "versionCode": 36,
-  "build": 41,
+  "versionName": "0.37",
+  "versionCode": 37,
+  "build": 42,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.36-build41.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.37-build42.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-16T13:59:20Z"
+  "publicadoEm": "2026-09-16T14:09:24Z"
 }
