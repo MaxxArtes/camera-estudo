@@ -43,6 +43,8 @@ object Documento {
     data class Resultado(val recortou: Boolean, val metodo: String)
 
     private class Quad(val tl: FloatArray, val tr: FloatArray, val br: FloatArray, val bl: FloatArray, val areaMancha: Int, val metodo: String) {
+        var cantosNaBorda = 0
+        fun marcaBordas(w: Int, h: Int): Quad { val m = 0.03f * max(w, h); cantosNaBorda = listOf(tl, tr, br, bl).count { it[0] < m || it[1] < m || it[0] > w - 1 - m || it[1] > h - 1 - m }; return this }
         fun areaQuad(): Float {   // fórmula do cadarço
             val xs = floatArrayOf(tl[0], tr[0], br[0], bl[0]); val ys = floatArrayOf(tl[1], tr[1], br[1], bl[1])
             var s = 0f; for (i in 0 until 4) { val j = (i + 1) % 4; s += xs[i] * ys[j] - xs[j] * ys[i] }
@@ -52,6 +54,8 @@ object Documento {
             val aq = areaQuad(); if (aq <= 0f) return 0f
             val fracao = aq / areaImagem
             if (fracao < 0.15f || fracao > 0.97f) return 0f
+            // quadro colado em 3+ bordas da imagem é a imagem inteira, não um documento (conta em mesa escura, 16/09)
+            if (cantosNaBorda > 0 && cantosNaBorda >= 3) return 0f
             val preenchimento = (areaMancha / aq).coerceIn(0f, 1.2f)      // mancha deve encher o quadrilátero
             if (preenchimento < 0.75f) return 0f
             val larg = (hypot(tr[0] - tl[0], tr[1] - tl[1]) + hypot(br[0] - bl[0], br[1] - bl[1])) / 2
@@ -176,8 +180,14 @@ object Documento {
         val lim = otsu(norm)
         maiorMancha(BooleanArray(pw * ph) { norm[it] > lim }, pw, ph, "claro")?.let { candidatos += it }
         maiorMancha(BooleanArray(pw * ph) { norm[it] <= lim }, pw, ph, "escuro")?.let { candidatos += it }
+        // sem normalizar: em mesa escura a normalização iguala papel e mesa (medido 16/09: normalizado = imagem inteira,
+        // cru = a conta com 91% de preenchimento)
+        val limCru = otsu(cinza)
+        maiorMancha(BooleanArray(pw * ph) { cinza[it] > limCru }, pw, ph, "claro_cru")?.let { candidatos += it }
+        maiorMancha(BooleanArray(pw * ph) { cinza[it] <= limCru }, pw, ph, "escuro_cru")?.let { candidatos += it }
         maiorMancha(regiaoLisa(cinza, pw, ph), pw, ph, "bordas")?.let { candidatos += it }
         linhasHough(cinza, pw, ph)?.let { candidatos += it }
+        candidatos.forEach { it.marcaBordas(pw, ph) }
         val melhor = candidatos.maxByOrNull { it.placar(pw * ph) }?.takeIf { it.placar(pw * ph) > 0f }
         return melhor to estatisticas(cinza, lim)
     }

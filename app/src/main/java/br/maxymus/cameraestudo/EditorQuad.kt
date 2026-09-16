@@ -135,6 +135,10 @@ fun EditorQuad(previa: Bitmap, quadInicial: FloatArray?, tela: Boolean, aoUsar: 
         }
         Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Botao("Descartar", Color(0x22FFFFFF), Modifier.weight(1f), aoDescartar)
+            Botao("Girar", Color(0x22FFFFFF), Modifier.weight(1f)) {
+                // roda a ordem dos cantos: o que era topo-esquerda passa a ser topo-direita → a saída gira 90° (conta de cabeça para baixo, 16/09)
+                val q = quad; quad = floatArrayOf(q[6], q[7], q[0], q[1], q[2], q[3], q[4], q[5])
+            }
             Botao("Sem recorte", Color(0x22FFFFFF), Modifier.weight(1f), aoSemRecorte)
             Botao("Usar", Coral, Modifier.weight(1f)) { aoUsar(quad) }
         }

@@ -305,6 +305,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             // detecção ao vivo: plano Y do quadro (já é a luminância), no máximo a cada 150 ms, mesmo detector da foto
             val telaVivo = modo == Modo.TELA; val frontal = lente == CameraSelector.LENS_FACING_FRONT
             var ultimoMs = 0L
+            var candidatoAnterior: FloatArray? = null     // estabilidade: um quadro novo só entra se repetir em 2 análises seguidas; depois é suavizado
             imageAnalysis.setAnalyzer(executorAnalise) { img ->
                 val agora = System.currentTimeMillis()
                 if (agora - ultimoMs < 150) { img.close(); return@setAnalyzer }
@@ -321,7 +322,16 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     val (nx, ny) = when (rot) { 90 -> (1f - y) to x; 180 -> (1f - x) to (1f - y); 270 -> y to (1f - x); else -> x to y }
                     g[i * 2] = if (frontal) 1f - nx else nx; g[i * 2 + 1] = ny }
                 quadVivoDims = if (rot == 90 || rot == 270) intArrayOf(ch, cw) else intArrayOf(cw, ch)
-                quadVivo = g; quadVivoEm = agora
+                fun dist(a: FloatArray, b: FloatArray): Float { var s = 0f; for (i in 0 until 4) s += kotlin.math.hypot(a[i * 2] - b[i * 2], a[i * 2 + 1] - b[i * 2 + 1]); return s / 4 }
+                val atual = quadVivo
+                if (atual != null && dist(atual, g) < 0.08f) {
+                    // perto do que já mostra: suaviza (metade do caminho), sem pular
+                    quadVivo = FloatArray(8) { atual[it] + (g[it] - atual[it]) * 0.5f }; quadVivoEm = agora
+                } else {
+                    val ant = candidatoAnterior
+                    if (ant != null && dist(ant, g) < 0.08f) { quadVivo = g; quadVivoEm = agora; candidatoAnterior = null }
+                    else candidatoAnterior = g
+                }
             }
         } else imageAnalysis.clearAnalyzer()
         camera = runCatching {
