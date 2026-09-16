@@ -43,13 +43,22 @@ object Fusao {
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = amostra })
     }
 
-    /** Luminância média (0..255) de um JPEG, decodificado pequeno: decide se a cena é escura. */
-    fun brilhoMedio(bytes: ByteArray): Int {
-        val b = decodifica(bytes, 160) ?: return 128
+    /**
+     * Mede a cena num JPEG pequeno: luminância média (0..255), % de pixels estourados (> 250) e % de sombras
+     * fechadas (< 8). Decide o caminho do HDR: escuro = Noite; com estouro/sombra a recuperar = bracket;
+     * cena "comportada" = só rajada (medido 16/09 no auditório: bracket numa cena com 0,4% de estouro
+     * clareou 50% e saturou 43% sem ter nada a recuperar).
+     */
+    fun medeCena(bytes: ByteArray): IntArray {
+        val b = decodifica(bytes, 160) ?: return intArrayOf(128, 0, 0)
         val px = IntArray(b.width * b.height).also { b.getPixels(it, 0, b.width, 0, 0, b.width, b.height) }; b.recycle()
-        val lu = luminancia(px); var soma = 0L; for (v in lu) soma += v
-        return (soma / max(1, lu.size)).toInt()
+        val lu = luminancia(px); var soma = 0L; var claros = 0; var escuros = 0
+        for (v in lu) { soma += v; if (v > 250) claros++; if (v < 8) escuros++ }
+        val n = max(1, lu.size)
+        return intArrayOf((soma / n).toInt(), claros * 1000 / n, escuros * 1000 / n)   // % x10
     }
+    const val ESTOURO_MIN_PERMIL = 20    // 2% estourado ou...
+    const val SOMBRA_MIN_PERMIL = 100    // ...10% de sombra fechada justificam o bracket
     const val LIMIAR_ESCURO = 70   // abaixo disso o bracket só traz ruído (medido: Mertens 0,063 vs rajada 0,037 de ruído nos lisos)
     const val LIMIAR_MUITO_ESCURO = 35   // abaixo: 8 quadros, soma 2x2 e dessaturação maior ("Olho": bastonetes não veem cor)
 
@@ -240,7 +249,7 @@ object Fusao {
     }
 
     // ---------- HDR (Mertens 2007, na luminância) ----------
-    suspend fun hdr(exposicoes: List<Bitmap>, niveis: Int = 6, reciclar: Boolean = false, aoProgresso: (Int) -> Unit = {}): Bitmap = withContext(Dispatchers.Default) {
+    suspend fun hdr(exposicoes: List<Bitmap>, niveis: Int = 7, reciclar: Boolean = false, aoProgresso: (Int) -> Unit = {}): Bitmap = withContext(Dispatchers.Default) {
         val w = exposicoes[0].width; val h = exposicoes[0].height; val n = w * h
         val pxs = exposicoes.map { b -> IntArray(n).also { b.getPixels(it, 0, w, 0, 0, w, h); if (reciclar) b.recycle() } }
         val lums = pxs.map { luminancia(it) }
@@ -297,18 +306,22 @@ object Fusao {
         // colapsa a pirâmide
         var y = acc!![niveis - 1]
         for (l in niveis - 2 downTo 0) { val u = amplia(y, acc!![l].w, acc!![l].h); y = Plano(u.w, u.h, FloatArray(u.v.size) { k -> u.v[k] + acc!![l].v[k] }) }
-        // esticamento brando (percentis 0,1% e 99,9%, ganho até 1,15): a fusão pura sai acinzentada, mas
-        // esticar forte amplificou o granulado na selfie noturna do dono
-        val hist = IntArray(256); for (v in y.v) hist[v.toInt().coerceIn(0, 255)]++
-        var acc2 = 0; var lo = 0; var hi = 255
-        for (i in 0..255) { acc2 += hist[i]; if (acc2 >= n * 0.001) { lo = i; break } }
-        acc2 = 0; for (i in 255 downTo 0) { acc2 += hist[i]; if (acc2 >= n * 0.001) { hi = i; break } }
-        val esc = if (hi - lo > 40) min(1.15f, 255f / (hi - lo)) else 1f
+        // Sem esticamento. Duas âncoras na exposição do meio (medido 16/09: o bracket clareou 50% e saturou 43%
+        // uma cena que não precisava): o brilho médio do resultado segue o do ev0 (ganho entre 0,85 e 1,25),
+        // e a saturação de cada pixel não passa de 1,1x a do ev0 no mesmo ponto.
+        var somaF = 0.0; var soma0 = 0.0; val lu0 = lums[meio]
+        for (k in 0 until n) { somaF += y.v[k]; soma0 += lu0[k] }
+        val ganho = (if (somaF > 0) soma0 / somaF else 1.0).toFloat().coerceIn(0.85f, 1.25f)
+        val px0 = pxs[meio]
         val saida = IntArray(n) { k ->
-            val yf = ((y.v[k] - lo) * esc).coerceIn(0f, 255f)
+            val yf = (y.v[k] * ganho).coerceIn(0f, 255f)
             val yc = (corR[k] * 54 + corG[k] * 183 + corB[k] * 19) / 256f
             val f = if (yc > 1f) yf / yc else 1f
-            (0xFF shl 24) or ((corR[k] * f + 0.5f).toInt().coerceIn(0, 255) shl 16) or ((corG[k] * f + 0.5f).toInt().coerceIn(0, 255) shl 8) or (corB[k] * f + 0.5f).toInt().coerceIn(0, 255)
+            var r = corR[k] * f; var g = corG[k] * f; var b = corB[k] * f
+            val c0 = px0[k]; val sat0 = (max(c0 shr 16 and 255, max(c0 shr 8 and 255, c0 and 255)) - min(c0 shr 16 and 255, min(c0 shr 8 and 255, c0 and 255))) * 1.1f + 2f
+            val satF = max(r, max(g, b)) - min(r, min(g, b))
+            if (satF > sat0) { val t = sat0 / satF; r = yf + (r - yf) * t; g = yf + (g - yf) * t; b = yf + (b - yf) * t }
+            (0xFF shl 24) or ((r + 0.5f).toInt().coerceIn(0, 255) shl 16) or ((g + 0.5f).toInt().coerceIn(0, 255) shl 8) or (b + 0.5f).toInt().coerceIn(0, 255)
         }
         Bitmap.createBitmap(saida, w, h, Bitmap.Config.ARGB_8888)
     }

@@ -30,6 +30,9 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
     "Olho" (16/09, medido 200 ms por quadro no aparelho do dono): penumbra = 6 quadros; escuro fundo (luminância < 35) =
     8 quadros, soma 2x2 (decodifica na metade do lado, 4x mais luz por pixel) e dessaturação de 30%, como os bastonetes.
     A extensão do fabricante é desligada durante rajada/HDR: com ela cada quadro levou 1,8 a 2,3 s em vez de 0,2 s.
+    O bracket só entra quando o 1º quadro tem ≥ 2% de estouro ou ≥ 10% de sombra fechada; cena comportada vira rajada.
+    Quando entra, o resultado fica ancorado no ev0: mesmo brilho médio (ganho 0,85 a 1,25) e saturação por pixel até 1,1x
+    (medido 16/09 num auditório: o bracket antigo clareou 50% e saturou 43% sem nada a recuperar). Sem esticamento; 7 níveis.
   - Rajada (Foto, Pro, Documento, Tela, Macro): 4 capturas iguais; referência = quadro mais nítido; alinhamento
     MTB + refino por ladrilho (128 px, ±2 px); merge robusto com peso exp(−(d/τ)²), τ = 2,5 σ (σ pela mediana da
     diferença entre quadros). No scanner a fusão acontece DEPOIS do recorte, com as folhas já retificadas.

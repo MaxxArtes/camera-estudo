@@ -400,7 +400,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             // HDR: o 1º quadro (0 EV) decide — cena escura vira Noite (mais 3 iguais + sombras), clara vira bracket −2/+2
             val quadros = ArrayList<Pair<ByteArray, Int>>()
             val tempos = ArrayList<Long>(); val tInicio = Telemetria.agora()
-            var noite = false; var brilho = -1
+            var noite = false; var brilho = -1; var estouro = -1; var sombras = -1; var precisaBracket = true
             try {
                 fase = (if (comHdr) "HDR" else "Rajada") + " 1/${if (comHdr) 3 else 4}: segure firme"
                 var tq = Telemetria.agora()
@@ -409,16 +409,21 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 if (primeiro != null) {
                     quadros += primeiro
                     val bracket = comHdr && estadoEv != null && estadoEv.isExposureCompensationSupported
-                    if (comHdr) brilho = withContext(Dispatchers.Default) { Fusao.brilhoMedio(primeiro.first) }
+                    if (comHdr) {
+                        val m = withContext(Dispatchers.Default) { Fusao.medeCena(primeiro.first) }
+                        brilho = m[0]; estouro = m[1]; sombras = m[2]
+                        // bracket só quando há algo a recuperar; cena comportada vira rajada (menos ruído, mesma cara)
+                        precisaBracket = estouro >= Fusao.ESTOURO_MIN_PERMIL || sombras >= Fusao.SOMBRA_MIN_PERMIL
+                    }
                     noite = comHdr && brilho < Fusao.LIMIAR_ESCURO
                     // "Olho": quanto mais escuro, mais quadros somados (200 ms cada no aparelho do dono); no escuro fundo também soma 2x2 e tira cor
                     val extras = when { noite && brilho < Fusao.LIMIAR_MUITO_ESCURO -> 7; noite -> 5; else -> 3 }
-                    val indices: List<Int?> = if (bracket && !noite) {
+                    val indices: List<Int?> = if (bracket && !noite && precisaBracket) {
                         val passo = estadoEv.exposureCompensationStep.toFloat().takeIf { it > 0f } ?: 0.5f
                         listOf(-2f, 2f).map { ev -> Math.round(ev / passo).coerceIn(estadoEv.exposureCompensationRange.lower, estadoEv.exposureCompensationRange.upper) }
                     } else List(extras) { null }
                     for ((i, idx) in indices.withIndex()) {
-                        fase = (if (noite) "Noite" else if (comHdr) "HDR" else "Rajada") + " ${i + 2}/${indices.size + 1}: segure firme"
+                        fase = (when { noite -> "Noite"; comHdr && precisaBracket -> "HDR"; comHdr -> "HDR: cena sem estouro, rajada"; else -> "Rajada" }) + " ${i + 2}/${indices.size + 1}: segure firme"
                         tq = Telemetria.agora()
                         if (idx != null) cam?.cameraControl?.setExposureCompensationIndex(idx)?.let { f -> withContext(Dispatchers.IO) { runCatching { f.get() } } }
                         quadros += capturaBytes() ?: break
@@ -426,10 +431,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     }
                 }
             } finally { if (comHdr) cam?.cameraControl?.setExposureCompensationIndex(evOriginal) }
-            val tipoSeq = when { !comHdr -> "rajada"; noite -> "noite"; else -> "hdr" }
+            val tipoSeq = when { !comHdr -> "rajada"; noite -> "noite"; !precisaBracket -> "hdr_rajada"; else -> "hdr" }
             if (quadros.size < 2) { fase = null; ocupado = false; Telemetria.evento("erro", mapOf("onde" to "captura_" + tipoSeq, "quadros" to quadros.size, "ms_quadros" to tempos)); Toast.makeText(contexto, "Não consegui capturar a sequência.", Toast.LENGTH_SHORT).show(); return@launch }
             val scanner = modo == Modo.DOCUMENTO || modo == Modo.TELA
-            val bracketReal = comHdr && !noite && quadros.size == 3
+            val bracketReal = comHdr && !noite && precisaBracket && quadros.size == 3
             fase = when { scanner -> "Guardando os quadros..."; bracketReal -> "Fundindo as exposições..."; noite -> "Noite: fundindo e levantando sombras..."; else -> "Fundindo ${quadros.size} quadros..." }
             val tFusao = Telemetria.agora()
             val uri = withContext(Dispatchers.Default) {
@@ -453,7 +458,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             }
             fase = null
             Telemetria.evento("sequencia", mapOf("sequencia" to tipoSeq, "modo" to modo.name.lowercase(), "quadros" to quadros.size, "ms_quadros" to tempos, "ms_captura" to tempos.sum(),
-                "ms_fusao" to Telemetria.ms(tFusao), "ms_total" to Telemetria.ms(tInicio), "brilho" to brilho, "bytes_quadro" to quadros[0].first.size, "ok" to (uri != null),
+                "ms_fusao" to Telemetria.ms(tFusao), "ms_total" to Telemetria.ms(tInicio), "brilho" to brilho, "estouro_permil" to estouro, "sombras_permil" to sombras, "bytes_quadro" to quadros[0].first.size, "ok" to (uri != null),
                 "lente" to (if (lente == CameraSelector.LENS_FACING_FRONT) "frontal" else "traseira"), "flash" to flash, "zoom" to zoom))
             when {
                 uri == null -> { ocupado = false; Toast.makeText(contexto, "A fusão falhou; nada foi gravado.", Toast.LENGTH_SHORT).show() }
