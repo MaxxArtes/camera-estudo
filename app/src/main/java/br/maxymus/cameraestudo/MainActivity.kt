@@ -3,6 +3,7 @@ package br.maxymus.cameraestudo
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -33,6 +34,17 @@ import androidx.core.content.ContextCompat
  * pedido de permissão → câmera → galeria (voltar retorna à câmera).
  */
 class MainActivity : ComponentActivity() {
+    // volume para cima ou para baixo = disparar (só enquanto a tela da câmera está registrada em Atalhos)
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if ((keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) && event?.repeatCount == 0) {
+            val f = Atalhos.aoDisparar ?: return super.onKeyDown(keyCode, event)
+            f(); return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean =
+        if ((keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) && Atalhos.aoDisparar != null) true else super.onKeyUp(keyCode, event)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Telemetria.iniciar(this)

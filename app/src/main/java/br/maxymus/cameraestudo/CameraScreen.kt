@@ -8,7 +8,9 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.provider.MediaStore
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.compose.runtime.DisposableEffect
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
@@ -519,6 +521,11 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             }
         } else tiraFoto()
     }
+
+    // teclas de volume disparam enquanto esta tela está viva
+    DisposableEffect(Unit) { Atalhos.aoDisparar = { disparar() }; onDispose { Atalhos.aoDisparar = null } }
+    // botão voltar do sistema: fecha o editor de cantos (grava sem recorte) ou o painel aberto, em vez de sair do app
+    BackHandler(enabled = edicao != null) { edicao?.let { e -> concluirDocumento(e.uri, e.deteccao, e.tela, null, true, e.quadros, e.rot) } }
 
     Box(modifier = Modifier.fillMaxSize().background(Fundo)) {
         Column(modifier = Modifier.fillMaxSize()) {

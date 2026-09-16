@@ -42,6 +42,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -88,6 +89,8 @@ fun GaleriaScreen(voltar: () -> Unit) {
     }
 
     LaunchedEffect(Unit) { midias = Fotos.listar(contexto) }
+    // botão voltar do sistema: foto aberta -> grade; seleção -> cancela; grade -> câmera
+    BackHandler { when { aberta != null -> aberta = null; selecionando -> { selecionando = false; selecionadas = emptyList() }; else -> voltar() } }
 
     Column(modifier = Modifier.fillMaxSize().background(Color(0xFF0E0E12)).statusBarsPadding()) {
         Row(modifier = Modifier.fillMaxWidth().padding(4.dp), verticalAlignment = Alignment.CenterVertically) {

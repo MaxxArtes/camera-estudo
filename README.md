@@ -41,6 +41,7 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
   Android 14+ e apoio do fabricante). Se aceita, régua de desfoque 0 a 100 no bokeh nativo (e a mesma régua na Foto com
   extensão HDR/Noite ligada); se não, avisa o Android do aparelho e oferece "Usar o nosso", o retrato por software com
   régua de **desfoque 1 a 10** (`Retrato.aplicar(intensidade)`). O evento `camera` da telemetria registra `forca_disponivel`.
+- **Volume** (cima ou baixo) dispara a foto/vídeo (`Atalhos.kt` + `onKeyDown`). O **voltar do sistema** navega dentro do app: fecha a foto ampliada, cancela a seleção, volta da galeria à câmera e fecha o editor de cantos (grava sem recorte).
 - **Foco por toque** com anel, **toque longo trava AE/AF** (o aparelho para de refocar e remedir) e uma régua de luz ao lado do anel
   (arrastar na vertical muda a compensação de exposição). Toque simples solta a trava.
 - Gaveta: **Aparelho** liga as extensões do fabricante pelo CameraX (Auto, HDR, Noite, Retoque, o que o aparelho expuser) na Foto;
