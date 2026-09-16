@@ -563,7 +563,14 @@ object Documento {
         for (i in px.indices) {
             val c = px[i]; val r = c shr 16 and 255; val g = c shr 8 and 255; val bl = c and 255
             val alvo = tabela[y1[i]]; val base = max(1, y0[i])
-            val rr = (r * alvo / base).coerceIn(0, 255); val gg = (g * alvo / base).coerceIn(0, 255); val bb = (bl * alvo / base).coerceIn(0, 255)
+            var rr = (r * alvo / base).coerceIn(0, 255); var gg = (g * alvo / base).coerceIn(0, 255); var bb = (bl * alvo / base).coerceIn(0, 255)
+            // papel claro vai para o neutro: a sombra tem cor diferente da luz (nota do BK, 16/09: rosado onde havia sombra);
+            // acima de 180 de luminância a saturação cai até 75%. Texto e logos escuros não mudam; documento colorido, menos.
+            if (alvo > 180) {
+                val t = ((alvo - 180) / 75f).coerceIn(0f, 1f) * (if (colorido) 0.35f else 0.75f)
+                val y = (rr * 30 + gg * 59 + bb * 11) / 100
+                rr = (rr + (y - rr) * t).toInt(); gg = (gg + (y - gg) * t).toInt(); bb = (bb + (y - bb) * t).toInt()
+            }
             px[i] = (0xFF shl 24) or (rr shl 16) or (gg shl 8) or bb
         }
         return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
