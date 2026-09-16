@@ -262,7 +262,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             extensoesDisponiveis = listOf(ExtensionMode.NONE) + listOf(ExtensionMode.AUTO, ExtensionMode.HDR, ExtensionMode.NIGHT, ExtensionMode.FACE_RETOUCH).filter { gerente.isExtensionAvailable(seletor, it) }
             if (modo == Modo.RETRATO && !retratoSoftware && gerente.isExtensionAvailable(seletor, ExtensionMode.BOKEH)) {
                 seletor = gerente.getExtensionEnabledCameraSelector(seletor, ExtensionMode.BOKEH); bokehNativo = true; extensaoAtiva = ExtensionMode.BOKEH
-            } else if (modo == Modo.FOTO && extensao != ExtensionMode.NONE && gerente.isExtensionAvailable(seletor, extensao)) {
+            } else if (modo == Modo.FOTO && extensao != ExtensionMode.NONE && !capturaRapida && gerente.isExtensionAvailable(seletor, extensao)) {
+                // com Rajada/HDR nossos ligados a extensão fica fora: medido no Xiaomi do dono, 1,8 a 2,3 s por quadro com "Auto" contra 0,2 s sem
                 seletor = gerente.getExtensionEnabledCameraSelector(seletor, extensao); extensaoAtiva = extensao
             }
         } else extensoesDisponiveis = listOf(ExtensionMode.NONE)
@@ -410,10 +411,12 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     val bracket = comHdr && estadoEv != null && estadoEv.isExposureCompensationSupported
                     if (comHdr) brilho = withContext(Dispatchers.Default) { Fusao.brilhoMedio(primeiro.first) }
                     noite = comHdr && brilho < Fusao.LIMIAR_ESCURO
+                    // "Olho": quanto mais escuro, mais quadros somados (200 ms cada no aparelho do dono); no escuro fundo também soma 2x2 e tira cor
+                    val extras = when { noite && brilho < Fusao.LIMIAR_MUITO_ESCURO -> 7; noite -> 5; else -> 3 }
                     val indices: List<Int?> = if (bracket && !noite) {
                         val passo = estadoEv.exposureCompensationStep.toFloat().takeIf { it > 0f } ?: 0.5f
                         listOf(-2f, 2f).map { ev -> Math.round(ev / passo).coerceIn(estadoEv.exposureCompensationRange.lower, estadoEv.exposureCompensationRange.upper) }
-                    } else List(3) { null }
+                    } else List(extras) { null }
                     for ((i, idx) in indices.withIndex()) {
                         fase = (if (noite) "Noite" else if (comHdr) "HDR" else "Rajada") + " ${i + 2}/${indices.size + 1}: segure firme"
                         tq = Telemetria.agora()
@@ -436,8 +439,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                         else {
                             // bracket foi capturado na ordem 0, −2, +2; o Mertens alinha tudo à exposição do meio, então reordena para −2, 0, +2
                             val ordem = if (bracketReal) listOf(quadros[1], quadros[0], quadros[2]) else quadros
-                            val bitmaps = ordem.mapNotNull { Fusao.decodifica(it.first, if (bracketReal) 1600 else 2000) }
-                            when { bracketReal -> Fusao.hdr(bitmaps, reciclar = true); noite -> Fusao.noite(bitmaps, reciclar = true); else -> Fusao.rajada(bitmaps, reciclar = true) }
+                            val muitoEscuro = noite && brilho < Fusao.LIMIAR_MUITO_ESCURO
+                            // soma 2x2 no escuro fundo: decodifica na metade do lado (4 pixels virando 1 = 4x mais luz por pixel, como os bastonetes)
+                            val bitmaps = ordem.mapNotNull { Fusao.decodifica(it.first, when { bracketReal -> 1600; muitoEscuro -> 1200; else -> 2000 }) }
+                            when { bracketReal -> Fusao.hdr(bitmaps, reciclar = true); noite -> Fusao.noite(bitmaps, reciclar = true, dessatura = if (muitoEscuro) 0.3f else 0.1f); else -> Fusao.rajada(bitmaps, reciclar = true) }
                         }
                     val pronto = Fusao.gira(fundido, quadros[0].second)
                     val destino = contexto.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Fotos.novaEntrada())
@@ -447,7 +452,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 }.getOrNull()
             }
             fase = null
-            Telemetria.evento("sequencia", mapOf("tipo" to tipoSeq, "modo" to modo.name.lowercase(), "quadros" to quadros.size, "ms_quadros" to tempos, "ms_captura" to tempos.sum(),
+            Telemetria.evento("sequencia", mapOf("sequencia" to tipoSeq, "modo" to modo.name.lowercase(), "quadros" to quadros.size, "ms_quadros" to tempos, "ms_captura" to tempos.sum(),
                 "ms_fusao" to Telemetria.ms(tFusao), "ms_total" to Telemetria.ms(tInicio), "brilho" to brilho, "bytes_quadro" to quadros[0].first.size, "ok" to (uri != null),
                 "lente" to (if (lente == CameraSelector.LENS_FACING_FRONT) "frontal" else "traseira"), "flash" to flash, "zoom" to zoom))
             when {
@@ -459,6 +464,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     }
 
     fun tiraFoto() {
+        if (camera == null) { Toast.makeText(contexto, "A câmera ainda está abrindo; tente de novo.", Toast.LENGTH_SHORT).show(); return }
         if (modo == Modo.FOTO && hdr) { tiraVarias(true); return }
         if (rajada && !modo.video && modo != Modo.RETRATO) { tiraVarias(false); return }
         ocupado = true

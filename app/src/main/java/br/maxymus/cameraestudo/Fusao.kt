@@ -51,12 +51,13 @@ object Fusao {
         return (soma / max(1, lu.size)).toInt()
     }
     const val LIMIAR_ESCURO = 70   // abaixo disso o bracket só traz ruído (medido: Mertens 0,063 vs rajada 0,037 de ruído nos lisos)
+    const val LIMIAR_MUITO_ESCURO = 35   // abaixo: 8 quadros, soma 2x2 e dessaturação maior ("Olho": bastonetes não veem cor)
 
     /**
      * Noite: N quadros na MESMA exposição fundidos (rajada) e sombras levantadas (gama 0,7 na luminância,
      * cor preservada pela razão). É o caminho do HDR+: à noite o bracket só traz o ruído do quadro longo.
      */
-    suspend fun noite(quadros: List<Bitmap>, reciclar: Boolean = false, gama: Float = 0.7f): Bitmap = withContext(Dispatchers.Default) {
+    suspend fun noite(quadros: List<Bitmap>, reciclar: Boolean = false, gama: Float = 0.7f, dessatura: Float = 0.1f): Bitmap = withContext(Dispatchers.Default) {
         val fundido = rajada(quadros, reciclar)
         val w = fundido.width; val h = fundido.height
         val px = IntArray(w * h).also { fundido.getPixels(it, 0, w, 0, 0, w, h) }; fundido.recycle()
@@ -65,7 +66,9 @@ object Fusao {
             val c = px[k]; val r = c shr 16 and 255; val g = c shr 8 and 255; val b = c and 255
             val y = (r * 54 + g * 183 + b * 19) shr 8
             val f = if (y > 0) tabela[y] / y else 1f
-            px[k] = (0xFF shl 24) or ((r * f + 0.5f).toInt().coerceIn(0, 255) shl 16) or ((g * f + 0.5f).toInt().coerceIn(0, 255) shl 8) or (b * f + 0.5f).toInt().coerceIn(0, 255)
+            // dessaturação parcial: o ruído colorido é o mais visível à noite (e o olho também abre mão da cor no escuro)
+            val rr = (r + (y - r) * dessatura) * f; val gg = (g + (y - g) * dessatura) * f; val bb = (b + (y - b) * dessatura) * f
+            px[k] = (0xFF shl 24) or ((rr + 0.5f).toInt().coerceIn(0, 255) shl 16) or ((gg + 0.5f).toInt().coerceIn(0, 255) shl 8) or (bb + 0.5f).toInt().coerceIn(0, 255)
         }
         Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
     }
