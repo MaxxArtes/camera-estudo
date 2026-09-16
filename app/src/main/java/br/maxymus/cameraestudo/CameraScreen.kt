@@ -636,8 +636,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     Icon(iconeFlash(flash), contentDescription = "Flash", tint = if (flash == ImageCapture.FLASH_MODE_OFF) Color.White else Amarelo)
                 }
                 Box(modifier = Modifier.size(40.dp).clip(CircleShape).clickable { timer = when (timer) { 0 -> 3; 3 -> 10; else -> 0 } }, contentAlignment = Alignment.Center) {
-                    Icon(Icons.Filled.Timer, contentDescription = "Timer", tint = if (timer > 0) Amarelo else Color.White)
-                    if (timer > 0) Text("$timer", color = Amarelo, fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.BottomEnd).padding(end = 4.dp, bottom = 2.dp))
+                    IconeTimer(timer, if (timer > 0) Amarelo else Color.White)
                 }
                 Box(modifier = Modifier.size(40.dp).clip(CircleShape).clickable { proporcao = if (proporcao == AspectRatio.RATIO_16_9) AspectRatio.RATIO_4_3 else AspectRatio.RATIO_16_9 }, contentAlignment = Alignment.Center) {
                     Text(if (proporcao == AspectRatio.RATIO_16_9) "16:9" else "4:3", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -959,6 +958,25 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 }
             }
         }
+    }
+}
+
+/**
+ * Cronômetro como na câmera da Xiaomi (pedido do dono, 16/09): aro com botão em cima e o número dos segundos
+ * dentro; desligado, o mesmo aro cortado por uma barra.
+ */
+@Composable
+private fun IconeTimer(segundos: Int, cor: Color) {
+    Box(modifier = Modifier.size(26.dp), contentAlignment = Alignment.Center) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val t = 1.8.dp.toPx(); val cx = size.width / 2; val cy = size.height * 0.58f; val r = size.width * 0.36f
+            drawCircle(cor, r, Offset(cx, cy), style = Stroke(t))
+            drawLine(cor, Offset(cx, cy - r), Offset(cx, cy - r - 2.5.dp.toPx()), t)                          // haste
+            drawLine(cor, Offset(cx - 3.5.dp.toPx(), cy - r - 3.2.dp.toPx()), Offset(cx + 3.5.dp.toPx(), cy - r - 3.2.dp.toPx()), t)   // botão
+            drawLine(cor, Offset(cx + r * 0.62f, cy - r * 0.62f), Offset(cx + r * 0.62f + 2.dp.toPx(), cy - r * 0.62f - 2.dp.toPx()), t)   // pino lateral
+            if (segundos <= 0) drawLine(cor, Offset(cx - r * 0.95f, cy - r * 0.95f), Offset(cx + r * 0.95f, cy + r * 0.95f), t)          // cortado
+        }
+        if (segundos > 0) Text("$segundos", color = cor, fontSize = 10.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 3.dp))
     }
 }
 
