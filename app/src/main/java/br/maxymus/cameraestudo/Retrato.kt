@@ -21,7 +21,7 @@ import kotlinx.coroutines.withContext
  * barato que roda em qualquer aparelho, sem RenderScript nem GPU).
  */
 object Retrato {
-    private const val LADO_MAX = 1600   // processar em 12 Mpx levaria muitos segundos; 1600 px basta para tela e redes
+    private const val LADO_MAX = 2400   // medido no Xiaomi do dono (16/09): 150-200 ms a 1600 px; a 2400 px cabe em ~0,5 s
 
     /** intensidade 1..10: 5 é o padrão antigo (fundo reduzido a 1/10); 1 quase não desfoca, 10 desfoca muito. */
     /** Devolve null quando deu certo; senão o motivo (vai para a telemetria). */
@@ -52,7 +52,14 @@ object Retrato {
             segmentador.close()
             val mw = mascara.width; val mh = mascara.height
             val bb = mascara.buffer; bb.rewind()
-            val conf = FloatArray(mw * mh) { bb.float }   // o ML Kit entrega a máscara como floats dentro de um ByteBuffer
+            val bruta = FloatArray(mw * mh) { bb.float }   // o ML Kit entrega a máscara como floats dentro de um ByteBuffer
+            // borda suave: média 5x5 da confiança e curva em S (0,25..0,75 → 0..1). Sem isso o recorte do cabelo contra
+            // o céu saía duro (primeiro retrato por software do dono, 16/09)
+            val conf = FloatArray(mw * mh) { k ->
+                val cx = k % mw; val cy = k / mw; var s = 0f; var n = 0
+                for (dy in -2..2) for (dx in -2..2) { val x = cx + dx; val y = cy + dy; if (x in 0 until mw && y in 0 until mh) { s += bruta[y * mw + x]; n++ } }
+                val m = s / n; val t = ((m - 0.25f) / 0.5f).coerceIn(0f, 1f); t * t * (3 - 2 * t)
+            }
 
             // fundo desfocado: reduz por (2 x intensidade) e volta, duas vezes para o desfoque ficar redondo, não quadriculado
             val divisor = (intensidade.coerceIn(1, 10) * 2)
@@ -80,6 +87,7 @@ object Retrato {
             val resultado = Bitmap.createBitmap(saida, w, h, Bitmap.Config.ARGB_8888)
             contexto.contentResolver.openOutputStream(uri, "wt")?.use { resultado.compress(Bitmap.CompressFormat.JPEG, 92, it) } ?: return@runCatching "não consegui gravar"
             resultado.recycle()
+            Fotos.gravaExif(contexto, uri, "Camera Estudo " + (runCatching { contexto.packageManager.getPackageInfo(contexto.packageName, 0).versionName }.getOrNull() ?: "") + " (retrato software, desfoque $intensidade)")
             null
         }.getOrElse { e -> (e::class.java.simpleName + ": " + (e.message ?: "")).take(300) }
     }
