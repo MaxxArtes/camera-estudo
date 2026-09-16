@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.44",
+      "build": 49,
+      "tag": "v0.44-build49",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.44-build49.apk",
+      "mudou": [
+        "Realce do scanner: papel claro vai para o neutro (sombra deixava tom rosado na nota fiscal)"
+      ]
+    },
+    {
       "versao": "0.43",
       "build": 48,
       "tag": "v0.43-build48",
@@ -388,11 +397,11 @@
       ]
     }
   ],
-  "versionName": "0.43",
-  "versionCode": 43,
-  "build": 48,
+  "versionName": "0.44",
+  "versionCode": 44,
+  "build": 49,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.43-build48.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.44-build49.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-16T16:12:03Z"
+  "publicadoEm": "2026-09-16T16:28:08Z"
 }
