@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.57",
+      "build": 63,
+      "tag": "v0.57-build63",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.57-build63.apk",
+      "mudou": [
+        "Auto-máscaras (Lightroom automático): céu, fundo radial ao redor do rosto, clareza no rosto, nitidez nos olhos; ligável na gaveta; telemetria do que agiu"
+      ]
+    },
+    {
       "versao": "0.56",
       "build": 62,
       "tag": "v0.56-build62",
@@ -514,11 +523,11 @@
       ]
     }
   ],
-  "versionName": "0.56",
-  "versionCode": 56,
-  "build": 62,
+  "versionName": "0.57",
+  "versionCode": 57,
+  "build": 63,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.56-build62.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.57-build63.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-17T15:06:31Z"
+  "publicadoEm": "2026-09-17T15:18:48Z"
 }
