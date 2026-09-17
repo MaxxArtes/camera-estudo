@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.64",
+      "build": 71,
+      "tag": "v0.64-build71",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.64-build71.apk",
+      "mudou": [
+        "Vídeo: prévia em 16:9 acompanha a gravação; evento de telemetria com duração, bytes e erro"
+      ]
+    },
+    {
       "versao": "0.63",
       "build": 70,
       "tag": "v0.63-build70",
@@ -568,11 +577,11 @@
       ]
     }
   ],
-  "versionName": "0.63",
-  "versionCode": 63,
-  "build": 70,
+  "versionName": "0.64",
+  "versionCode": 64,
+  "build": 71,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.63-build70.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.64-build71.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-17T17:29:21Z"
+  "publicadoEm": "2026-09-17T18:14:25Z"
 }
