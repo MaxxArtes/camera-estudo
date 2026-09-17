@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.52",
+      "build": 58,
+      "tag": "v0.52-build58",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.52-build58.apk",
+      "mudou": [
+        "Scanner após revisão do Codex (gpt-6-astra): anti-moiré vira chip opcional no Tela, teto exato na decodificação, estilo Texto (Sauvola suave), nitidez gaussiana com limiar, dimensões na telemetria"
+      ]
+    },
+    {
       "versao": "0.51",
       "build": 57,
       "tag": "v0.51-build57",
@@ -469,11 +478,11 @@
       ]
     }
   ],
-  "versionName": "0.51",
-  "versionCode": 51,
-  "build": 57,
+  "versionName": "0.52",
+  "versionCode": 52,
+  "build": 58,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.51-build57.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.52-build58.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-17T13:34:55Z"
+  "publicadoEm": "2026-09-17T13:48:03Z"
 }
