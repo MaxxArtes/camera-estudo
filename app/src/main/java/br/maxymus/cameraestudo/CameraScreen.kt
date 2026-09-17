@@ -69,6 +69,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Face
@@ -194,6 +195,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var focoTravado by remember { mutableStateOf(false) }
     var focoEv by remember { mutableIntStateOf(0) }
     var focoSerie by remember { mutableIntStateOf(0) }                 // muda a cada toque: cancela o sumiço anterior
+    var focoAtividade by remember { mutableStateOf(0L) }               // arraste na régua de luz: adia o sumiço sem reiniciar o gesto
     // processamento do próprio aparelho (CameraX Extensions) e modo de captura
     var extensao by remember { mutableIntStateOf(ExtensionMode.NONE) }
     var extensoesDisponiveis by remember { mutableStateOf(listOf(ExtensionMode.NONE)) }
@@ -203,6 +205,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     // acabamento (como na câmera da Xiaomi): embelezador 0..100 e filtro por matriz de cor, aplicados depois da captura
     var painelAcabamento by remember { mutableStateOf(false) }
     var telaPessoas by remember { mutableStateOf(false) }
+    var previaRetrato by remember { mutableStateOf<Bitmap?>(null) }    // retrato por software ao vivo (PreviaRetrato)
     var abaAcabamento by remember { mutableIntStateOf(0) }             // 0 embelezador, 1 filtros
     var embelezar by remember { mutableIntStateOf(0) }
     var filtro by remember { mutableStateOf("Original") }
@@ -263,7 +266,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     }
     val imageAnalysis = remember(proporcao) {
         @Suppress("DEPRECATION")
-        ImageAnalysis.Builder().setTargetAspectRatio(proporcao).setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST).build()
+        ImageAnalysis.Builder().setTargetAspectRatio(proporcao).setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888).build()   // RGBA: a prévia do retrato precisa de cor; o scanner tira a luminância
     }
     val videoCapture = remember {
         VideoCapture.withOutput(Recorder.Builder().setQualitySelector(QualitySelector.from(Quality.HIGHEST)).build())
@@ -302,6 +306,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         focoPonto = null; focoTravado = false; focoEv = 0
         provider.unbindAll()
         val scannerVivo = modo == Modo.DOCUMENTO || modo == Modo.TELA
+        val retratoVivo = modo == Modo.RETRATO && !bokehNativo
         quadVivo = null
         if (scannerVivo) {
             // detecção ao vivo: plano Y do quadro (já é a luminância), no máximo a cada 150 ms, mesmo detector da foto
@@ -314,7 +319,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 ultimoMs = agora
                 val w = img.width; val h = img.height; val plano = img.planes[0]; val buf = plano.buffer; val passo = plano.rowStride; val pp = plano.pixelStride
                 val fator = if (max(w, h) > 700) 2 else 1; val cw = w / fator; val ch = h / fator
-                val cinza = IntArray(cw * ch) { k -> val x = (k % cw) * fator; val y = (k / cw) * fator; buf.get(y * passo + x * pp).toInt() and 255 }
+                val cinza = IntArray(cw * ch) { k -> val x = (k % cw) * fator; val y = (k / cw) * fator; val o = y * passo + x * pp
+                    ((buf.get(o).toInt() and 255) * 54 + (buf.get(o + 1).toInt() and 255) * 183 + (buf.get(o + 2).toInt() and 255) * 19) shr 8 }
                 val rot = img.imageInfo.rotationDegrees; img.close()
                 val q = Documento.detectarVivo(cinza, cw, ch, telaVivo)
                 if (q == null) { if (agora - quadVivoEm > 800) quadVivo = null; return@setAnalyzer }
@@ -335,10 +341,28 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     else candidatoAnterior = g
                 }
             }
-        } else imageAnalysis.clearAnalyzer()
+        } else if (retratoVivo) {
+            // retrato por software ao vivo: segmenta cada quadro RGBA (~640x480), borra o fundo com o raio da régua e desenha por cima
+            val frontal = lente == CameraSelector.LENS_FACING_FRONT
+            var ultimoMs = 0L
+            imageAnalysis.setAnalyzer(executorAnalise) { img ->
+                val agora = System.currentTimeMillis()
+                if (agora - ultimoMs < 70) { img.close(); return@setAnalyzer }
+                ultimoMs = agora
+                val w = img.width; val h = img.height; val plano = img.planes[0]; val buf = plano.buffer; val passo = plano.rowStride; val pp = plano.pixelStride
+                val px = IntArray(w * h) { k -> val o = (k / w) * passo + (k % w) * pp
+                    (0xFF shl 24) or ((buf.get(o).toInt() and 255) shl 16) or ((buf.get(o + 1).toInt() and 255) shl 8) or (buf.get(o + 2).toInt() and 255) }
+                val rot = img.imageInfo.rotationDegrees; img.close()
+                val raio = (1 + desfoque * max(w, h) / 320f).toInt().coerceIn(2, 24)
+                val q = PreviaRetrato.quadro(px, w, h, raio) ?: return@setAnalyzer
+                val m = android.graphics.Matrix().apply { postRotate(rot.toFloat()); if (frontal) postScale(-1f, 1f) }
+                val girado = Bitmap.createBitmap(q, 0, 0, w, h, m, true); if (girado !== q) q.recycle()
+                previaRetrato = girado   // sem recycle do anterior: o Compose pode estar desenhando-o; o GC recolhe
+            }
+        } else { imageAnalysis.clearAnalyzer(); previaRetrato = null }
         camera = runCatching {
             if (modo.video) provider.bindToLifecycle(dono, seletor, preview, videoCapture)
-            else if (scannerVivo) provider.bindToLifecycle(dono, seletor, preview, imageCapture, imageAnalysis)
+            else if (scannerVivo || retratoVivo) provider.bindToLifecycle(dono, seletor, preview, imageCapture, imageAnalysis)
             else provider.bindToLifecycle(dono, seletor, preview, imageCapture)
         }.onFailure { Telemetria.evento("erro", mapOf("onde" to "abrir_camera", "modo" to modo.name.lowercase(), "msg" to (it.message ?: ""))); Toast.makeText(contexto, "Não consegui abrir a câmera: ${it.message}", Toast.LENGTH_LONG).show() }.getOrNull()
         // intensidade da extensão: o próprio aparelho diz se aceita (Android 14+, fabricante); só então a régua aparece
@@ -702,6 +726,9 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     }
             ) {
                 AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+                if (modo == Modo.RETRATO && !bokehNativo) previaRetrato?.let { pv ->
+                    androidx.compose.foundation.Image(bitmap = pv.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                }
                 if ((modo == Modo.DOCUMENTO || modo == Modo.TELA) && quadVivo != null) Canvas(modifier = Modifier.fillMaxSize()) {
                     val q = quadVivo ?: return@Canvas
                     // a prévia é FILL_CENTER: escala pelo maior fator e centraliza; o quadro é normalizado no referencial girado
@@ -723,19 +750,19 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 }
                 // anel de foco com régua de luz (arrastar na vertical muda a compensação de exposição); some em 3 s se não estiver travado
                 focoPonto?.let { p ->
-                    LaunchedEffect(focoSerie) { if (!focoTravado) { delay(3000); if (!focoTravado) focoPonto = null } }
+                    LaunchedEffect(focoSerie, focoAtividade) { if (!focoTravado) { delay(3000); if (!focoTravado) focoPonto = null } }
                     val faixa = camera?.cameraInfo?.exposureState?.exposureCompensationRange
                     val cor = if (focoTravado) Amarelo else Color.White
                     Box(modifier = Modifier.offset { IntOffset((p.x - 40.dp.toPx()).roundToInt(), (p.y - 40.dp.toPx()).roundToInt()) }.size(80.dp).border(1.5.dp, cor, RoundedCornerShape(4.dp)))
                     Box(modifier = Modifier.offset { IntOffset((p.x + 48.dp.toPx()).roundToInt(), (p.y - 70.dp.toPx()).roundToInt()) }.width(44.dp).height(140.dp)
-                        .pointerInput(focoSerie) {
+                        .pointerInput(Unit) {   // chave fixa: antes era focoSerie, que mudava a cada pixel arrastado e cancelava o gesto (dono, 17/09)
                             detectVerticalDragGestures { mudanca, delta ->
                                 mudanca.consume()
                                 val cam = camera ?: return@detectVerticalDragGestures
                                 val f = faixa ?: return@detectVerticalDragGestures
                                 val novo = (focoEv - delta / 18f).roundToInt().coerceIn(f.lower, f.upper)
                                 if (novo != focoEv) { focoEv = novo; cam.cameraControl.setExposureCompensationIndex(novo) }
-                                focoSerie++
+                                focoAtividade = System.currentTimeMillis()
                             }
                         }, contentAlignment = Alignment.Center) {
                         Box(modifier = Modifier.width(2.dp).height(140.dp).background(cor.copy(alpha = 0.6f)))
