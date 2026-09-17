@@ -155,7 +155,8 @@ fun GaleriaScreen(voltar: () -> Unit) {
             Box(modifier = Modifier.weight(1f).fillMaxWidth()
                 .pointerInput(atual.uri) {
                     awaitEachGesture {
-                        awaitFirstDown(); var dx = 0f; var dy = 0f; var pinca = false
+                        // requireUnconsumed=false: o detectTapGestures (toque duplo) consome o "dedo encostou" antes de nós e o deslizar nunca começava (dono, 17/09)
+                        awaitFirstDown(requireUnconsumed = false); var dx = 0f; var dy = 0f; var pinca = false
                         do {
                             val ev = awaitPointerEvent(); val dedos = ev.changes.count { it.pressed }
                             if (dedos >= 2 || escala > 1f) {
