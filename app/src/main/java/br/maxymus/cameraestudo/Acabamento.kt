@@ -156,6 +156,7 @@ object Acabamento {
     /** Pipeline completo sobre um bitmap: embelezador e depois filtro. */
     @Volatile var autoMascaras = true
     @Volatile var ultimoRelatorio: AutoMascaras.Relatorio? = null
+    @Volatile var ultimaCena: List<String> = emptyList()
 
     /** Pipeline: auto-máscaras (céu, fundo radial, rosto, olhos) → embelezador → filtro. */
     fun aplicar(b: Bitmap, filtro: String, forca: Int): Bitmap {
@@ -166,7 +167,10 @@ object Acabamento {
             val mapa = ctx?.let { Segmentos.segmentar(it, atual) }
             val pessoa = if (mapa != null) Segmentos.mascaraPessoa(mapa, atual.width, atual.height) else AutoMascaras.mascaraPessoa(atual)
             val rostos = Rostos.detectar(atual, 1000)
-            val assunto = if (rostos.isEmpty() && ctx != null) Assunto.principal(ctx, atual)?.ret else null
+            // etiquetas de cena (YOLO, 80 classes) uma vez por foto: assunto para o radial quando não há rosto, e telemetria
+            val dets = if (ctx != null) Yolo.detectar(ctx, atual) else emptyList()
+            ultimaCena = dets.take(3).map { it.nome + ":" + (Math.round(it.pontuacao * 100)) }
+            val assunto = if (rostos.isEmpty()) (dets.firstOrNull()?.ret ?: ctx?.let { Assunto.principal(it, atual)?.ret }) else null
             val (nova, rel) = AutoMascaras.aplicar(atual, pessoa, rostos, assunto); atual = nova; ultimoRelatorio = rel
         }
         return aplicaFiltro(embelezar(atual, forca), filtro(filtro))
@@ -187,7 +191,8 @@ object Acabamento {
         if (forca <= 0 && filtro == "Original" && rec.correcaoPele <= 0f && !autoMascaras) { b.recycle(); return (System.nanoTime() - t) / 1_000_000 }
         val pronto = aplicar(b, filtro, forca)
         ultimoRelatorio?.let { Telemetria.evento("auto_mascaras", mapOf("ceu_pct" to it.ceuPct, "vinheta" to it.vinheta, "rostos" to it.rostos, "olhos" to it.olhos,
-            "seg_ms" to Segmentos.ultimoMs, "seg_erro" to Segmentos.ultimoErro, "assunto_ms" to Assunto.ultimoMs, "assunto_erro" to Assunto.ultimoErro)) }
+            "seg_ms" to Segmentos.ultimoMs, "seg_erro" to Segmentos.ultimoErro, "assunto_ms" to Assunto.ultimoMs, "assunto_erro" to Assunto.ultimoErro,
+            "yolo_ms" to Yolo.ultimoMs, "yolo_erro" to Yolo.ultimoErro, "cena" to ultimaCena)) }
         contexto.contentResolver.openOutputStream(uri, "wt")?.use { pronto.compress(Bitmap.CompressFormat.JPEG, 93, it) }
         pronto.recycle()
         Fotos.gravaExif(contexto, uri, "Camera Estudo (filtro ${semAcento(filtro)}, embelezador $forca)")

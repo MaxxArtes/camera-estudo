@@ -53,6 +53,12 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
   pessoa, ligado à borda de cima, azulado ou claro) recebe compressão de altas luzes e 12% de cor; fundo recebe um radial
   suave de até 22% nas bordas centrado no rosto; rosto recebe clareza local de 10%; olhos, nitidez pequena e 3% de brilho.
   Telemetria `auto_mascaras` diz o que agiu. Editor manual (pincel) fica para um app de galeria futuro.
+- **Modelos de visão** (17/09, pedido do dono): `Segmentos.kt` = segmentador multiclasse de pessoa do MediaPipe em TFLite puro
+  (256x256 → fundo, cabelo, pele do corpo, pele do rosto, roupa, acessórios; Apache): alfa do retrato com cabelo, pele do
+  embelezador, pessoa das auto-máscaras. `Assunto.kt` = Mobile Object Localizer do Google (192x192, caixas sem classe; Apache):
+  centro do radial e retrato de objeto quando não há pessoa. `Yolo.kt` = YOLOv8n-seg (Ultralytics, **AGPL-3.0**; TFLite float16
+  640 de surendramaran/YOLO): máscara de instância para retrato de pet/objeto e etiquetas de cena na telemetria (`cena`).
+  Pós-processamento próprio (NMS, sigmoid(coefs·protótipos)). MobileSAM/NanoSAM ficam para o editor de galeria (precisam de toque).
 - **Rostos e Pessoas** (`Rostos.kt`, `Pessoas.kt`, `TelaPessoas.kt`): detecção de rosto do ML Kit escolhe a referência da
   rajada com olhos abertos; embedding facial no aparelho (MobileFaceNet TFLite em `assets/`, BSD-3, 112x112 → 192 números)
   cadastra pessoas sozinho (casa ≥ 0,65, nova < 0,50, faixa do meio ignorada; medido em medicao/rosto_embedding.py),
