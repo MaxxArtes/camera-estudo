@@ -471,6 +471,22 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         }
     }
 
+    // Retrato por software sobre uma foto já gravada (simples ou fundida por HDR/rajada): desfoque, depois acabamento
+    fun trataRetratoSoftware(uri: Uri) {
+        processandoRetrato = true
+        escopo.launch {
+            val tR = Telemetria.agora()
+            val erro = Retrato.aplicar(contexto, uri, desfoque)
+            Telemetria.evento("retrato_software", mapOf("ms" to Telemetria.ms(tR), "achou_pessoa" to (erro == null), "desfoque" to desfoque, "erro" to erro, "mascara" to Retrato.ultimoDiag))
+            if (embelezar > 0 || filtro != "Original" || Pessoas.ligado || Acabamento.autoMascaras) {
+                val ms = withContext(Dispatchers.Default) { Acabamento.aplicarEmArquivo(contexto, uri, filtro, embelezar) }
+                Telemetria.evento("acabamento", mapOf("filtro" to filtro, "embelezador" to embelezar, "ms" to ms, "modo" to "retrato_software"))
+            }
+            processandoRetrato = false; ocupado = false; ultima = uri
+            if (erro != null) Toast.makeText(contexto, "Retrato por software falhou ($erro); salvei sem desfoque.", Toast.LENGTH_LONG).show()
+        }
+    }
+
     /** Uma captura em memória: bytes do JPEG e a rotação que o sensor pede. */
     suspend fun capturaBytes(): Pair<ByteArray, Int>? = suspendCancellableCoroutine { cont ->
         imageCapture.takePicture(ContextCompat.getMainExecutor(contexto), object : ImageCapture.OnImageCapturedCallback() {
@@ -576,22 +592,6 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 modo == Modo.RETRATO && !bokehNativo -> trataRetratoSoftware(uri)
                 else -> { ocupado = false; ultima = uri }
             }
-        }
-    }
-
-    // Retrato por software sobre uma foto já gravada (simples ou fundida por HDR/rajada): desfoque, depois acabamento
-    fun trataRetratoSoftware(uri: Uri) {
-        processandoRetrato = true
-        escopo.launch {
-            val tR = Telemetria.agora()
-            val erro = Retrato.aplicar(contexto, uri, desfoque)
-            Telemetria.evento("retrato_software", mapOf("ms" to Telemetria.ms(tR), "achou_pessoa" to (erro == null), "desfoque" to desfoque, "erro" to erro, "mascara" to Retrato.ultimoDiag))
-            if (embelezar > 0 || filtro != "Original" || Pessoas.ligado || Acabamento.autoMascaras) {
-                val ms = withContext(Dispatchers.Default) { Acabamento.aplicarEmArquivo(contexto, uri, filtro, embelezar) }
-                Telemetria.evento("acabamento", mapOf("filtro" to filtro, "embelezador" to embelezar, "ms" to ms, "modo" to "retrato_software"))
-            }
-            processandoRetrato = false; ocupado = false; ultima = uri
-            if (erro != null) Toast.makeText(contexto, "Retrato por software falhou ($erro); salvei sem desfoque.", Toast.LENGTH_LONG).show()
         }
     }
 
