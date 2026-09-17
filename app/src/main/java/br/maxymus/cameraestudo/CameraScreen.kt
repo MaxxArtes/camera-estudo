@@ -417,8 +417,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         edicao = null; processandoDoc = true
         escopo.launch {
             val t = Telemetria.agora()
-            val r = Documento.aplicar(contexto, uri, quad, tela, d.metodo, quadros, rot, estiloDoc)
-            Telemetria.evento("scanner_aplicar", mapOf("ms" to Telemetria.ms(t), "quadros" to (quadros?.size ?: 1), "recortou" to (r?.recortou ?: false), "modo" to (if (tela) "tela" else "folha"), "estilo" to estiloDoc))
+            val r = Documento.aplicar(contexto, uri, quad, tela, d.metodo, quadros, rot, estiloDoc, LADOS_SCANNER[resolucao])
+            Telemetria.evento("scanner_aplicar", mapOf("ms" to Telemetria.ms(t), "quadros" to (quadros?.size ?: 1), "recortou" to (r?.recortou ?: false), "modo" to (if (tela) "tela" else "folha"), "estilo" to estiloDoc, "lado" to LADOS_SCANNER[resolucao]))
             RegistroScanner.anota(contexto, tela, d, quad, conferido, r)
             d.previa.recycle()
             processandoDoc = false; ocupado = false; ultima = uri
@@ -653,7 +653,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 }
                 // pedido do dono (16/09): Resolução no lugar da grade e HDR no lugar do nível; grade e nível ficam na gaveta
                 IconButton(onClick = { resolucao = (resolucao + 1) % 3 }) {
-                    Text(listOf("1300", "2000", "2600")[resolucao], color = if (resolucao != 1) Amarelo else Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text((if (modo == Modo.DOCUMENTO || modo == Modo.TELA) listOf("1600", "2400", "3200") else listOf("1300", "2000", "2600"))[resolucao], color = if (resolucao != 1) Amarelo else Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
                 IconButton(onClick = { hdr = !hdr }) { Icon(Icons.Filled.HdrAuto, contentDescription = "HDR", tint = if (hdr) Amarelo else Color.White) }
                 IconButton(onClick = { gaveta = true }) { Icon(Icons.Filled.Settings, contentDescription = "Ajustes", tint = Color.White) }
@@ -1002,6 +1002,8 @@ private fun ReguaForca(valor: Int, aoMudar: (Int) -> Unit, modifier: Modifier) {
 
 /** Lado maior da imagem fundida (rajada, HDR, noite). 2600 é o teto com todos os quadros em memória (~48 B/px, ~250 MB). */
 private val LADOS_FUSAO = intArrayOf(1300, 2000, 2600)
+/** Lado maior do documento escaneado, pelo mesmo ajuste "Resolução": texto miúdo precisa de mais que foto. */
+private val LADOS_SCANNER = intArrayOf(1600, 2400, 3200)
 
 private fun nomeExtensao(m: Int) = when (m) { ExtensionMode.AUTO -> "Auto"; ExtensionMode.HDR -> "HDR"; ExtensionMode.NIGHT -> "Noite"; ExtensionMode.FACE_RETOUCH -> "Retoque"; ExtensionMode.BOKEH -> "Bokeh"; else -> "Desligado" }
 

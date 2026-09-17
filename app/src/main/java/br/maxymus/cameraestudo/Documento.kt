@@ -225,11 +225,13 @@ object Documento {
      * papel (A4/Carta) ou de tela (16:9, 16:10, 4:3) é encaixada.
      */
     /** estilo: "aprimorado" (padrão: sombras fora, fundo branco), "original" (só recorte) ou "pb" (aprimorado em preto e branco). */
-    suspend fun aplicar(contexto: Context, uri: Uri, quad: FloatArray?, tela: Boolean, metodo: String, rajada: List<ByteArray>? = null, rotRajada: Int = 0, estilo: String = "aprimorado"): Resultado? = withContext(Dispatchers.Default) {
+    suspend fun aplicar(contexto: Context, uri: Uri, quad: FloatArray?, tela: Boolean, metodo: String, rajada: List<ByteArray>? = null, rotRajada: Int = 0, estilo: String = "aprimorado", ladoSaida: Int = LADO_SAIDA): Resultado? = withContext(Dispatchers.Default) {
         runCatching {
             // rajada (agy): fundir DEPOIS do recorte — as folhas retificadas no mesmo retângulo já saem alinhadas
-            val fontes: List<() -> Bitmap?> = if (rajada != null && rajada.size >= 2) rajada.map { bytes -> { Fusao.decodifica(bytes, 2000)?.let { Fusao.gira(it, rotRajada) } } }
-                else listOf({ decodeReduzido(contexto, uri, 2400) })
+            // a origem é decodificada um pouco acima do alvo (letra miúda do DACTE ilegível a 1400/2000 px, 17/09)
+            val ladoFonte = max(2400, ladoSaida * 5 / 4)
+            val fontes: List<() -> Bitmap?> = if (rajada != null && rajada.size >= 2) rajada.map { bytes -> { Fusao.decodifica(bytes, min(ladoFonte, 2600))?.let { Fusao.gira(it, rotRajada) } } }
+                else listOf({ decodeReduzido(contexto, uri, ladoFonte) })
             val foto = fontes[0]() ?: return@runCatching null
             var saida: Bitmap = foto; var recortou = false
             if (quad != null && convexo(quad)) {
@@ -240,7 +242,7 @@ object Documento {
                 val padroes = if (tela) floatArrayOf(16f / 9f, 9f / 16f, 16f / 10f, 10f / 16f, 4f / 3f, 3f / 4f) else floatArrayOf(1.414f, 1f / 1.414f, 1.294f, 1f / 1.294f)
                 val tolerancia = if (tela) 0.1f else 0.12f
                 for (r in padroes) if (abs(razao / r - 1f) < tolerancia) { if (r > 1f) larg = (alt * r).toInt() else alt = (larg / r).toInt(); break }
-                val escS = min(1f, (if (tela) 1400f else LADO_SAIDA.toFloat()) / max(larg, alt))   // 1400 px na tela já derruba boa parte do moiré
+                val escS = min(1f, (if (tela) min(ladoSaida, 2000) else ladoSaida).toFloat() / max(larg, alt))   // tela: até 2000 px, o anti-moiré segue depois
                 val w = (larg * escS).toInt(); val h = (alt * escS).toInt()
                 val m = Matrix()
                 if (m.setPolyToPoly(p, 0, floatArrayOf(0f, 0f, w.toFloat(), 0f, w.toFloat(), h.toFloat(), 0f, h.toFloat()), 0, 4)) {
@@ -266,12 +268,14 @@ object Documento {
             } else {
                 val r = realca(saida); if (r !== saida) saida.recycle(); r
             }
+            // nitidez leve na luminância depois do realce: a letra miúda recupera contorno (medido no acabamento das selfies, q 3,0; aqui 1,5)
+            val realcadaNitida = if (estilo == "original") realcada else Fusao.nitidezLeve(realcada, 1.5f)
             val pronta = if (estilo == "pb") {
-                val w = realcada.width; val h = realcada.height
-                val px = IntArray(w * h).also { realcada.getPixels(it, 0, w, 0, 0, w, h) }; realcada.recycle()
+                val w = realcadaNitida.width; val h = realcadaNitida.height
+                val px = IntArray(w * h).also { realcadaNitida.getPixels(it, 0, w, 0, 0, w, h) }; realcadaNitida.recycle()
                 for (i in px.indices) { val v = luma(px[i]); px[i] = (0xFF shl 24) or (v shl 16) or (v shl 8) or v }
                 Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
-            } else realcada
+            } else realcadaNitida
             contexto.contentResolver.openOutputStream(uri, "wt")?.use { pronta.compress(Bitmap.CompressFormat.JPEG, 92, it) } ?: return@runCatching null
             pronta.recycle()
             Resultado(recortou, if (recortou) metodo else "nenhum")
