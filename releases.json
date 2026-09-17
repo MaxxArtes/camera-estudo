@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.63",
+      "build": 70,
+      "tag": "v0.63-build70",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.63-build70.apk",
+      "mudou": [
+        "YOLO: caixas do TFLite são normalizadas (retrato de objeto borrava tudo); rajada em modo Foto passa pelo acabamento; EXIF preserva versão e sequência; fallback do localizador em superelipse"
+      ]
+    },
+    {
       "versao": "0.62",
       "build": 69,
       "tag": "v0.62-build69",
@@ -559,11 +568,11 @@
       ]
     }
   ],
-  "versionName": "0.62",
-  "versionCode": 62,
-  "build": 69,
+  "versionName": "0.63",
+  "versionCode": 63,
+  "build": 70,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.62-build69.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.63-build70.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-17T17:07:27Z"
+  "publicadoEm": "2026-09-17T17:29:21Z"
 }
