@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.65",
+      "build": 72,
+      "tag": "v0.65-build72",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.65-build72.apk",
+      "mudou": [
+        "Auto-máscaras: radial vira vinheta de canto (10% a partir de 65%), céu mais estrito e dilatado antes do feather; retrato sem rosto consulta o YOLO antes do segmentador; evento duplicado de acabamento removido"
+      ]
+    },
+    {
       "versao": "0.64",
       "build": 71,
       "tag": "v0.64-build71",
@@ -577,11 +586,11 @@
       ]
     }
   ],
-  "versionName": "0.64",
-  "versionCode": 64,
-  "build": 71,
+  "versionName": "0.65",
+  "versionCode": 65,
+  "build": 72,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.64-build71.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.65-build72.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-17T18:14:25Z"
+  "publicadoEm": "2026-09-17T18:48:21Z"
 }
