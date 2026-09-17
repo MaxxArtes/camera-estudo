@@ -597,14 +597,14 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                         val tR = Telemetria.agora()
                         val erro = Retrato.aplicar(contexto, uri, desfoque)
                         Telemetria.evento("retrato_software", mapOf("ms" to Telemetria.ms(tR), "achou_pessoa" to (erro == null), "desfoque" to desfoque, "erro" to erro, "mascara" to Retrato.ultimoDiag))
-                        if (embelezar > 0 || filtro != "Original" || Pessoas.ligado) {
+                        if (embelezar > 0 || filtro != "Original" || Pessoas.ligado || Acabamento.autoMascaras) {
                             val ms = withContext(Dispatchers.Default) { Acabamento.aplicarEmArquivo(contexto, uri, filtro, embelezar) }
                             Telemetria.evento("acabamento", mapOf("filtro" to filtro, "embelezador" to embelezar, "ms" to ms, "modo" to "retrato_software"))
                         }
                         processandoRetrato = false; ocupado = false; ultima = uri
                         if (erro != null) Toast.makeText(contexto, "Retrato por software falhou ($erro); salvei sem desfoque.", Toast.LENGTH_LONG).show()
                     }
-                } else if (uri != null && (embelezar > 0 || filtro != "Original" || Pessoas.ligado)) {
+                } else if (uri != null && (embelezar > 0 || filtro != "Original" || Pessoas.ligado || Acabamento.autoMascaras)) {
                     processandoAcabamento = true
                     escopo.launch {
                         val ms = withContext(Dispatchers.Default) { Acabamento.aplicarEmArquivo(contexto, uri, filtro, embelezar) }
@@ -970,6 +970,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     item { Ajuste(Icons.Filled.Crop, "Recorte", if (conferir) "Conferir cantos" else "Automático", conferir) { conferir = !conferir } }
                     item { var tel by remember { mutableStateOf(Telemetria.ligada) }; Ajuste(Icons.Filled.Timeline, "Telemetria", if (tel) "Enviando" else "Desligada", tel) { tel = Telemetria.alternar() } }
                     item { Ajuste(Icons.Filled.Face, "Pessoas", if (Pessoas.ligado) "Reconhecendo" else "Desligado", Pessoas.ligado) { telaPessoas = true; gaveta = false } }
+                    item { var am by remember { mutableStateOf(Acabamento.autoMascaras) }; Ajuste(Icons.Filled.AutoAwesome, "Auto-máscaras", if (am) "Céu, fundo, rosto, olhos" else "Desligadas", am) { am = !am; Acabamento.autoMascaras = am } }
                     item { Ajuste(Icons.Filled.Share, "Registro", "Scanner: ${RegistroScanner.linhas(contexto)}", false) { if (!RegistroScanner.compartilhar(contexto)) Toast.makeText(contexto, "Nenhuma digitalização registrada ainda.", Toast.LENGTH_SHORT).show(); gaveta = false } }
                     item { Ajuste(Icons.Filled.AspectRatio, "Proporção", if (proporcao == AspectRatio.RATIO_16_9) "16:9" else "4:3", true) { proporcao = if (proporcao == AspectRatio.RATIO_16_9) AspectRatio.RATIO_4_3 else AspectRatio.RATIO_16_9 } }
                     item { Ajuste(Icons.Filled.AutoAwesome, "Aparelho", if (extensoesDisponiveis.size == 1) "Sem extensão" else nomeExtensao(extensao), extensao != ExtensionMode.NONE) {

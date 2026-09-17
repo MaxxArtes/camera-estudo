@@ -150,22 +150,35 @@ object Acabamento {
     fun semAcento(s: String): String = java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD).replace(Regex("[^\\p{ASCII}]"), "")
 
     /** Pipeline completo sobre um bitmap: embelezador e depois filtro. */
-    fun aplicar(b: Bitmap, filtro: String, forca: Int): Bitmap = aplicaFiltro(embelezar(b, forca), filtro(filtro))
+    @Volatile var autoMascaras = true
+    @Volatile var ultimoRelatorio: AutoMascaras.Relatorio? = null
+
+    /** Pipeline: auto-máscaras (céu, fundo radial, rosto, olhos) → embelezador → filtro. */
+    fun aplicar(b: Bitmap, filtro: String, forca: Int): Bitmap {
+        var atual = b
+        ultimoRelatorio = null
+        if (autoMascaras) {
+            val pessoa = AutoMascaras.mascaraPessoa(atual); val rostos = Rostos.detectar(atual, 1000)
+            val (nova, rel) = AutoMascaras.aplicar(atual, pessoa, rostos); atual = nova; ultimoRelatorio = rel
+        }
+        return aplicaFiltro(embelezar(atual, forca), filtro(filtro))
+    }
 
     /**
      * Sobre uma foto já gravada (caminho simples): decodifica, reconhece pessoas na imagem crua (cadastro + âncora de
      * pele), aplica embelezador e filtro, regrava se algo mudou. Devolve o tempo em ms ou -1 se nada a fazer.
      */
     suspend fun aplicarEmArquivo(contexto: Context, uri: android.net.Uri, filtro: String, forca: Int): Long {
-        if (forca <= 0 && filtro == "Original" && !Pessoas.ligado) return -1
+        if (forca <= 0 && filtro == "Original" && !Pessoas.ligado && !autoMascaras) return -1
         val t = System.nanoTime()
         val b = Documento.decodeReduzido(contexto, uri, 2400) ?: return -1
         val rec = Pessoas.processar(contexto, b)
         Telemetria.evento("rostos", mapOf("n" to rec.reconhecidos.size, "reconhecidos" to rec.reconhecidos.count { it.pessoa != null && !it.novo }, "novos" to rec.reconhecidos.count { it.novo },
             "sim_max" to (rec.reconhecidos.maxOfOrNull { it.sim }?.let { Math.round(it * 100) / 100.0 }), "pele_correcao" to Math.round(rec.correcaoPele * 10) / 10.0,
             "erro_detector" to Rostos.ultimoErro, "lado" to max(b.width, b.height)))
-        if (forca <= 0 && filtro == "Original" && rec.correcaoPele <= 0f) { b.recycle(); return (System.nanoTime() - t) / 1_000_000 }
+        if (forca <= 0 && filtro == "Original" && rec.correcaoPele <= 0f && !autoMascaras) { b.recycle(); return (System.nanoTime() - t) / 1_000_000 }
         val pronto = aplicar(b, filtro, forca)
+        ultimoRelatorio?.let { Telemetria.evento("auto_mascaras", mapOf("ceu_pct" to it.ceuPct, "vinheta" to it.vinheta, "rostos" to it.rostos, "olhos" to it.olhos)) }
         contexto.contentResolver.openOutputStream(uri, "wt")?.use { pronto.compress(Bitmap.CompressFormat.JPEG, 93, it) }
         pronto.recycle()
         Fotos.gravaExif(contexto, uri, "Camera Estudo (filtro ${semAcento(filtro)}, embelezador $forca)")

@@ -49,6 +49,10 @@ App de câmera em Kotlin + Jetpack Compose + CameraX, feito do zero para estudo.
   matrizes de cor 4x5, a mesma matriz colore a miniatura ao vivo e a foto gravada (Original, Vívido, Natural, Quente, Frio,
   Cinema, Positivo, P&B, Sépia); embelezador 0 a 100 = suavização de pele que preserva bordas (máscara pessoa x tom de pele
   x não-borda, borrão por imagem integral). Aplicados depois da captura em Foto, Pro, Macro, Retrato e nas fusões; não no scanner.
+- **Auto-máscaras** (`AutoMascaras.kt`, gaveta, ligadas por padrão): as máscaras do Lightroom, automáticas. Céu (fora da
+  pessoa, ligado à borda de cima, azulado ou claro) recebe compressão de altas luzes e 12% de cor; fundo recebe um radial
+  suave de até 22% nas bordas centrado no rosto; rosto recebe clareza local de 10%; olhos, nitidez pequena e 3% de brilho.
+  Telemetria `auto_mascaras` diz o que agiu. Editor manual (pincel) fica para um app de galeria futuro.
 - **Rostos e Pessoas** (`Rostos.kt`, `Pessoas.kt`, `TelaPessoas.kt`): detecção de rosto do ML Kit escolhe a referência da
   rajada com olhos abertos; embedding facial no aparelho (MobileFaceNet TFLite em `assets/`, BSD-3, 112x112 → 192 números)
   cadastra pessoas sozinho (casa ≥ 0,65, nova < 0,50, faixa do meio ignorada; medido em medicao/rosto_embedding.py),
