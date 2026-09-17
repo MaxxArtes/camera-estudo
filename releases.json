@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.53",
+      "build": 59,
+      "tag": "v0.53-build59",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.53-build59.apk",
+      "mudou": [
+        "Retrato por software na direção da GCam (revisão do Codex gpt-6-astra): máscara bilinear sem média 5x5, fundo por convolução normalizada com disco em luz linear (pessoa não vaza), preenchimento suave das sombras do rosto; pele protegida na matriz final do Vívido; bitmap mutável no decode; kernel sigma 0,7 correto; motivo da falha do detector na telemetria"
+      ]
+    },
+    {
       "versao": "0.52",
       "build": 58,
       "tag": "v0.52-build58",
@@ -478,11 +487,11 @@
       ]
     }
   ],
-  "versionName": "0.52",
-  "versionCode": 52,
-  "build": 58,
+  "versionName": "0.53",
+  "versionCode": 53,
+  "build": 59,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.52-build58.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.53-build59.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-17T13:48:03Z"
+  "publicadoEm": "2026-09-17T14:11:44Z"
 }
