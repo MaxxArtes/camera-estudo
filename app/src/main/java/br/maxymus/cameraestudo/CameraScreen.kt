@@ -596,7 +596,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     escopo.launch {
                         val tR = Telemetria.agora()
                         val erro = Retrato.aplicar(contexto, uri, desfoque)
-                        Telemetria.evento("retrato_software", mapOf("ms" to Telemetria.ms(tR), "achou_pessoa" to (erro == null), "desfoque" to desfoque, "erro" to erro))
+                        Telemetria.evento("retrato_software", mapOf("ms" to Telemetria.ms(tR), "achou_pessoa" to (erro == null), "desfoque" to desfoque, "erro" to erro, "mascara" to Retrato.ultimoDiag))
                         if (embelezar > 0 || filtro != "Original" || Pessoas.ligado) {
                             val ms = withContext(Dispatchers.Default) { Acabamento.aplicarEmArquivo(contexto, uri, filtro, embelezar) }
                             Telemetria.evento("acabamento", mapOf("filtro" to filtro, "embelezador" to embelezar, "ms" to ms, "modo" to "retrato_software"))

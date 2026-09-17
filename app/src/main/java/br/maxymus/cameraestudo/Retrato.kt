@@ -31,6 +31,7 @@ import kotlin.math.sqrt
  */
 object Retrato {
     private const val LADO_MAX = 2400
+    @Volatile var ultimoDiag: String? = null   // fração da máscara em meia certeza e nº de manchas descartadas (telemetria)
     private const val LADO_FUNDO = 600
     private val paraLinear = FloatArray(256) { val c = it / 255f; if (c <= 0.04045f) c / 12.92f else ((c + 0.055f) / 1.055f).pow(2.4f) }
     private val paraSrgb = IntArray(4097) { val l = it / 4096f; val c = if (l <= 0.0031308f) l * 12.92f else 1.055f * l.pow(1f / 2.4f) - 0.055f; (c * 255f + 0.5f).toInt().coerceIn(0, 255) }
@@ -61,6 +62,11 @@ object Retrato {
             val mascara = Tasks.await(segmentador.process(InputImage.fromBitmap(base, 0))); segmentador.close()
             val mw = mascara.width; val mh = mascara.height; val bb = mascara.buffer; bb.rewind()
             val bruta = FloatArray(mw * mh) { bb.float }
+            // limpeza (dono, 17/09: partes do fundo ficavam sem desfoque): só o maior bloco conectado de confiança > 0,5 é pessoa;
+            // manchas soltas (cadeira, tela, parede) viram fundo. Conta a fração em meia certeza para a telemetria.
+            val manchas = limpaMascara(bruta, mw, mh)
+            var meio = 0; for (v in bruta) if (v > 0.15f && v < 0.85f) meio++
+            ultimoDiag = "meio=${meio * 100 / bruta.size}% manchas=$manchas"
             fun conf(x: Float, y: Float): Float {   // bilinear em coordenadas 0..1
                 val fx = (x * (mw - 1)).coerceIn(0f, mw - 1f); val fy = (y * (mh - 1)).coerceIn(0f, mh - 1f)
                 val x0 = fx.toInt(); val y0 = fy.toInt(); val x1 = min(mw - 1, x0 + 1); val y1 = min(mh - 1, y0 + 1); val tx = fx - x0; val ty = fy - y0
@@ -122,7 +128,7 @@ object Retrato {
             for (y in 0 until h) { val ny = y / (h - 1f)
                 for (x in 0 until w) {
                     val i = y * w + x; val nx = x / (w - 1f)
-                    val a = suave(conf(nx, ny), 0.10f, 0.90f)
+                    val a = suave(conf(nx, ny), 0.20f, 0.80f)   // curva mais apertada: menos fundo "meio nítido" na faixa incerta
                     val f = pFrente[i]
                     if (a >= 0.995f) { saida[i] = f; continue }
                     val br = srgb(fundo(fundoR, nx, ny)); val bg = srgb(fundo(fundoG, nx, ny)); val bl = srgb(fundo(fundoB, nx, ny))
@@ -137,6 +143,24 @@ object Retrato {
             Fotos.gravaExif(contexto, uri, "Camera Estudo " + (runCatching { contexto.packageManager.getPackageInfo(contexto.packageName, 0).versionName }.getOrNull() ?: "") + " (retrato software, desfoque $intensidade, rostos ${rostos.size})")
             null
         }.getOrElse { e -> (e::class.java.simpleName + ": " + (e.message ?: "")).take(300) }
+    }
+
+    /** Zera os blocos de confiança > 0,5 que não são o maior (pessoa principal). Devolve quantas manchas descartou. */
+    private fun limpaMascara(m: FloatArray, w: Int, h: Int): Int {
+        val rotulo = IntArray(w * h); var k = 0; val tamanhos = ArrayList<Int>()
+        val fila = IntArray(w * h)
+        for (i in 0 until w * h) {
+            if (m[i] <= 0.5f || rotulo[i] != 0) continue
+            k++; var ini = 0; var fim = 0; fila[fim++] = i; rotulo[i] = k; var n = 0
+            while (ini < fim) { val p = fila[ini++]; n++; val x = p % w; val y = p / w
+                for ((dx, dy) in listOf(-1 to 0, 1 to 0, 0 to -1, 0 to 1)) { val xx = x + dx; val yy = y + dy
+                    if (xx in 0 until w && yy in 0 until h) { val q = yy * w + xx; if (m[q] > 0.5f && rotulo[q] == 0) { rotulo[q] = k; fila[fim++] = q } } } }
+            tamanhos += n
+        }
+        if (tamanhos.size <= 1) return 0
+        val maior = tamanhos.indices.maxByOrNull { tamanhos[it] }!! + 1
+        for (i in 0 until w * h) if (rotulo[i] != 0 && rotulo[i] != maior) m[i] = 0f
+        return tamanhos.size - 1
     }
 
     /** Média em disco de raio r por prefixos de linha (custo ∝ diâmetro, não área). Borda: só o que cabe. */
