@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.59",
+      "build": 66,
+      "tag": "v0.59-build66",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.59-build66.apk",
+      "mudou": [
+        "HDR por bracket no tamanho cheio até 2000 px (retrato com HDR saía em 1600)"
+      ]
+    },
+    {
       "versao": "0.58",
       "build": 65,
       "tag": "v0.58-build65",
@@ -532,11 +541,11 @@
       ]
     }
   ],
-  "versionName": "0.58",
-  "versionCode": 58,
-  "build": 65,
+  "versionName": "0.59",
+  "versionCode": 59,
+  "build": 66,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.58-build65.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.59-build66.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-17T15:31:32Z"
+  "publicadoEm": "2026-09-17T16:16:01Z"
 }
