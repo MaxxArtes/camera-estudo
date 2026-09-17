@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.62",
+      "build": 69,
+      "tag": "v0.62-build69",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.62-build69.apk",
+      "mudou": [
+        "Galeria: deslizar troca a foto ampliada; prévia do retrato mostra a cena limpa sem pessoa; radial das auto-máscaras mais suave (16%)"
+      ]
+    },
+    {
       "versao": "0.60",
       "build": 67,
       "tag": "v0.60-build67",
@@ -550,11 +559,11 @@
       ]
     }
   ],
-  "versionName": "0.60",
-  "versionCode": 60,
-  "build": 67,
+  "versionName": "0.62",
+  "versionCode": 62,
+  "build": 69,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.60-build67.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.62-build69.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-17T16:34:46Z"
+  "publicadoEm": "2026-09-17T17:07:27Z"
 }
