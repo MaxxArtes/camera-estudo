@@ -291,6 +291,7 @@ object Documento {
             val pw2 = pronta.width; val ph2 = pronta.height
             contexto.contentResolver.openOutputStream(uri, "wt")?.use { pronta.compress(Bitmap.CompressFormat.JPEG, 94, it) } ?: return@runCatching null
             pronta.recycle()
+            Fotos.gravaExif(contexto, uri, "Camera Estudo (scanner ${if (tela) "tela" else "folha"}, $estilo, $metodo)")   // as saídas do scanner vinham sem EXIF
             Resultado(recortou, if (recortou) metodo else "nenhum", pw2, ph2, fonteLado)
         }.getOrNull()
     }
@@ -606,8 +607,9 @@ object Documento {
         // (halo branco em volta das letras e papel manchado, visto na folha do TRE em 16/09; medido: mancha 0,059 → 0,055,
         // contraste do texto 0,70 → 0,73)
         val fundo = fundoClaro(y0, w, h, 24)
-        val y1 = IntArray(w * h) { (y0[it] * 235 / max(1, fundo[it])).coerceIn(0, 255) }
         val colorido = satAcum / px.size > 28          // saturação média: RG, recibo colorido, foto de cartão
+        // documento colorido (RG do dono, 17/09: aprimorado saiu lavado e posterizado): ganho do retinex limitado a 1,5x
+        val y1 = IntArray(w * h) { val g = 235f / max(1, fundo[it]); (y0[it] * (if (colorido) min(g, 1.5f) else g)).toInt().coerceIn(0, 255) }
         val hist = IntArray(256); for (v in y1) hist[v]++
         val n = px.size; var acc = 0; var lo = 0; var hi = 255
         for (i in 0..255) { acc += hist[i]; if (acc >= n * 0.01) { lo = i; break } }
@@ -623,8 +625,8 @@ object Documento {
             var rr = (r * alvo / base).coerceIn(0, 255); var gg = (g * alvo / base).coerceIn(0, 255); var bb = (bl * alvo / base).coerceIn(0, 255)
             // papel claro vai para o neutro: a sombra tem cor diferente da luz (nota do BK, 16/09: rosado onde havia sombra);
             // acima de 180 de luminância a saturação cai até 75%. Texto e logos escuros não mudam; documento colorido, menos.
-            if (alvo > 180) {
-                val t = ((alvo - 180) / 75f).coerceIn(0f, 1f) * (if (colorido) 0.35f else 0.75f)
+            if (alvo > 180 && !colorido) {
+                val t = ((alvo - 180) / 75f).coerceIn(0f, 1f) * 0.75f
                 val y = (rr * 30 + gg * 59 + bb * 11) / 100
                 rr = (rr + (y - rr) * t).toInt(); gg = (gg + (y - gg) * t).toInt(); bb = (bb + (y - bb) * t).toInt()
             }
