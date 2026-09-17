@@ -33,6 +33,12 @@ import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
+import androidx.compose.foundation.gestures.calculateCentroid
+import kotlin.math.abs
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -145,14 +151,28 @@ fun GaleriaScreen(voltar: () -> Unit) {
         val atual = aberta
         if (atual != null) {
             LaunchedEffect(atual.uri) { escala = 1f; desloc = Offset.Zero }
-            // zoom por pinça (1x a 6x) com arraste; toque duplo alterna 1x / 2,5x
+            // zoom por pinça (1x a 6x) com arraste; toque duplo alterna 1x / 2,5x; em 1x, deslizar para o lado troca a foto (dono, 17/09)
             Box(modifier = Modifier.weight(1f).fillMaxWidth()
                 .pointerInput(atual.uri) {
-                    detectTransformGestures { centro, pan, zoom, _ ->
-                        val nova = (escala * zoom).coerceIn(1f, 6f)
-                        val lim = Offset(size.width * (nova - 1) / 2, size.height * (nova - 1) / 2)
-                        val d = if (nova == 1f) Offset.Zero else (desloc + pan + (centro - Offset(size.width / 2f, size.height / 2f)) * (escala - nova))
-                        escala = nova; desloc = Offset(d.x.coerceIn(-lim.x, lim.x), d.y.coerceIn(-lim.y, lim.y))
+                    awaitEachGesture {
+                        awaitFirstDown(); var dx = 0f; var dy = 0f; var pinca = false
+                        do {
+                            val ev = awaitPointerEvent(); val dedos = ev.changes.count { it.pressed }
+                            if (dedos >= 2 || escala > 1f) {
+                                pinca = true
+                                val zoom = ev.calculateZoom(); val pan = ev.calculatePan(); val centro = ev.calculateCentroid()
+                                val nova = (escala * zoom).coerceIn(1f, 6f)
+                                val lim = Offset(size.width * (nova - 1) / 2, size.height * (nova - 1) / 2)
+                                val d = if (nova == 1f) Offset.Zero else (desloc + pan + (centro - Offset(size.width / 2f, size.height / 2f)) * (escala - nova))
+                                escala = nova; desloc = Offset(d.x.coerceIn(-lim.x, lim.x), d.y.coerceIn(-lim.y, lim.y))
+                                ev.changes.forEach { it.consume() }
+                            } else { val pan = ev.calculatePan(); dx += pan.x; dy += pan.y }
+                        } while (ev.changes.any { it.pressed })
+                        if (!pinca && abs(dx) > 90f && abs(dy) < 80f) {
+                            val i = midias.indexOfFirst { it.uri == atual.uri }
+                            val j = if (dx < 0) i + 1 else i - 1
+                            if (i >= 0 && j in midias.indices) { aberta = midias[j]; mostrarInfo = false }
+                        }
                     }
                 }
                 .pointerInput(atual.uri) { detectTapGestures(onDoubleTap = { if (escala > 1f) { escala = 1f; desloc = Offset.Zero } else escala = 2.5f }) },

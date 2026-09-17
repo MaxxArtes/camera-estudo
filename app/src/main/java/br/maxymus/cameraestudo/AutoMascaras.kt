@@ -81,7 +81,7 @@ object AutoMascaras {
                 }
             }
             val d = hypot(x - cx, y - cy) / raioMax
-            val v = 1f - 0.22f * suave(d, 0.45f, 1.0f) * (1f - p)
+            val v = 1f - 0.16f * suave(d, 0.45f, 1.0f) * (1f - p)   // 22% escurecia demais os cantos nas fotos de mesa (17/09)
             if (v < 0.999f) { r *= v; g *= v; bl *= v; mudou = true; vinheta = true }
             if (mudou) px[k] = (0xFF shl 24) or (r.toInt().coerceIn(0, 255) shl 16) or (g.toInt().coerceIn(0, 255) shl 8) or bl.toInt().coerceIn(0, 255)
         }

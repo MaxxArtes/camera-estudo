@@ -25,6 +25,9 @@ object PreviaRetrato {
         val entrada = Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
         val m = Tasks.await(seg().process(InputImage.fromBitmap(entrada, 0)))
         val mw = m.width; val mh = m.height; val bb = m.buffer; bb.rewind(); val conf = FloatArray(mw * mh) { bb.float }
+        // sem pessoa (caneca, garrafa: dono 17/09), o segmentador diz "tudo é fundo" e a prévia borrava a cena inteira; mostra limpa
+        var cobertura = 0; for (v in conf) if (v > 0.5f) cobertura++
+        if (cobertura < conf.size / 100) { entrada.recycle(); return@runCatching Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888) }
         val fundo = caixa(px, w, h, raio)
         val saida = IntArray(w * h)
         for (y in 0 until h) { val my = (y * mh / h).coerceIn(0, mh - 1)
