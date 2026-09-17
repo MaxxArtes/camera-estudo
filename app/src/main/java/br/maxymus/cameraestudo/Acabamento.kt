@@ -180,10 +180,12 @@ object Acabamento {
      * Sobre uma foto já gravada (caminho simples): decodifica, reconhece pessoas na imagem crua (cadastro + âncora de
      * pele), aplica embelezador e filtro, regrava se algo mudou. Devolve o tempo em ms ou -1 se nada a fazer.
      */
-    suspend fun aplicarEmArquivo(contexto: Context, uri: android.net.Uri, filtro: String, forca: Int): Long {
+    suspend fun aplicarEmArquivo(contexto: Context, uri: android.net.Uri, filtro: String, forca: Int, lado: Int = 2400): Long {
         if (forca <= 0 && filtro == "Original" && !Pessoas.ligado && !autoMascaras) return -1
         val t = System.nanoTime()
-        val b = Documento.decodeReduzido(contexto, uri, 2400) ?: return -1
+        // o Software que a fusão gravou (versão, hdr/rajada/noite) fica; o acabamento só acrescenta
+        val anterior = runCatching { contexto.contentResolver.openInputStream(uri)?.use { androidx.exifinterface.media.ExifInterface(it).getAttribute(androidx.exifinterface.media.ExifInterface.TAG_SOFTWARE) } }.getOrNull()
+        val b = Documento.decodeReduzido(contexto, uri, lado) ?: return -1
         val rec = Pessoas.processar(contexto, b)
         Telemetria.evento("rostos", mapOf("n" to rec.reconhecidos.size, "reconhecidos" to rec.reconhecidos.count { it.pessoa != null && !it.novo }, "novos" to rec.reconhecidos.count { it.novo },
             "sim_max" to (rec.reconhecidos.maxOfOrNull { it.sim }?.let { Math.round(it * 100) / 100.0 }), "pele_correcao" to Math.round(rec.correcaoPele * 10) / 10.0,
@@ -195,7 +197,8 @@ object Acabamento {
             "yolo_ms" to Yolo.ultimoMs, "yolo_erro" to Yolo.ultimoErro, "cena" to ultimaCena)) }
         contexto.contentResolver.openOutputStream(uri, "wt")?.use { pronto.compress(Bitmap.CompressFormat.JPEG, 93, it) }
         pronto.recycle()
-        Fotos.gravaExif(contexto, uri, "Camera Estudo (filtro ${semAcento(filtro)}, embelezador $forca)")
+        val prefixo = if (anterior != null && anterior.startsWith("Camera Estudo")) anterior else "Camera Estudo " + BuildConfig.VERSION_NAME
+        Fotos.gravaExif(contexto, uri, "$prefixo (filtro ${semAcento(filtro)}, embelezador $forca)")
         return (System.nanoTime() - t) / 1_000_000
     }
 }

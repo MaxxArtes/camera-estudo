@@ -78,7 +78,8 @@ object Retrato {
                 val cx0 = if (det == null) Assunto.principal(contexto, base) else null
                 if (cx0 != null) { fonteMascara = "assunto"
                     val r = cx0.ret; val ccx = r.centerX(); val ccy = r.centerY(); val rx = r.width() / 2 * 1.05f; val ry = r.height() / 2 * 1.05f
-                    for (k in bruta.indices) { val x = (k % mw) / (mw - 1f); val y = (k / mw) / (mh - 1f); val d = ((x - ccx) / rx).let { it * it } + ((y - ccy) / ry).let { it * it }
+                    // superelipse (expoente 4): cobre os cantos de um objeto retangular (placa, quadro) sem virar caixa dura
+                    for (k in bruta.indices) { val x = (k % mw) / (mw - 1f); val y = (k / mw) / (mh - 1f); val d = ((x - ccx) / rx).let { it * it * it * it } + ((y - ccy) / ry).let { it * it * it * it }
                         bruta[k] = 1f - suave(d, 0.7f, 1.05f) } }
             }
             // limpeza (dono, 17/09: partes do fundo ficavam sem desfoque): só o maior bloco conectado de confiança > 0,5 é pessoa;

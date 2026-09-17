@@ -77,7 +77,9 @@ object Yolo {
             var melhor = 0; var sc = 0f
             for (c in 0 until NC) { val v = d[(4 + c) * NA + a]; if (v > sc) { sc = v; melhor = c } }
             if (sc < limiar) continue
-            val cx = d[0 * NA + a]; val cy = d[1 * NA + a]; val w = d[2 * NA + a]; val h = d[3 * NA + a]
+            // exportado TFLite do ultralytics entrega xywh normalizado 0..1 (medido 17/09: caneca cx 0,47 w 0,53); em pixel de 640 a
+            // caixa virava 1 célula no canto, a máscara ficava vazia e o retrato borrava o quadro inteiro
+            val cx = d[0 * NA + a] * N; val cy = d[1 * NA + a] * N; val w = d[2 * NA + a] * N; val h = d[3 * NA + a] * N
             cands += Cand(cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2, melhor, sc, a)
         }
         cands.sortByDescending { it.sc }

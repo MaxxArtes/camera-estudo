@@ -591,6 +591,15 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 uri == null -> { ocupado = false; Toast.makeText(contexto, "A fusão falhou; nada foi gravado.", Toast.LENGTH_SHORT).show() }
                 scanner -> trataDocumento(uri, quadros.map { it.first }, quadros[0].second)
                 modo == Modo.RETRATO && !bokehNativo -> trataRetratoSoftware(uri)
+                embelezar > 0 || filtro != "Original" || Pessoas.ligado || Acabamento.autoMascaras -> {
+                    // 17/09: a rajada em modo Foto pulava filtro, embelezador, auto-máscaras e pessoas (telemetria sem evento acabamento)
+                    processandoAcabamento = true
+                    escopo.launch {
+                        val ms = withContext(Dispatchers.Default) { Acabamento.aplicarEmArquivo(contexto, uri, filtro, embelezar, LADOS_FUSAO[resolucao]) }
+                        Telemetria.evento("acabamento", mapOf("filtro" to filtro, "embelezador" to embelezar, "ms" to ms, "modo" to modo.name.lowercase() + "_sequencia"))
+                        processandoAcabamento = false; ocupado = false; ultima = uri
+                    }
+                }
                 else -> { ocupado = false; ultima = uri }
             }
         }
