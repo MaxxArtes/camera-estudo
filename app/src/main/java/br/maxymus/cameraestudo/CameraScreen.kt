@@ -281,7 +281,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         ligando = true
         val provider = ProcessCameraProvider.getInstance(contexto).get()
         @Suppress("DEPRECATION")
-        val preview = Preview.Builder().setTargetAspectRatio(proporcao).build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+        // vídeo grava em 16:9 (Quality.HIGHEST = 1080p); a prévia acompanha para o enquadramento bater com o arquivo (dono, 17/09)
+        val preview = Preview.Builder().setTargetAspectRatio(if (modo.video) AspectRatio.RATIO_16_9 else proporcao).build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
         var seletor = CameraSelector.Builder().requireLensFacing(lente).build()
         bokehNativo = false
         if (modo == Modo.MACRO && lente == CameraSelector.LENS_FACING_BACK) {
@@ -649,6 +650,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             gravacao = pendente.start(ContextCompat.getMainExecutor(contexto)) { ev ->
                 if (ev is VideoRecordEvent.Finalize) {
                     gravacao = null
+                    Telemetria.evento("video", mapOf("modo" to modo.name.lowercase(), "lente" to (if (lente == CameraSelector.LENS_FACING_FRONT) "frontal" else "traseira"), "audio" to temAudio,
+                        "duracao_ms" to ev.recordingStats.recordedDurationNanos / 1_000_000, "bytes" to ev.recordingStats.numBytesRecorded, "erro" to (if (ev.hasError()) ev.error else 0), "zoom" to zoom, "flash" to flash))
                     if (ev.hasError()) Toast.makeText(contexto, "Vídeo falhou (${ev.error})", Toast.LENGTH_LONG).show()
                     else if (modo == Modo.LENTA) {
                         processandoLenta = true
@@ -706,7 +709,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(if (proporcao == AspectRatio.RATIO_16_9) 9f / 16f else 3f / 4f)
+                    .aspectRatio(if (proporcao == AspectRatio.RATIO_16_9 || modo.video) 9f / 16f else 3f / 4f)
                     .background(Color.Black)
                     // um detector só: 2 dedos = zoom por pinça; 1 dedo = deslizar (lado: modo; cima: ajustes)
                     .pointerInput(camera) {
