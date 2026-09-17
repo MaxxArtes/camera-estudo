@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.55",
+      "build": 61,
+      "tag": "v0.55-build61",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.55-build61.apk",
+      "mudou": [
+        "Retrato por software com prévia ao vivo (segmentação em fluxo + borrão de caixa por cima da prévia); régua de luz do foco arrastável (chave do gesto mudava a cada pixel)"
+      ]
+    },
+    {
       "versao": "0.54",
       "build": 60,
       "tag": "v0.54-build60",
@@ -496,11 +505,11 @@
       ]
     }
   ],
-  "versionName": "0.54",
-  "versionCode": 54,
-  "build": 60,
+  "versionName": "0.55",
+  "versionCode": 55,
+  "build": 61,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.54-build60.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.55-build61.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-17T14:32:53Z"
+  "publicadoEm": "2026-09-17T14:56:32Z"
 }
