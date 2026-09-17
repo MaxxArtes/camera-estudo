@@ -58,10 +58,26 @@ object Acabamento {
     /** Aplica a matriz do filtro; devolve o mesmo bitmap se for "Original". */
     fun aplicaFiltro(b: Bitmap, f: Filtro): Bitmap {
         if (f.nome == "Original") return b
+        val w = b.width; val h = b.height
+        val original = if (f.vibrancia > 0f) IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) } else null
         val fonte = if (f.vibrancia > 0f) vibrancia(b, f.vibrancia) else b
         val saida = Bitmap.createBitmap(fonte.width, fonte.height, Bitmap.Config.ARGB_8888)
         Canvas(saida).drawBitmap(fonte, 0f, 0f, Paint().apply { colorFilter = ColorMatrixColorFilter(ColorMatrix(f.matriz)) })
         fonte.recycle()
+        // Codex 17/09: a pele era protegida na vibrância mas a matriz final (saturação 1,15) desfazia; agora a pele volta 70% ao original
+        if (original != null) {
+            val px = IntArray(w * h).also { saida.getPixels(it, 0, w, 0, 0, w, h) }
+            for (k in px.indices) {
+                val o = original[k]; val r = o shr 16 and 255; val g = o shr 8 and 255; val bl = o and 255
+                val cb = 128 - 0.1687f * r - 0.3313f * g + 0.5f * bl; val cr = 128 + 0.5f * r - 0.4187f * g - 0.0813f * bl
+                val pele = suave(cb, 77f, 85f, 120f, 130f) * suave(cr, 130f, 138f, 170f, 178f) * 0.7f
+                if (pele <= 0.01f) continue
+                val c = px[k]
+                val rr = ((c shr 16 and 255) + (r - (c shr 16 and 255)) * pele).toInt(); val gg = ((c shr 8 and 255) + (g - (c shr 8 and 255)) * pele).toInt(); val bb = ((c and 255) + (bl - (c and 255)) * pele).toInt()
+                px[k] = (0xFF shl 24) or (rr.coerceIn(0, 255) shl 16) or (gg.coerceIn(0, 255) shl 8) or bb.coerceIn(0, 255)
+            }
+            saida.setPixels(px, 0, w, 0, 0, w, h)
+        }
         return saida
     }
 
@@ -146,7 +162,8 @@ object Acabamento {
         val b = Documento.decodeReduzido(contexto, uri, 2400) ?: return -1
         val rec = Pessoas.processar(contexto, b)
         Telemetria.evento("rostos", mapOf("n" to rec.reconhecidos.size, "reconhecidos" to rec.reconhecidos.count { it.pessoa != null && !it.novo }, "novos" to rec.reconhecidos.count { it.novo },
-            "sim_max" to (rec.reconhecidos.maxOfOrNull { it.sim }?.let { Math.round(it * 100) / 100.0 }), "pele_correcao" to Math.round(rec.correcaoPele * 10) / 10.0))
+            "sim_max" to (rec.reconhecidos.maxOfOrNull { it.sim }?.let { Math.round(it * 100) / 100.0 }), "pele_correcao" to Math.round(rec.correcaoPele * 10) / 10.0,
+            "erro_detector" to Rostos.ultimoErro, "lado" to max(b.width, b.height)))
         if (forca <= 0 && filtro == "Original" && rec.correcaoPele <= 0f) { b.recycle(); return (System.nanoTime() - t) / 1_000_000 }
         val pronto = aplicar(b, filtro, forca)
         contexto.contentResolver.openOutputStream(uri, "wt")?.use { pronto.compress(Bitmap.CompressFormat.JPEG, 93, it) }

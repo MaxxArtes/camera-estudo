@@ -127,7 +127,7 @@ object Fusao {
         val w = b.width; val h = b.height
         val px = IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) }
         val lu = luminancia(px)
-        val k = floatArrayOf(0.0575f, 0.2439f, 0.3972f, 0.2439f, 0.0575f)   // gaussiana sigma 0,7 normalizada
+        val k = floatArrayOf(0.0096f, 0.2053f, 0.5702f, 0.2053f, 0.0096f)   // gaussiana sigma 0,7 (a tabela anterior era sigma ~0,97, apontado pelo Codex)
         val t = FloatArray(w * h); val g = FloatArray(w * h)
         for (y in 0 until h) { val l = y * w; for (x in 0 until w) { var s = 0f; for (j in -2..2) s += k[j + 2] * lu[l + (x + j).coerceIn(0, w - 1)]; t[l + x] = s } }
         for (y in 0 until h) for (x in 0 until w) { var s = 0f; for (j in -2..2) s += k[j + 2] * t[(y + j).coerceIn(0, h - 1) * w + x]; g[y * w + x] = s }

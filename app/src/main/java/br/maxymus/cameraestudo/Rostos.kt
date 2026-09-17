@@ -25,8 +25,11 @@ object Rostos {
         .setMinFaceSize(0.08f)
         .build()
 
+    @Volatile var ultimoErro: String? = null   // motivo da última falha do detector (vai para a telemetria; selfie com 0 rostos em 17/09)
+
     /** Detecta em uma cópia reduzida (lado ≤ ladoMax) e devolve as caixas na escala do bitmap original. */
     fun detectar(b: Bitmap, ladoMax: Int = 800): List<Rosto> = runCatching {
+        ultimoErro = null
         val esc = minOf(1f, ladoMax.toFloat() / max(b.width, b.height))
         val peq = if (esc < 1f) Bitmap.createScaledBitmap(b, (b.width * esc).toInt(), (b.height * esc).toInt(), true) else b
         val det = FaceDetection.getClient(opcoes)
@@ -43,7 +46,7 @@ object Rostos {
                 e?.let { PointF(it.x * inv, it.y * inv) }, d?.let { PointF(it.x * inv, it.y * inv) }
             )
         }
-    }.getOrDefault(emptyList())
+    }.getOrElse { e -> ultimoErro = (e::class.java.simpleName + ": " + (e.message ?: "")).take(200); emptyList() }
 
     /**
      * Nota de "bom quadro" para a rajada: 1 sem rosto; com rostos, 0,4 + 0,6 x média de olhos abertos

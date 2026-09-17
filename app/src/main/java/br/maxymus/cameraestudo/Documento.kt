@@ -577,7 +577,7 @@ object Documento {
         medida.use { BitmapFactory.decodeStream(it, null, bounds) }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         var amostra = 1; while (max(bounds.outWidth, bounds.outHeight) / (amostra * 2) >= ladoMax) amostra *= 2
-        val opts = BitmapFactory.Options().apply { inSampleSize = amostra }
+        val opts = BitmapFactory.Options().apply { inSampleSize = amostra; inMutable = true }   // Pessoas.processar grava de volta (setPixels); imutável estourava (Codex 17/09)
         val bruto = contexto.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) } ?: return null
         val rot = contexto.contentResolver.openInputStream(uri)?.use { ExifInterface(it).rotationDegrees } ?: 0
         // teto exato (Codex 17/09: com só inSampleSize, fonte de 4608 px pedida a 2400 ficava em 4608 = memória e tempo)

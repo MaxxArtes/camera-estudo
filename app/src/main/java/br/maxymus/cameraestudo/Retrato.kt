@@ -11,84 +11,155 @@ import com.google.mlkit.vision.segmentation.selfie.SelfieSegmenterOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.pow
+import kotlin.math.sqrt
 
 /**
- * Retrato por software, para aparelhos sem bokeh nativo: o ML Kit separa a pessoa do fundo
- * (máscara por pixel, 0 = fundo, 1 = pessoa) e o fundo recebe um desfoque. O resultado
- * sobrescreve a própria foto no MediaStore.
+ * Retrato por software, na direção do retrato da GCam (revisão do Codex gpt-6-astra em 17/09, medicao/codex_retrato_resposta.md,
+ * sobre Wadhwa et al. 2018 "Synthetic Depth-of-Field" e Portrait Light):
  *
- * O desfoque é feito reduzindo a imagem e ampliando de volta com filtro bilinear (um "blur"
- * barato que roda em qualquer aparelho, sem RenderScript nem GPU).
+ *  1. Máscara do ML Kit em resolução bruta (é a do modelo, ~256 px, não a da foto): ampliada BILINEAR para a saída, sem a
+ *     média 5x5 que antes valia ~47 px na foto; curva suave só nas pontas (0,10..0,90) para não perder fio de cabelo.
+ *  2. Fundo por CONVOLUÇÃO NORMALIZADA com kernel de DISCO em luz linear, numa cópia de 600 px: a pessoa entra com peso
+ *     zero, então cabelo/roupa não vazam para o borrão; onde o peso some, cai para um disco 3x maior. Raio 8 a 40 px na
+ *     saída conforme a régua de desfoque.
+ *  3. Rosto: preenchimento suave das sombras (Portrait Light aproximado): ganho 2^(EV·máscara·sombra) na luminância de
+ *     baixa frequência, EV 0,35, só dentro de uma elipse do rosto e só na pessoa.
+ *  Ficou de fora, por decisão do Codex: profundidade por gradiente, luzes em "bola", descontaminação de cabelo, HDR próprio.
  */
 object Retrato {
-    private const val LADO_MAX = 2400   // medido no Xiaomi do dono (16/09): 150-200 ms a 1600 px; a 2400 px cabe em ~0,5 s
+    private const val LADO_MAX = 2400
+    private const val LADO_FUNDO = 600
+    private val paraLinear = FloatArray(256) { val c = it / 255f; if (c <= 0.04045f) c / 12.92f else ((c + 0.055f) / 1.055f).pow(2.4f) }
+    private val paraSrgb = IntArray(4097) { val l = it / 4096f; val c = if (l <= 0.0031308f) l * 12.92f else 1.055f * l.pow(1f / 2.4f) - 0.055f; (c * 255f + 0.5f).toInt().coerceIn(0, 255) }
+    private fun srgb(l: Float) = paraSrgb[(l.coerceIn(0f, 1f) * 4096f).toInt()]
+    private fun suave(v: Float, a: Float, b: Float): Float { val t = ((v - a) / (b - a)).coerceIn(0f, 1f); return t * t * (3 - 2 * t) }
 
-    /** intensidade 1..10: 5 é o padrão antigo (fundo reduzido a 1/10); 1 quase não desfoca, 10 desfoca muito. */
-    /** Devolve null quando deu certo; senão o motivo (vai para a telemetria). */
+    /** Devolve null quando deu certo; senão o motivo (vai para a telemetria). intensidade 1..10. */
     suspend fun aplicar(contexto: Context, uri: Uri, intensidade: Int = 5): String? = withContext(Dispatchers.Default) {
         runCatching {
-            // Android 16 (telemetria do dono, v0.27): a foto recém-gravada veio nula em 8 ms; tenta de novo com espera
             var certa: Bitmap? = null
             for (tentativa in 0 until 4) { certa = Documento.decodeReduzido(contexto, uri, LADO_MAX * 2); if (certa != null) break; delay(250) }
             if (certa == null) {
                 val diag = runCatching {
-                    val fd = contexto.contentResolver.openFileDescriptor(uri, "r")
-                    val bytes = fd?.statSize ?: -1L; fd?.close()
+                    val fd = contexto.contentResolver.openFileDescriptor(uri, "r"); val bytes = fd?.statSize ?: -1L; fd?.close()
                     val b = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                    val stream = contexto.contentResolver.openInputStream(uri)
-                    stream?.use { BitmapFactory.decodeStream(it, null, b) }
-                    "stream=${stream != null} bytes=$bytes w=${b.outWidth} mime=${b.outMimeType} uri=${uri.scheme}"
-                }.getOrElse { "diag: " + it::class.java.simpleName + " " + it.message }
+                    contexto.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, b) }
+                    "bytes=$bytes w=${b.outWidth}"
+                }.getOrElse { "diag: " + it::class.java.simpleName }
                 return@runCatching "decode nulo ($diag)"
             }
-            val escala = minOf(1f, LADO_MAX.toFloat() / maxOf(certa.width, certa.height))
+            val escala = min(1f, LADO_MAX.toFloat() / max(certa.width, certa.height))
             val base = if (escala < 1f) Bitmap.createScaledBitmap(certa, (certa.width * escala).toInt(), (certa.height * escala).toInt(), true) else certa
             if (base !== certa) certa.recycle()
-            val w = base.width; val h = base.height
+            val w = base.width; val h = base.height; val n = w * h
 
-            // enableRawSizeMask: máscara no tamanho da imagem em vez de 256x256; o contorno da pessoa fica bem mais fiel
+            // 1) máscara bruta do modelo, ampliada bilinear na hora de usar
             val segmentador = Segmentation.getClient(SelfieSegmenterOptions.Builder().setDetectorMode(SelfieSegmenterOptions.SINGLE_IMAGE_MODE).enableRawSizeMask().build())
-            val mascara = Tasks.await(segmentador.process(InputImage.fromBitmap(base, 0)))
-            segmentador.close()
-            val mw = mascara.width; val mh = mascara.height
-            val bb = mascara.buffer; bb.rewind()
-            val bruta = FloatArray(mw * mh) { bb.float }   // o ML Kit entrega a máscara como floats dentro de um ByteBuffer
-            // borda suave: média 5x5 da confiança e curva em S (0,25..0,75 → 0..1). Sem isso o recorte do cabelo contra
-            // o céu saía duro (primeiro retrato por software do dono, 16/09)
-            val conf = FloatArray(mw * mh) { k ->
-                val cx = k % mw; val cy = k / mw; var s = 0f; var n = 0
-                for (dy in -2..2) for (dx in -2..2) { val x = cx + dx; val y = cy + dy; if (x in 0 until mw && y in 0 until mh) { s += bruta[y * mw + x]; n++ } }
-                val m = s / n; val t = ((m - 0.25f) / 0.5f).coerceIn(0f, 1f); t * t * (3 - 2 * t)
+            val mascara = Tasks.await(segmentador.process(InputImage.fromBitmap(base, 0))); segmentador.close()
+            val mw = mascara.width; val mh = mascara.height; val bb = mascara.buffer; bb.rewind()
+            val bruta = FloatArray(mw * mh) { bb.float }
+            fun conf(x: Float, y: Float): Float {   // bilinear em coordenadas 0..1
+                val fx = (x * (mw - 1)).coerceIn(0f, mw - 1f); val fy = (y * (mh - 1)).coerceIn(0f, mh - 1f)
+                val x0 = fx.toInt(); val y0 = fy.toInt(); val x1 = min(mw - 1, x0 + 1); val y1 = min(mh - 1, y0 + 1); val tx = fx - x0; val ty = fy - y0
+                return (bruta[y0 * mw + x0] * (1 - tx) + bruta[y0 * mw + x1] * tx) * (1 - ty) + (bruta[y1 * mw + x0] * (1 - tx) + bruta[y1 * mw + x1] * tx) * ty
             }
+            val pFrente = IntArray(n).also { base.getPixels(it, 0, w, 0, 0, w, h) }
 
-            // fundo desfocado: reduz por (2 x intensidade) e volta, duas vezes para o desfoque ficar redondo, não quadriculado
-            val divisor = (intensidade.coerceIn(1, 10) * 2)
-            val pequeno = Bitmap.createScaledBitmap(base, maxOf(1, w / divisor), maxOf(1, h / divisor), true)
-            val meio = Bitmap.createScaledBitmap(pequeno, maxOf(1, w / 2), maxOf(1, h / 2), true)
-            val fundo = Bitmap.createScaledBitmap(meio, w, h, true); meio.recycle()
-
-            val pFrente = IntArray(w * h).also { base.getPixels(it, 0, w, 0, 0, w, h) }
-            val pFundo = IntArray(w * h).also { fundo.getPixels(it, 0, w, 0, 0, w, h) }
-            val saida = IntArray(w * h)
-            for (y in 0 until h) {
-                val my = (y * mh / h).coerceIn(0, mh - 1)
-                for (x in 0 until w) {
-                    val mx = (x * mw / w).coerceIn(0, mw - 1)
-                    val a = conf[my * mw + mx]          // 0..1: quanto é pessoa
-                    val i = y * w + x
-                    val f = pFrente[i]; val b = pFundo[i]
-                    val r = ((f shr 16 and 255) * a + (b shr 16 and 255) * (1 - a)).toInt()
-                    val g = ((f shr 8 and 255) * a + (b shr 8 and 255) * (1 - a)).toInt()
-                    val bl = ((f and 255) * a + (b and 255) * (1 - a)).toInt()
-                    saida[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or bl
+            // 3) rosto: preenchimento suave das sombras, só na pessoa, dentro de uma elipse
+            val rostos = Rostos.detectar(base, 1000)
+            for (r in rostos) {
+                val cx = r.caixa.exactCenterX(); val cy = r.caixa.exactCenterY(); val rx = r.caixa.width() * 0.62f; val ry = r.caixa.height() * 0.78f
+                val x0 = max(0, (cx - rx).toInt()); val x1 = min(w, (cx + rx).toInt() + 1); val y0 = max(0, (cy - ry).toInt()); val y1 = min(h, (cy + ry).toInt() + 1)
+                if (x1 <= x0 || y1 <= y0) continue
+                // luminância linear de baixa frequência na região (caixa separável, raio 10% da largura do rosto)
+                val rw = x1 - x0; val rh = y1 - y0; val raio = max(2, (r.caixa.width() * 0.10f).toInt())
+                val lum = FloatArray(rw * rh) { k -> val c = pFrente[(y0 + k / rw) * w + x0 + k % rw]; 0.2126f * paraLinear[c shr 16 and 255] + 0.7152f * paraLinear[c shr 8 and 255] + 0.0722f * paraLinear[c and 255] }
+                val baixa = caixaF(lum, rw, rh, raio)
+                for (yy in 0 until rh) for (xx in 0 until rw) {
+                    val k = yy * rw + xx; val X = x0 + xx; val Y = y0 + yy
+                    val dx = (X - cx) / rx; val dy = (Y - cy) / ry; val d = dx * dx + dy * dy
+                    if (d >= 1f) continue
+                    val elipse = 1f - suave(d, 0.55f, 1f)
+                    val pessoa = conf(X / (w - 1f), Y / (h - 1f))
+                    val sombra = 1f - suave(baixa[k], 0.15f, 0.55f)
+                    val ganho = 2f.pow(0.35f * elipse * pessoa * sombra)
+                    if (ganho <= 1.002f) continue
+                    val c = pFrente[Y * w + X]
+                    val lr = paraLinear[c shr 16 and 255] * ganho; val lg = paraLinear[c shr 8 and 255] * ganho; val lb = paraLinear[c and 255] * ganho
+                    pFrente[Y * w + X] = (0xFF shl 24) or (srgb(lr) shl 16) or (srgb(lg) shl 8) or srgb(lb)
                 }
             }
-            pequeno.recycle(); fundo.recycle(); base.recycle()
+
+            // 2) fundo: disco normalizado em luz linear numa cópia de 600 px, pessoa com peso zero
+            val escF = min(1f, LADO_FUNDO.toFloat() / max(w, h)); val fw = max(1, (w * escF).toInt()); val fh = max(1, (h * escF).toInt())
+            val lr = FloatArray(fw * fh); val lg = FloatArray(fw * fh); val lb = FloatArray(fw * fh); val peso = FloatArray(fw * fh)
+            for (y in 0 until fh) for (x in 0 until fw) {
+                val sx = min(w - 1, (x / escF).toInt()); val sy = min(h - 1, (y / escF).toInt()); val c = pFrente[sy * w + sx]
+                val pf = 1f - suave(conf(x / (fw - 1f), y / (fh - 1f)), 0.05f, 0.30f)
+                val k = y * fw + x; peso[k] = pf; lr[k] = paraLinear[c shr 16 and 255] * pf; lg[k] = paraLinear[c shr 8 and 255] * pf; lb[k] = paraLinear[c and 255] * pf
+            }
+            val raio = (2f + intensidade.coerceIn(1, 10) * 0.8f).toInt().coerceIn(2, 10)   // 8..40 px na saída de 2400
+            val dR = disco(lr, fw, fh, raio); val dG = disco(lg, fw, fh, raio); val dB = disco(lb, fw, fh, raio); val dP = disco(peso, fw, fh, raio)
+            val rGrande = min(3 * raio, 30)
+            val gR = disco(lr, fw, fh, rGrande); val gG = disco(lg, fw, fh, rGrande); val gB = disco(lb, fw, fh, rGrande); val gP = disco(peso, fw, fh, rGrande)
+            val fundoR = FloatArray(fw * fh); val fundoG = FloatArray(fw * fh); val fundoB = FloatArray(fw * fh)
+            for (k in 0 until fw * fh) {
+                if (dP[k] > 0.02f) { fundoR[k] = dR[k] / dP[k]; fundoG[k] = dG[k] / dP[k]; fundoB[k] = dB[k] / dP[k] }
+                else if (gP[k] > 0.005f) { fundoR[k] = gR[k] / gP[k]; fundoG[k] = gG[k] / gP[k]; fundoB[k] = gB[k] / gP[k] }
+                else { fundoR[k] = lr[k]; fundoG[k] = lg[k]; fundoB[k] = lb[k] }
+            }
+            fun fundo(arr: FloatArray, x: Float, y: Float): Float {   // bilinear na cópia pequena
+                val fx = (x * (fw - 1)).coerceIn(0f, fw - 1f); val fy = (y * (fh - 1)).coerceIn(0f, fh - 1f)
+                val x0 = fx.toInt(); val y0 = fy.toInt(); val x1 = min(fw - 1, x0 + 1); val y1 = min(fh - 1, y0 + 1); val tx = fx - x0; val ty = fy - y0
+                return (arr[y0 * fw + x0] * (1 - tx) + arr[y0 * fw + x1] * tx) * (1 - ty) + (arr[y1 * fw + x0] * (1 - tx) + arr[y1 * fw + x1] * tx) * ty
+            }
+
+            // composição: alfa = confiança com curva suave só nas pontas
+            val saida = IntArray(n)
+            for (y in 0 until h) { val ny = y / (h - 1f)
+                for (x in 0 until w) {
+                    val i = y * w + x; val nx = x / (w - 1f)
+                    val a = suave(conf(nx, ny), 0.10f, 0.90f)
+                    val f = pFrente[i]
+                    if (a >= 0.995f) { saida[i] = f; continue }
+                    val br = srgb(fundo(fundoR, nx, ny)); val bg = srgb(fundo(fundoG, nx, ny)); val bl = srgb(fundo(fundoB, nx, ny))
+                    val r = ((f shr 16 and 255) * a + br * (1 - a)).toInt(); val g = ((f shr 8 and 255) * a + bg * (1 - a)).toInt(); val b = ((f and 255) * a + bl * (1 - a)).toInt()
+                    saida[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                }
+            }
+            base.recycle()
             val resultado = Bitmap.createBitmap(saida, w, h, Bitmap.Config.ARGB_8888)
-            contexto.contentResolver.openOutputStream(uri, "wt")?.use { resultado.compress(Bitmap.CompressFormat.JPEG, 92, it) } ?: return@runCatching "não consegui gravar"
+            contexto.contentResolver.openOutputStream(uri, "wt")?.use { resultado.compress(Bitmap.CompressFormat.JPEG, 93, it) } ?: return@runCatching "não consegui gravar"
             resultado.recycle()
-            Fotos.gravaExif(contexto, uri, "Camera Estudo " + (runCatching { contexto.packageManager.getPackageInfo(contexto.packageName, 0).versionName }.getOrNull() ?: "") + " (retrato software, desfoque $intensidade)")
+            Fotos.gravaExif(contexto, uri, "Camera Estudo " + (runCatching { contexto.packageManager.getPackageInfo(contexto.packageName, 0).versionName }.getOrNull() ?: "") + " (retrato software, desfoque $intensidade, rostos ${rostos.size})")
             null
         }.getOrElse { e -> (e::class.java.simpleName + ": " + (e.message ?: "")).take(300) }
+    }
+
+    /** Média em disco de raio r por prefixos de linha (custo ∝ diâmetro, não área). Borda: só o que cabe. */
+    private fun disco(a: FloatArray, w: Int, h: Int, r: Int): FloatArray {
+        val pref = FloatArray((w + 1) * h)
+        for (y in 0 until h) { var s = 0f; val l = y * (w + 1); val la = y * w; pref[l] = 0f; for (x in 0 until w) { s += a[la + x]; pref[l + x + 1] = s } }
+        val dxs = IntArray(2 * r + 1) { val dy = it - r; sqrt((r * r - dy * dy).toFloat()).toInt() }
+        val out = FloatArray(w * h)
+        for (y in 0 until h) for (x in 0 until w) {
+            var s = 0f; var cnt = 0
+            for (dy in -r..r) { val yy = y + dy; if (yy < 0 || yy >= h) continue
+                val dx = dxs[dy + r]; val x0 = max(0, x - dx); val x1 = min(w - 1, x + dx)
+                s += pref[yy * (w + 1) + x1 + 1] - pref[yy * (w + 1) + x0]; cnt += x1 - x0 + 1 }
+            out[y * w + x] = if (cnt > 0) s / cnt else 0f
+        }
+        return out
+    }
+    private fun caixaF(a: FloatArray, w: Int, h: Int, r: Int): FloatArray {
+        val t = FloatArray(a.size); val o = FloatArray(a.size)
+        for (y in 0 until h) { val l = y * w; var s = 0f; var c = 0; for (x in 0 until min(w, r)) { s += a[l + x]; c++ }
+            for (x in 0 until w) { if (x + r < w) { s += a[l + x + r]; c++ }; if (x - r - 1 >= 0) { s -= a[l + x - r - 1]; c-- }; t[l + x] = s / c } }
+        for (x in 0 until w) { var s = 0f; var c = 0; for (y in 0 until min(h, r)) { s += t[y * w + x]; c++ }
+            for (y in 0 until h) { if (y + r < h) { s += t[(y + r) * w + x]; c++ }; if (y - r - 1 >= 0) { s -= t[(y - r - 1) * w + x]; c-- }; o[y * w + x] = s / c } }
+        return o
     }
 }
