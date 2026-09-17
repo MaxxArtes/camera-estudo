@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.56",
+      "build": 62,
+      "tag": "v0.56-build62",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.56-build62.apk",
+      "mudou": [
+        "Retrato: máscara limpa (só o maior bloco da pessoa), curva mais apertada e diagnóstico da máscara na telemetria (partes do fundo ficavam sem desfoque)"
+      ]
+    },
+    {
       "versao": "0.55",
       "build": 61,
       "tag": "v0.55-build61",
@@ -505,11 +514,11 @@
       ]
     }
   ],
-  "versionName": "0.55",
-  "versionCode": 55,
-  "build": 61,
+  "versionName": "0.56",
+  "versionCode": 56,
+  "build": 62,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.55-build61.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.56-build62.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-17T14:56:32Z"
+  "publicadoEm": "2026-09-17T15:06:31Z"
 }
