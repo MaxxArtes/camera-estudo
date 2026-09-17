@@ -560,7 +560,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                             // soma 2x2 no escuro fundo: decodifica na metade do lado (4 pixels virando 1 = 4x mais luz por pixel, como os bastonetes)
                             // lado maior conforme o ajuste "Resolução"; o bracket trabalha a 80% (pirâmide de 3 exposições pesa mais) e o escuro fundo a 60% (soma 2x2)
                             val base = LADOS_FUSAO[resolucao]
-                            val lado = when { bracketReal -> base * 4 / 5; muitoEscuro -> base * 3 / 5; else -> base }
+                            // bracket na luminância cabe no tamanho cheio até 2000 px (retrato com HDR saía em 1200x1600, 17/09); acima disso, 80%
+                            val lado = when { bracketReal -> if (base <= 2000) base else base * 4 / 5; muitoEscuro -> base * 3 / 5; else -> base }
                             val bitmaps = ordem.mapNotNull { Fusao.decodifica(it.first, lado) }
                             // referência da rajada = quadro nítido E de olhos abertos (fase 1 dos rostos)
                             when { bracketReal -> Fusao.hdr(bitmaps, reciclar = true); noite -> Fusao.noite(bitmaps, reciclar = true, dessatura = if (muitoEscuro) 0.3f else 0.1f, notaQuadro = Rostos::notaOlhos); else -> Fusao.rajada(bitmaps, reciclar = true, notaQuadro = Rostos::notaOlhos) }
