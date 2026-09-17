@@ -47,7 +47,8 @@ object AutoMascaras {
         for (gy in 0 until (gh * 0.7f).toInt()) for (gx in 0 until gw) {
             val k = min(h - 1, gy * 4) * w + min(w - 1, gx * 4); val c = px[k]; val r = c shr 16 and 255; val g = c shr 8 and 255; val bl = c and 255
             val y = lum[k]; val sat = max(r, max(g, bl)) - min(r, min(g, bl))
-            val azul = bl >= r + 8 && bl >= g - 4; val claro = y > 200 && sat < 30
+            // 17/09: parede interna clara passava como céu (7 a 28% numa sala) e virava manchas; azul exige B bem acima de R e G, claro exige quase branco
+            val azul = bl >= r + 22 && bl >= g + 2; val claro = y > 225 && sat < 18
             cand[gy * gw + gx] = (pessoa?.get(k) ?: 0f) < 0.3f && y > 110 && (azul || claro)
         }
         val ceu = BooleanArray(gw * gh); val fila = IntArray(gw * gh); var fim = 0
@@ -57,7 +58,8 @@ object AutoMascaras {
             for ((dx, dy) in listOf(-1 to 0, 1 to 0, 0 to -1, 0 to 1)) { val xx = x + dx; val yy = y + dy
                 if (xx in 0 until gw && yy in 0 until gh) { val q = yy * gw + xx; if (cand[q] && !ceu[q]) { ceu[q] = true; fila[fim++] = q } } } }
         val ceuCont = ceu.count { it }; val ceuPct = ceuCont * 100 / (gw * gh)
-        val ceuF = if (ceuPct >= 3) borraBool(ceu, gw, gh, 3) else null
+        // dilata 3 células antes do feather: a transição fica dentro da pessoa (já excluída por 1-p), não como orla clara no céu ao redor dela
+        val ceuF = if (ceuPct >= 5) borraBool(dilata(ceu, gw, gh, 3), gw, gh, 3) else null
 
         // ---- centro do radial e elipses do rosto
         // centro do radial: rosto; sem rosto, o assunto principal do localizador; sem nada, o alto da foto
@@ -81,7 +83,9 @@ object AutoMascaras {
                 }
             }
             val d = hypot(x - cx, y - cy) / raioMax
-            val v = 1f - 0.16f * suave(d, 0.45f, 1.0f) * (1f - p)   // 22% escurecia demais os cantos nas fotos de mesa (17/09)
+            // 17/09 tarde: 16% a partir de 45% do raio, centrado no rosto, virava um foco de luz atrás da cabeça em parede lisa (selfies na sala);
+            // agora é vinheta de canto: 10% e só a partir de 65% do raio
+            val v = 1f - 0.10f * suave(d, 0.65f, 1.0f) * (1f - p)
             if (v < 0.999f) { r *= v; g *= v; bl *= v; mudou = true; vinheta = true }
             if (mudou) px[k] = (0xFF shl 24) or (r.toInt().coerceIn(0, 255) shl 16) or (g.toInt().coerceIn(0, 255) shl 8) or bl.toInt().coerceIn(0, 255)
         }
@@ -128,6 +132,12 @@ object AutoMascaras {
     }
 
     private fun luma(c: Int) = ((c shr 16 and 255) * 54 + (c shr 8 and 255) * 183 + (c and 255) * 19) shr 8
+    private fun dilata(m: BooleanArray, w: Int, h: Int, r: Int): BooleanArray {
+        val o = BooleanArray(m.size)
+        for (y in 0 until h) for (x in 0 until w) { if (!m[y * w + x]) continue
+            for (yy in max(0, y - r)..min(h - 1, y + r)) for (xx in max(0, x - r)..min(w - 1, x + r)) o[yy * w + xx] = true }
+        return o
+    }
     private fun borraBool(m: BooleanArray, w: Int, h: Int, r: Int): FloatArray {
         val f = FloatArray(m.size) { if (m[it]) 1f else 0f }
         return caixaF(f, w, h, r)

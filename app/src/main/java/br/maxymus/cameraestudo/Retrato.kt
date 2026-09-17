@@ -70,9 +70,14 @@ object Retrato {
                 mw = mascara.width; mh = mascara.height; val bb = mascara.buffer; bb.rewind(); bruta = FloatArray(mw * mh) { bb.float }
             }
             var cobertura = 0; for (v in bruta) if (v > 0.5f) cobertura++
-            if (cobertura < bruta.size / 100) {
-                // sem pessoa: máscara de instância do YOLO (pet, objeto); se falhar, elipse suave na caixa do localizador
-                val det = Yolo.detectar(contexto, base).firstOrNull()
+            // 17/09: a pedra na mesa dava 1-3% de "pessoa" no segmentador (manchas 8 a 22) e nunca chegava ao YOLO, que a via com 95%.
+            // Regra: com rosto, segmentador. Sem rosto, o YOLO decide: objeto → máscara de instância; pessoa (de costas) → segmentador.
+            // Sem detecção do YOLO, segmentador só com cobertura >= 5%; senão superelipse do localizador.
+            val temRosto = Rostos.detectar(base, 600).isNotEmpty()
+            val detYolo = if (temRosto) null else Yolo.detectar(contexto, base).firstOrNull()
+            val usaSegmentador = temRosto || (detYolo != null && detYolo.nome == "person") || (detYolo == null && cobertura >= bruta.size / 20)
+            if (!usaSegmentador) {
+                val det = if (detYolo != null && detYolo.nome != "person") detYolo else null
                 if (det != null) { fonteMascara = "yolo:" + det.nome
                     for (k in bruta.indices) bruta[k] = det.mascara((k % mw) / (mw - 1f), (k / mw) / (mh - 1f)) }
                 val cx0 = if (det == null) Assunto.principal(contexto, base) else null

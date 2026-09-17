@@ -180,7 +180,10 @@ object Acabamento {
      * Sobre uma foto já gravada (caminho simples): decodifica, reconhece pessoas na imagem crua (cadastro + âncora de
      * pele), aplica embelezador e filtro, regrava se algo mudou. Devolve o tempo em ms ou -1 se nada a fazer.
      */
-    suspend fun aplicarEmArquivo(contexto: Context, uri: android.net.Uri, filtro: String, forca: Int, lado: Int = 2400): Long {
+    /** Lado máximo do acabamento: a foto nativa tem 12 MP (3072x4096) e o acabamento a reduzia a 2400 (4,3 MP) em toda foto simples (medido 17/09 no estojo). */
+    fun ladoAcabamento(): Int = if (Runtime.getRuntime().maxMemory() < (400L shl 20)) 2400 else 4096
+
+    suspend fun aplicarEmArquivo(contexto: Context, uri: android.net.Uri, filtro: String, forca: Int, lado: Int = ladoAcabamento()): Long {
         if (forca <= 0 && filtro == "Original" && !Pessoas.ligado && !autoMascaras) return -1
         val t = System.nanoTime()
         // o Software que a fusão gravou (versão, hdr/rajada/noite) fica; o acabamento só acrescenta

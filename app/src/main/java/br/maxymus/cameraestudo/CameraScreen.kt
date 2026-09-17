@@ -576,7 +576,6 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                             Fusao.gira(Acabamento.aplicar(girado, filtro, embelezar), (360 - quadros[0].second) % 360)
                         } else Acabamento.aplicar(nitido, filtro, embelezar)
                     }, quadros[0].second)
-                    if (!scanner && (embelezar > 0 || filtro != "Original")) Telemetria.evento("acabamento", mapOf("filtro" to filtro, "embelezador" to embelezar, "modo" to "sequencia"))
                     val destino = contexto.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Fotos.novaEntrada())
                     if (destino != null) contexto.contentResolver.openOutputStream(destino)?.use { pronto.compress(Bitmap.CompressFormat.JPEG, 93, it) }
                     pronto.recycle()
