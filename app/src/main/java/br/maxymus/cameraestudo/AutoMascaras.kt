@@ -36,7 +36,7 @@ object AutoMascaras {
         FloatArray(w * h) { k -> conf[(k / w * mh / h).coerceIn(0, mh - 1) * mw + (k % w * mw / w).coerceIn(0, mw - 1)] }
     }.getOrNull()
 
-    fun aplicar(b: Bitmap, pessoa: FloatArray?, rostos: List<Rostos.Rosto>): Pair<Bitmap, Relatorio> {
+    fun aplicar(b: Bitmap, pessoa: FloatArray?, rostos: List<Rostos.Rosto>, assunto: android.graphics.RectF? = null): Pair<Bitmap, Relatorio> {
         val w = b.width; val h = b.height; val n = w * h
         val px = IntArray(n).also { b.getPixels(it, 0, w, 0, 0, w, h) }
         val lum = Fusao.luminancia(px)
@@ -60,7 +60,9 @@ object AutoMascaras {
         val ceuF = if (ceuPct >= 3) borraBool(ceu, gw, gh, 3) else null
 
         // ---- centro do radial e elipses do rosto
-        val cx = rostos.firstOrNull()?.caixa?.exactCenterX() ?: (w / 2f); val cy = rostos.firstOrNull()?.caixa?.exactCenterY() ?: (h * 0.42f)
+        // centro do radial: rosto; sem rosto, o assunto principal do localizador; sem nada, o alto da foto
+        val cx = rostos.firstOrNull()?.caixa?.exactCenterX() ?: (assunto?.let { it.centerX() * w } ?: (w / 2f))
+        val cy = rostos.firstOrNull()?.caixa?.exactCenterY() ?: (assunto?.let { it.centerY() * h } ?: (h * 0.42f))
         val raioMax = 0.75f * hypot(w / 2f, h / 2f)
 
         // ---- passa única por pixel: céu + vinheta

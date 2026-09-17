@@ -58,15 +58,31 @@ object Retrato {
             val w = base.width; val h = base.height; val n = w * h
 
             // 1) máscara bruta do modelo, ampliada bilinear na hora de usar
-            val segmentador = Segmentation.getClient(SelfieSegmenterOptions.Builder().setDetectorMode(SelfieSegmenterOptions.SINGLE_IMAGE_MODE).enableRawSizeMask().build())
-            val mascara = Tasks.await(segmentador.process(InputImage.fromBitmap(base, 0))); segmentador.close()
-            val mw = mascara.width; val mh = mascara.height; val bb = mascara.buffer; bb.rewind()
-            val bruta = FloatArray(mw * mh) { bb.float }
+            // 1) máscara: segmentador multiclasse (com cabelo, Apache) → ML Kit se falhar → localizador de assunto se não houver pessoa
+            var fonteMascara = "multiclasse"
+            val mapa = Segmentos.segmentar(contexto, base)
+            var mw: Int; var mh: Int; var bruta: FloatArray
+            if (mapa != null) { mw = 256; mh = 256; bruta = FloatArray(mw * mh) { k -> 1f - mapa.cats[k * 6 + Segmentos.FUNDO] } }
+            else {
+                fonteMascara = "mlkit"
+                val segmentador = Segmentation.getClient(SelfieSegmenterOptions.Builder().setDetectorMode(SelfieSegmenterOptions.SINGLE_IMAGE_MODE).enableRawSizeMask().build())
+                val mascara = Tasks.await(segmentador.process(InputImage.fromBitmap(base, 0))); segmentador.close()
+                mw = mascara.width; mh = mascara.height; val bb = mascara.buffer; bb.rewind(); bruta = FloatArray(mw * mh) { bb.float }
+            }
+            var cobertura = 0; for (v in bruta) if (v > 0.5f) cobertura++
+            if (cobertura < bruta.size / 100) {
+                // sem pessoa: assunto principal (pet, objeto) vira uma elipse suave dentro da caixa do localizador
+                val cx0 = Assunto.principal(contexto, base)
+                if (cx0 != null) { fonteMascara = "assunto"
+                    val r = cx0.ret; val ccx = r.centerX(); val ccy = r.centerY(); val rx = r.width() / 2 * 1.05f; val ry = r.height() / 2 * 1.05f
+                    for (k in bruta.indices) { val x = (k % mw) / (mw - 1f); val y = (k / mw) / (mh - 1f); val d = ((x - ccx) / rx).let { it * it } + ((y - ccy) / ry).let { it * it }
+                        bruta[k] = 1f - suave(d, 0.7f, 1.05f) } }
+            }
             // limpeza (dono, 17/09: partes do fundo ficavam sem desfoque): só o maior bloco conectado de confiança > 0,5 é pessoa;
             // manchas soltas (cadeira, tela, parede) viram fundo. Conta a fração em meia certeza para a telemetria.
             val manchas = limpaMascara(bruta, mw, mh)
             var meio = 0; for (v in bruta) if (v > 0.15f && v < 0.85f) meio++
-            ultimoDiag = "meio=${meio * 100 / bruta.size}% manchas=$manchas"
+            ultimoDiag = "meio=${meio * 100 / bruta.size}% manchas=$manchas fonte=$fonteMascara seg_ms=${Segmentos.ultimoMs}"
             fun conf(x: Float, y: Float): Float {   // bilinear em coordenadas 0..1
                 val fx = (x * (mw - 1)).coerceIn(0f, mw - 1f); val fy = (y * (mh - 1)).coerceIn(0f, mh - 1f)
                 val x0 = fx.toInt(); val y0 = fy.toInt(); val x1 = min(mw - 1, x0 + 1); val y1 = min(mh - 1, y0 + 1); val tx = fx - x0; val ty = fy - y0

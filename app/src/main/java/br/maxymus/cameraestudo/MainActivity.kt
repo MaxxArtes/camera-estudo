@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Telemetria.iniciar(this)
         Pessoas.iniciar(this)
+        Acabamento.app = applicationContext
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Color(0xFFFF5A5F), secondary = Color(0xFF22C55E), background = Color(0xFF0E0E12), surface = Color(0xFF16161B))) {
                 App()

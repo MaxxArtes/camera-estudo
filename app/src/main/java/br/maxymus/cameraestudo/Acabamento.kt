@@ -29,6 +29,7 @@ object Acabamento {
      *  protege a pele (medido 16/09: Vívido por saturação pura deixou a pele 0,69/0,39/0,29, laranja; na miniatura a
      *  vibrância é aproximada por uma saturação leve dentro da própria matriz). */
     class Filtro(val nome: String, val matriz: FloatArray, val vibrancia: Float = 0f)
+    @Volatile var app: Context? = null   // contexto da aplicação para os modelos TFLite (Segmentos, Assunto)
 
     private fun sat(s: Float): FloatArray {   // matriz de saturação (luma Rec.601)
         val ir = 0.299f * (1 - s); val ig = 0.587f * (1 - s); val ib = 0.114f * (1 - s)
@@ -105,7 +106,10 @@ object Acabamento {
         val w = b.width; val h = b.height; val n = w * h
         val px = IntArray(n).also { b.getPixels(it, 0, w, 0, 0, w, h) }
         // máscara de pessoa (ML Kit), amostrada no tamanho da imagem
-        val pessoa: FloatArray? = runCatching {
+        // pele pelo segmentador multiclasse (Apache) quando disponível; senão pessoa do ML Kit x faixa de cor
+        val mapa = app?.let { Segmentos.segmentar(it, b) }
+        val peleModelo: FloatArray? = mapa?.let { Segmentos.mascaraPele(it, w, h) }
+        val pessoa: FloatArray? = if (mapa != null) null else runCatching {
             val seg = Segmentation.getClient(SelfieSegmenterOptions.Builder().setDetectorMode(SelfieSegmenterOptions.SINGLE_IMAGE_MODE).build())
             val m = Tasks.await(seg.process(InputImage.fromBitmap(b, 0))); seg.close()
             val mw = m.width; val mh = m.height; val bb = m.buffer; bb.rewind(); val conf = FloatArray(mw * mh) { bb.float }
@@ -120,7 +124,7 @@ object Acabamento {
             val c = px[k]; val r = c shr 16 and 255; val g = c shr 8 and 255; val bl = c and 255
             // tom de pele em YCbCr (faixa clássica), com transição suave nas bordas da faixa
             val cb = 128 - 0.1687f * r - 0.3313f * g + 0.5f * bl; val cr = 128 + 0.5f * r - 0.4187f * g - 0.0813f * bl
-            val pele = suave(cb, 77f, 85f, 120f, 130f) * suave(cr, 130f, 138f, 170f, 178f) * (if (lum[k] > 40) 1f else 0f)
+            val pele = if (peleModelo != null) peleModelo[k] else suave(cb, 77f, 85f, 120f, 130f) * suave(cr, 130f, 138f, 170f, 178f) * (if (lum[k] > 40) 1f else 0f)
             val lb = (bR[k] * 54 + bG[k] * 183 + bB[k] * 19) shr 8
             val borda = 1f - ((abs(lum[k] - lb) - 6f) / 18f).coerceIn(0f, 1f)     // detalhe forte (olho, boca, cabelo) fica
             val p = pessoa?.get(k) ?: 1f
@@ -158,8 +162,12 @@ object Acabamento {
         var atual = b
         ultimoRelatorio = null
         if (autoMascaras) {
-            val pessoa = AutoMascaras.mascaraPessoa(atual); val rostos = Rostos.detectar(atual, 1000)
-            val (nova, rel) = AutoMascaras.aplicar(atual, pessoa, rostos); atual = nova; ultimoRelatorio = rel
+            val ctx = app
+            val mapa = ctx?.let { Segmentos.segmentar(it, atual) }
+            val pessoa = if (mapa != null) Segmentos.mascaraPessoa(mapa, atual.width, atual.height) else AutoMascaras.mascaraPessoa(atual)
+            val rostos = Rostos.detectar(atual, 1000)
+            val assunto = if (rostos.isEmpty() && ctx != null) Assunto.principal(ctx, atual)?.ret else null
+            val (nova, rel) = AutoMascaras.aplicar(atual, pessoa, rostos, assunto); atual = nova; ultimoRelatorio = rel
         }
         return aplicaFiltro(embelezar(atual, forca), filtro(filtro))
     }
@@ -178,7 +186,8 @@ object Acabamento {
             "erro_detector" to Rostos.ultimoErro, "lado" to max(b.width, b.height)))
         if (forca <= 0 && filtro == "Original" && rec.correcaoPele <= 0f && !autoMascaras) { b.recycle(); return (System.nanoTime() - t) / 1_000_000 }
         val pronto = aplicar(b, filtro, forca)
-        ultimoRelatorio?.let { Telemetria.evento("auto_mascaras", mapOf("ceu_pct" to it.ceuPct, "vinheta" to it.vinheta, "rostos" to it.rostos, "olhos" to it.olhos)) }
+        ultimoRelatorio?.let { Telemetria.evento("auto_mascaras", mapOf("ceu_pct" to it.ceuPct, "vinheta" to it.vinheta, "rostos" to it.rostos, "olhos" to it.olhos,
+            "seg_ms" to Segmentos.ultimoMs, "seg_erro" to Segmentos.ultimoErro, "assunto_ms" to Assunto.ultimoMs, "assunto_erro" to Assunto.ultimoErro)) }
         contexto.contentResolver.openOutputStream(uri, "wt")?.use { pronto.compress(Bitmap.CompressFormat.JPEG, 93, it) }
         pronto.recycle()
         Fotos.gravaExif(contexto, uri, "Camera Estudo (filtro ${semAcento(filtro)}, embelezador $forca)")
