@@ -119,6 +119,29 @@ object Fusao {
         return Bitmap.createBitmap(saida, w, h, Bitmap.Config.ARGB_8888)
     }
 
+    /**
+     * Nitidez para texto (Codex 17/09): gaussiana separável sigma 0,7 px (kernel 5), quantidade 0,8, resíduo abaixo de 3 níveis
+     * ignorado (ruído), correção limitada a ±20. Só na luminância.
+     */
+    fun nitidezTexto(b: Bitmap, quantidade: Float = 0.8f): Bitmap {
+        val w = b.width; val h = b.height
+        val px = IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) }
+        val lu = luminancia(px)
+        val k = floatArrayOf(0.0575f, 0.2439f, 0.3972f, 0.2439f, 0.0575f)   // gaussiana sigma 0,7 normalizada
+        val t = FloatArray(w * h); val g = FloatArray(w * h)
+        for (y in 0 until h) { val l = y * w; for (x in 0 until w) { var s = 0f; for (j in -2..2) s += k[j + 2] * lu[l + (x + j).coerceIn(0, w - 1)]; t[l + x] = s } }
+        for (y in 0 until h) for (x in 0 until w) { var s = 0f; for (j in -2..2) s += k[j + 2] * t[(y + j).coerceIn(0, h - 1) * w + x]; g[y * w + x] = s }
+        val saida = IntArray(w * h) { i ->
+            val c = px[i]; val r = c shr 16 and 255; val gg = c shr 8 and 255; val bl = c and 255
+            val res = lu[i] - g[i]
+            val delta = if (abs(res) < 3f) 0f else (res * quantidade).coerceIn(-20f, 20f)
+            if (delta == 0f) c else { val f = if (lu[i] > 0) (lu[i] + delta) / lu[i] else 1f
+                (0xFF shl 24) or ((r * f + 0.5f).toInt().coerceIn(0, 255) shl 16) or ((gg * f + 0.5f).toInt().coerceIn(0, 255) shl 8) or (bl * f + 0.5f).toInt().coerceIn(0, 255) }
+        }
+        b.recycle()
+        return Bitmap.createBitmap(saida, w, h, Bitmap.Config.ARGB_8888)
+    }
+
     fun gira(b: Bitmap, graus: Int): Bitmap {
         if (graus == 0) return b
         val g = Bitmap.createBitmap(b, 0, 0, b.width, b.height, Matrix().apply { postRotate(graus.toFloat()) }, true)

@@ -418,7 +418,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         escopo.launch {
             val t = Telemetria.agora()
             val r = Documento.aplicar(contexto, uri, quad, tela, d.metodo, quadros, rot, estiloDoc, LADOS_SCANNER[resolucao])
-            Telemetria.evento("scanner_aplicar", mapOf("ms" to Telemetria.ms(t), "quadros" to (quadros?.size ?: 1), "recortou" to (r?.recortou ?: false), "modo" to (if (tela) "tela" else "folha"), "estilo" to estiloDoc, "lado" to LADOS_SCANNER[resolucao]))
+            Telemetria.evento("scanner_aplicar", mapOf("ms" to Telemetria.ms(t), "quadros" to (quadros?.size ?: 1), "recortou" to (r?.recortou ?: false), "modo" to (if (tela) "tela" else "folha"), "estilo" to estiloDoc, "lado" to LADOS_SCANNER[resolucao], "saida_w" to r?.largura, "saida_h" to r?.altura, "fonte_lado" to r?.fonteLado))
             RegistroScanner.anota(contexto, tela, d, quad, conferido, r)
             d.previa.recycle()
             processandoDoc = false; ocupado = false; ultima = uri
@@ -835,9 +835,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 }
             }
             if (modo == Modo.DOCUMENTO || modo == Modo.TELA) Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), horizontalArrangement = Arrangement.Center) {
-                listOf("original" to "Original", "pb" to "P&B", "aprimorado" to "Aprimorado").forEach { (v, r) ->
+                (if (modo == Modo.TELA) listOf("original" to "Original", "pb" to "P&B", "aprimorado" to "Aprimorado", "semmoire" to "Sem moiré")
+                 else listOf("original" to "Original", "pb" to "P&B", "aprimorado" to "Aprimorado", "texto" to "Texto")).forEach { (v, r) ->
                     Text(r, color = if (estiloDoc == v) Color.Black else Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 4.dp).clip(RoundedCornerShape(14.dp)).background(if (estiloDoc == v) Amarelo else Color(0x22FFFFFF)).clickable { estiloDoc = v }.padding(horizontal = 14.dp, vertical = 6.dp))
+                        modifier = Modifier.padding(horizontal = 3.dp).clip(RoundedCornerShape(14.dp)).background(if (estiloDoc == v) Amarelo else Color(0x22FFFFFF)).clickable { estiloDoc = v }.padding(horizontal = 11.dp, vertical = 6.dp))
                 }
             }
             if (modo == Modo.RETRATO) Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(36.dp)) {

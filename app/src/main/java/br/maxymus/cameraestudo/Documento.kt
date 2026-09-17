@@ -40,7 +40,7 @@ object Documento {
     private const val LADO_ANALISE = 640
     private const val LADO_SAIDA = 2000
 
-    data class Resultado(val recortou: Boolean, val metodo: String)
+    data class Resultado(val recortou: Boolean, val metodo: String, val largura: Int = 0, val altura: Int = 0, val fonteLado: Int = 0)
 
     private class Quad(val tl: FloatArray, val tr: FloatArray, val br: FloatArray, val bl: FloatArray, val areaMancha: Int, val metodo: String) {
         var cantosNaBorda = 0
@@ -82,6 +82,15 @@ object Documento {
             out[i] = (0xFF shl 24) or ((y + (r - y) * 15 / 100).coerceIn(0, 255) shl 16) or ((y + (g - y) * 15 / 100).coerceIn(0, 255) shl 8) or (y + (bl - y) * 15 / 100).coerceIn(0, 255)
         }
         return Bitmap.createBitmap(out, w, h, Bitmap.Config.ARGB_8888)
+    }
+
+    /** Tela sem borrão: só tira 40% da cor (o moiré colorido), luminância intacta. */
+    private fun dessaturaLeve(b: Bitmap): Bitmap {
+        val w = b.width; val h = b.height
+        val px = IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) }
+        for (i in px.indices) { val c = px[i]; val r = c shr 16 and 255; val g = c shr 8 and 255; val bl = c and 255; val y = (r * 30 + g * 59 + bl * 11) / 100
+            px[i] = (0xFF shl 24) or ((y + (r - y) * 6 / 10).coerceIn(0, 255) shl 16) or ((y + (g - y) * 6 / 10).coerceIn(0, 255) shl 8) or (y + (bl - y) * 6 / 10).coerceIn(0, 255) }
+        return Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
     }
 
     /** Filtro de caixa separável por canal (somas acumuladas): O(n), independe do raio. */
@@ -233,6 +242,7 @@ object Documento {
             val fontes: List<() -> Bitmap?> = if (rajada != null && rajada.size >= 2) rajada.map { bytes -> { Fusao.decodifica(bytes, min(ladoFonte, 2600))?.let { Fusao.gira(it, rotRajada) } } }
                 else listOf({ decodeReduzido(contexto, uri, ladoFonte) })
             val foto = fontes[0]() ?: return@runCatching null
+            val fonteLado = max(foto.width, foto.height)
             var saida: Bitmap = foto; var recortou = false
             if (quad != null && convexo(quad)) {
                 val p = FloatArray(8) { quad[it] * (if (it % 2 == 0) foto.width else foto.height) }
@@ -242,7 +252,7 @@ object Documento {
                 val padroes = if (tela) floatArrayOf(16f / 9f, 9f / 16f, 16f / 10f, 10f / 16f, 4f / 3f, 3f / 4f) else floatArrayOf(1.414f, 1f / 1.414f, 1.294f, 1f / 1.294f)
                 val tolerancia = if (tela) 0.1f else 0.12f
                 for (r in padroes) if (abs(razao / r - 1f) < tolerancia) { if (r > 1f) larg = (alt * r).toInt() else alt = (larg / r).toInt(); break }
-                val escS = min(1f, (if (tela) min(ladoSaida, 2000) else ladoSaida).toFloat() / max(larg, alt))   // tela: até 2000 px, o anti-moiré segue depois
+                val escS = min(1f, ladoSaida.toFloat() / max(larg, alt))   // Codex 17/09: teto de 2000 no Tela apagava a letra miúda
                 val w = (larg * escS).toInt(); val h = (alt * escS).toInt()
                 val m = Matrix()
                 if (m.setPolyToPoly(p, 0, floatArrayOf(0f, 0f, w.toFloat(), 0f, w.toFloat(), h.toFloat(), 0f, h.toFloat()), 0, 4)) {
@@ -262,23 +272,26 @@ object Documento {
                 val todos = arrayListOf(foto); for (i in 1 until fontes.size) fontes[i]()?.let { todos += it }
                 if (todos.size >= 2) saida = Fusao.rajada(todos, reciclar = true)
             }
+            // Codex (gpt-6-astra, 17/09) nas duas imagens do DACTE: o anti-moiré (reduz 70% + caixa 5x5) apagava traços de 1-2 px
+            // e nitidez depois não recupera. Agora o borrão só entra no estilo "semmoire"; o padrão do Tela tira só a cor do moiré.
             val realcada = if (estilo == "original") saida else if (tela) {
-                val semMoire = suavizaMoire(saida); if (semMoire !== saida) saida.recycle()
-                val r = realcaTela(semMoire); if (r !== semMoire) semMoire.recycle(); r
+                val base = if (estilo == "semmoire") { val s = suavizaMoire(saida); if (s !== saida) saida.recycle(); s } else { val s = dessaturaLeve(saida); if (s !== saida) saida.recycle(); s }
+                val r = realcaTela(base); if (r !== base) base.recycle(); r
             } else {
-                val r = realca(saida); if (r !== saida) saida.recycle(); r
+                val r = realca(saida, texto = estilo == "texto"); if (r !== saida) saida.recycle(); r
             }
-            // nitidez leve na luminância depois do realce: a letra miúda recupera contorno (medido no acabamento das selfies, q 3,0; aqui 1,5)
-            val realcadaNitida = if (estilo == "original") realcada else Fusao.nitidezLeve(realcada, 1.5f)
+            // nitidez gaussiana pequena com limiar de ruído (Codex: sigma 0,7, quantidade 0,8, ignora resíduo < 3, teto ±20), não a caixa 3x3 das selfies
+            val realcadaNitida = if (estilo == "original") realcada else Fusao.nitidezTexto(realcada)
             val pronta = if (estilo == "pb") {
                 val w = realcadaNitida.width; val h = realcadaNitida.height
                 val px = IntArray(w * h).also { realcadaNitida.getPixels(it, 0, w, 0, 0, w, h) }; realcadaNitida.recycle()
                 for (i in px.indices) { val v = luma(px[i]); px[i] = (0xFF shl 24) or (v shl 16) or (v shl 8) or v }
                 Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
             } else realcadaNitida
-            contexto.contentResolver.openOutputStream(uri, "wt")?.use { pronta.compress(Bitmap.CompressFormat.JPEG, 92, it) } ?: return@runCatching null
+            val pw2 = pronta.width; val ph2 = pronta.height
+            contexto.contentResolver.openOutputStream(uri, "wt")?.use { pronta.compress(Bitmap.CompressFormat.JPEG, 94, it) } ?: return@runCatching null
             pronta.recycle()
-            Resultado(recortou, if (recortou) metodo else "nenhum")
+            Resultado(recortou, if (recortou) metodo else "nenhum", pw2, ph2, fonteLado)
         }.getOrNull()
     }
 
@@ -293,6 +306,29 @@ object Documento {
             if (cruz <= 1e-5f) return false
         }
         return true
+    }
+
+    /** Sauvola suave: T = m(1 + k(s/128 − 1)); u = clamp((L − T + d)/2d); S = 255·u²(3−2u); saída = (L + S)/2. Somas deslizantes separáveis em Int. */
+    private fun sauvolaSuave(l: IntArray, w: Int, h: Int, r: Int): IntArray {
+        val n = w * h
+        val q = IntArray(n) { l[it] * l[it] }
+        val soma = somaCaixa(l, w, h, r); val soma2 = somaCaixa(q, w, h, r); val cont = somaCaixa(IntArray(n) { 1 }, w, h, r)
+        val k = 0.2f; val d = 16f
+        return IntArray(n) { i ->
+            val c = cont[i].toFloat(); val m = soma[i] / c; val v = soma2[i] / c - m * m; val s = if (v > 0f) sqrt(v) else 0f
+            val t = m * (1f + k * (s / 128f - 1f))
+            val u = ((l[i] - t + d) / (2 * d)).coerceIn(0f, 1f); val sv = 255f * u * u * (3f - 2f * u)
+            ((l[i] + sv) / 2f).toInt().coerceIn(0, 255)
+        }
+    }
+    /** Soma em janela (2r+1)² por passagens separáveis (janela 41 x 255² cabe em Int). */
+    private fun somaCaixa(a: IntArray, w: Int, h: Int, r: Int): IntArray {
+        val t = IntArray(a.size); val o = IntArray(a.size)
+        for (y in 0 until h) { val l = y * w; var s = 0; for (x in 0 until min(w, r)) s += a[l + x]
+            for (x in 0 until w) { if (x + r < w) s += a[l + x + r]; if (x - r - 1 >= 0) s -= a[l + x - r - 1]; t[l + x] = s } }
+        for (x in 0 until w) { var s = 0; for (y in 0 until min(h, r)) s += t[y * w + x]
+            for (y in 0 until h) { if (y + r < h) s += t[(y + r) * w + x]; if (y - r - 1 >= 0) s -= t[(y - r - 1) * w + x]; o[y * w + x] = s } }
+        return o
     }
 
     private fun luma(c: Int) = ((c shr 16 and 255) * 30 + (c shr 8 and 255) * 59 + (c and 255) * 11) / 100
@@ -544,9 +580,13 @@ object Documento {
         val opts = BitmapFactory.Options().apply { inSampleSize = amostra }
         val bruto = contexto.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) } ?: return null
         val rot = contexto.contentResolver.openInputStream(uri)?.use { ExifInterface(it).rotationDegrees } ?: 0
-        if (rot == 0) return bruto
-        val girado = Bitmap.createBitmap(bruto, 0, 0, bruto.width, bruto.height, Matrix().apply { postRotate(rot.toFloat()) }, true)
-        if (girado !== bruto) bruto.recycle()
+        // teto exato (Codex 17/09: com só inSampleSize, fonte de 4608 px pedida a 2400 ficava em 4608 = memória e tempo)
+        val ladoBruto = max(bruto.width, bruto.height)
+        val certo = if (ladoBruto > ladoMax * 1.04f) { val e = ladoMax.toFloat() / ladoBruto
+            Bitmap.createScaledBitmap(bruto, max(1, (bruto.width * e).toInt()), max(1, (bruto.height * e).toInt()), true).also { if (it !== bruto) bruto.recycle() } } else bruto
+        if (rot == 0) return certo
+        val girado = Bitmap.createBitmap(certo, 0, 0, certo.width, certo.height, Matrix().apply { postRotate(rot.toFloat()) }, true)
+        if (girado !== certo) certo.recycle()
         return girado
     }
 
@@ -556,7 +596,7 @@ object Documento {
      * escalados pela mesma razão Y'/Y, então a cor fica. Documento colorido (muita saturação) recebe
      * branco mais brando (1%) do que folha de texto (8%).
      */
-    private fun realca(b: Bitmap): Bitmap {
+    private fun realca(b: Bitmap, texto: Boolean = false): Bitmap {
         val w = b.width; val h = b.height
         val px = IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) }
         val y0 = IntArray(w * h); var satAcum = 0L
@@ -574,9 +614,12 @@ object Documento {
         val corteBranco = if (colorido) 0.01 else 0.08
         acc = 0; for (i in 255 downTo 0) { acc += hist[i]; if (acc >= n * corteBranco) { hi = i; break } }
         val tabela = if (hi - lo >= 40) IntArray(256) { ((it - lo) * 255 / (hi - lo)).coerceIn(0, 255) } else IntArray(256) { it }
+        // estilo Texto (Codex): limiar local suave de Sauvola misturado meio a meio com a luminância corrigida; preserva cinzas
+        // nas bordas (não é binarização). Janela 41 px a 3200 px, k 0,2, transição d 16, alfa 0,5 — pontos de partida para A/B.
+        val textoY: IntArray? = if (texto) sauvolaSuave(y1, w, h, max(7, (20f * max(w, h) / 3200f).toInt())) else null
         for (i in px.indices) {
             val c = px[i]; val r = c shr 16 and 255; val g = c shr 8 and 255; val bl = c and 255
-            val alvo = tabela[y1[i]]; val base = max(1, y0[i])
+            val alvo = if (textoY != null) tabela[textoY[i]] else tabela[y1[i]]; val base = max(1, y0[i])
             var rr = (r * alvo / base).coerceIn(0, 255); var gg = (g * alvo / base).coerceIn(0, 255); var bb = (bl * alvo / base).coerceIn(0, 255)
             // papel claro vai para o neutro: a sombra tem cor diferente da luz (nota do BK, 16/09: rosado onde havia sombra);
             // acima de 180 de luminância a saturação cai até 75%. Texto e logos escuros não mudam; documento colorido, menos.
