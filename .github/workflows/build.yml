@@ -21,6 +21,8 @@ jobs:
           echo "CAMERA_KEYSTORE_SENHA=${{ secrets.SIGNING_KEY_PASSWORD }}" >> "$GITHUB_ENV"
           echo "TELEMETRIA_TOKEN=${{ secrets.TELEMETRIA_TOKEN }}" >> "$GITHUB_ENV"
       - name: Build (release assinado, compactado com R8)
+        env:
+          MELHORAR_TOKEN: ${{ secrets.MELHORAR_TOKEN }}
         run: gradle :app:assembleRelease --no-daemon
       # Artifact é best-effort (cota de storage já estourou no passado); a entrega de verdade é o
       # release "ultimo", cujo asset não conta na cota e tem link fixo.

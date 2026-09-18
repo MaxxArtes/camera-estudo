@@ -110,6 +110,58 @@ object Fotos {
         }
     }
 
+    suspend fun salvarMelhorada(contexto: Context, original: Midia, bitmap: android.graphics.Bitmap, largura: Int, altura: Int): Uri =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            if (largura <= 0 || altura <= 0 || largura.toLong() * altura > 60_000_000) throw ErroMelhoramento("IMAGEM_GRANDE")
+            val resolver = contexto.contentResolver
+            val valores = novaEntrada().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, original.nome.substringBeforeLast('.', original.nome) + "_ia.jpg")
+                put(MediaStore.MediaColumns.WIDTH, largura)
+                put(MediaStore.MediaColumns.HEIGHT, altura)
+                if (Build.VERSION.SDK_INT >= 29) put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            // No Android 8/9, reserva um caminho único para nunca substituir a original.
+            val arquivo = if (Build.VERSION.SDK_INT < 29) {
+                @Suppress("DEPRECATION")
+                val pasta = java.io.File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), PASTA)
+                if (!pasta.isDirectory && !pasta.mkdirs()) throw java.io.IOException()
+                val base = original.nome.substringBeforeLast('.', original.nome).replace(Regex("[^\\p{L}\\p{N}_-]"), "_")
+                var candidato = java.io.File(pasta, "${base}_ia.jpg")
+                var indice = 1
+                while (!candidato.createNewFile()) { candidato = java.io.File(pasta, "${base}_${indice++}_ia.jpg") }
+                @Suppress("DEPRECATION")
+                valores.put(MediaStore.MediaColumns.DATA, candidato.absolutePath)
+                valores.put(MediaStore.MediaColumns.DISPLAY_NAME, candidato.name)
+                candidato
+            } else null
+            var uri: Uri? = null
+            try {
+                val destino = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, valores) ?: throw java.io.IOException()
+                uri = destino
+                val ajustado = android.graphics.Bitmap.createScaledBitmap(bitmap, largura, altura, true)
+                try {
+                    resolver.openOutputStream(destino, "w")?.use {
+                        if (!ajustado.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, it)) throw java.io.IOException()
+                    } ?: throw java.io.IOException()
+                } finally { if (ajustado !== bitmap) ajustado.recycle() }
+                resolver.openFileDescriptor(destino, "rw")?.use {
+                    val exif = androidx.exifinterface.media.ExifInterface(it.fileDescriptor)
+                    exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_SOFTWARE, "Camera Estudo ${BuildConfig.VERSION_NAME} (melhorado online, snapedit-enhance-v1)")
+                    exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION, "1")
+                    exif.saveAttributes()
+                } ?: throw java.io.IOException()
+                if (Build.VERSION.SDK_INT >= 29) {
+                    val publicado = resolver.update(destino, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
+                    if (publicado != 1) throw java.io.IOException()
+                }
+                destino
+            } catch (erro: Throwable) {
+                uri?.let { apagar(contexto, it) }
+                arquivo?.delete()
+                throw erro
+            }
+        }
+
     fun apagar(contexto: Context, uri: Uri): Boolean =
         runCatching { contexto.contentResolver.delete(uri, null, null) > 0 }.getOrDefault(false)
 

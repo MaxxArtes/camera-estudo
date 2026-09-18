@@ -16,6 +16,25 @@ import kotlin.math.max
  * Nada aqui identifica ninguém; a identificação é o Pessoas.kt.
  */
 object Rostos {
+    enum class Presenca { Detectado, NaoDetectado, Falha }
+
+    suspend fun verificarOnline(bitmap: Bitmap): Presenca = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+        val detector = FaceDetection.getClient(opcoes)
+        try {
+            kotlinx.coroutines.suspendCancellableCoroutine { continuacao ->
+                detector.process(InputImage.fromBitmap(bitmap, 0))
+                    .addOnSuccessListener { faces ->
+                        if (continuacao.isActive) continuacao.resumeWith(Result.success(if (faces.isEmpty()) Presenca.NaoDetectado else Presenca.Detectado))
+                    }
+                    .addOnFailureListener {
+                        if (continuacao.isActive) continuacao.resumeWith(Result.success(Presenca.Falha))
+                    }
+            }
+        } catch (erro: kotlinx.coroutines.CancellationException) { throw erro }
+        catch (_: Exception) { Presenca.Falha }
+        finally { detector.close() }
+    }
+
     class Rosto(val caixa: Rect, val olhosAbertos: Float, val sorriso: Float, val olhoEsq: PointF?, val olhoDir: PointF?)
 
     private val opcoes = FaceDetectorOptions.Builder()

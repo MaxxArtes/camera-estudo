@@ -11,11 +11,12 @@ android {
         applicationId = "br.maxymus.cameraestudo"
         minSdk = 26
         targetSdk = 34
-        versionCode = 66
-        versionName = "0.66"
+        versionCode = 67
+        versionName = "0.67"
         // Só arm64: todo celular Android de 2017 em diante. Sem isto o ML Kit traz 20 MB de
         // biblioteca nativa por arquitetura (x86, x86_64, armeabi-v7a) que ninguém usa no aparelho.
         ndk { abiFilters += listOf("arm64-v8a") }
+        buildConfigField("String", "MELHORAR_TOKEN", "\"" + (System.getenv("MELHORAR_TOKEN") ?: "").replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r") + "\"")
         // token da telemetria vem do CI (secret TELEMETRIA_TOKEN); sem ele o app não envia nada
         buildConfigField("String", "TELEMETRIA_TOKEN", "\"" + (System.getenv("TELEMETRIA_TOKEN") ?: "") + "\"")
     }

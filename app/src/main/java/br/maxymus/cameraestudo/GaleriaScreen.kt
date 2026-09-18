@@ -20,6 +20,8 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
@@ -89,12 +91,15 @@ fun GaleriaScreen(voltar: () -> Unit) {
     var escala by remember { mutableStateOf(1f) }
     var desloc by remember { mutableStateOf(Offset.Zero) }
     val escopo = rememberCoroutineScope()
+    val redeValidada by lembrarRedeValidada()
+    val versaoGaleria by FluxoMelhorar.versaoGaleria.collectAsStateWithLifecycle()
+    TelaMelhorar()
     fun compartilhaPdf(uri: Uri) {
         val envio = Intent(Intent.ACTION_SEND).apply { type = "application/pdf"; putExtra(Intent.EXTRA_STREAM, uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         contexto.startActivity(Intent.createChooser(envio, "PDF"))
     }
 
-    LaunchedEffect(Unit) { midias = Fotos.listar(contexto) }
+    LaunchedEffect(versaoGaleria) { midias = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { Fotos.listar(contexto) } }
     // botão voltar do sistema: foto aberta -> grade; seleção -> cancela; grade -> câmera
     BackHandler { when { aberta != null -> aberta = null; selecionando -> { selecionando = false; selecionadas = emptyList() }; else -> voltar() } }
 
@@ -184,6 +189,15 @@ fun GaleriaScreen(voltar: () -> Unit) {
                     Box(modifier = Modifier.size(72.dp).background(Color(0x99000000), MaterialTheme.shapes.extraLarge).clickable {
                         contexto.startActivity(Intent(Intent.ACTION_VIEW).apply { setDataAndType(atual.uri, "video/mp4"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) })
                     }, contentAlignment = Alignment.Center) { Icon(Icons.Filled.PlayArrow, contentDescription = "Reproduzir", tint = Color.White, modifier = Modifier.size(40.dp)) }
+                }
+            }
+            if (!atual.ehVideo && BuildConfig.MELHORAR_TOKEN.isNotBlank()) {
+                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                    TextButton(enabled = redeValidada, onClick = { FluxoMelhorar.iniciar(contexto, atual) }) {
+                        Icon(Icons.Filled.AutoFixHigh, contentDescription = null)
+                        Text("Melhorar (IA online)", Modifier.padding(start = 8.dp))
+                    }
+                    if (!redeValidada) Text("Conecte-se à internet para usar IA online.", color = Color.White, modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
                 }
             }
             Row(modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(vertical = 10.dp), horizontalArrangement = Arrangement.SpaceEvenly) {

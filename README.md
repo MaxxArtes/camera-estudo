@@ -127,3 +127,8 @@ assinatura é fixa (keystore nos secrets do repo), instala por cima. Código em 
 1. Trocar `ImageCapture` por `ImageAnalysis` e desenhar algo sobre a imagem ao vivo.
 2. Gravar vídeo com `VideoCapture`.
 3. Reescrever a tela com Camera2 direto e comparar o tamanho do código.
+
+## IA online
+Na foto aberta da galeria, “Melhorar (IA online)” envia somente a foto autorizada naquele momento ao servidor do Camera Estudo e ao SnapEdit (SilverAI). O envio usa JPEG reduzido (lado maior até 1200 px), sem EXIF ou GPS; informações visíveis na própria imagem continuam presentes. A verificação de rostos é local e apresenta um aviso, sem bloquear. Cada foto exige consentimento, e mudanças na política exigem novo aceite. Há comparação Original/Melhorada antes de salvar uma nova cópia com sufixo `_ia`, nas dimensões orientadas da original, em Imagens/CameraEstudo. “Desfazer” apaga apenas essa cópia. A IA pode alterar detalhes e rostos. Não há fila offline nem reenvio automático; cancelar fecha a conexão, mas um pedido já recebido pode consumir cota. O botão exige internet validada e só aparece em builds com `MELHORAR_TOKEN` configurado no CI. A política está em https://pocketlm.maxymus.dev.br/camera/privacidade.
+
+A IA online é independente da telemetria: a telemetria nunca envia imagens, e desligá-la não substitui o consentimento por foto da IA online. O token incluído no APK não é segredo; a cota e os limites são controlados pelo servidor.
