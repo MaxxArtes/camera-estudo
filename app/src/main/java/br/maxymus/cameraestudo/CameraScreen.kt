@@ -123,6 +123,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -690,7 +694,9 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 IconButton(onClick = { flash = proximoFlash(flash) }) {
                     Icon(iconeFlash(flash), contentDescription = "Flash", tint = if (flash == ImageCapture.FLASH_MODE_OFF) Color.White else Amarelo)
                 }
-                Box(modifier = Modifier.size(40.dp).clip(CircleShape).clickable { timer = when (timer) { 0 -> 3; 3 -> 10; else -> 0 } }, contentAlignment = Alignment.Center) {
+                Box(modifier = Modifier.size(40.dp).clip(CircleShape)
+                    .semantics { contentDescription = "Alterar temporizador"; stateDescription = when (timer) { 0 -> "Desativado"; 3 -> "3 segundos"; else -> "10 segundos" } }
+                    .clickable(role = Role.Button) { timer = when (timer) { 0 -> 3; 3 -> 10; else -> 0 } }, contentAlignment = Alignment.Center) {
                     IconeTimer(timer, if (timer > 0) Amarelo else Color.White)
                 }
                 Box(modifier = Modifier.size(40.dp).clip(CircleShape).clickable { proporcao = if (proporcao == AspectRatio.RATIO_16_9) AspectRatio.RATIO_4_3 else AspectRatio.RATIO_16_9 }, contentAlignment = Alignment.Center) {
@@ -941,15 +947,20 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 28.dp, vertical = 18.dp),
                 horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(modifier = Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF222222)).clickable(onClick = abrirGaleria)) {
-                    if (ultima != null) AsyncImage(model = ultima, contentDescription = "Última", contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                Box(modifier = Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF222222))
+                    .semantics { contentDescription = "Abrir galeria" }.clickable(onClick = abrirGaleria, role = Role.Button)) {
+                    if (ultima != null) AsyncImage(model = ultima, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                 }
                 val gravando = gravacao != null
                 Box(
                     modifier = Modifier.size(80.dp).clip(CircleShape).border(3.dp, Color.White, CircleShape).padding(6.dp)
                         .clip(if (gravando) RoundedCornerShape(10.dp) else CircleShape)
                         .background(when { gravando -> Rosa; modo.video -> Rosa; ocupado || processandoLenta || processandoDoc -> Color.Gray; else -> Color.White })
-                        .clickable { disparar() }
+                        .semantics {
+                            contentDescription = when { gravando -> "Parar gravação de vídeo"; modo.video -> "Iniciar gravação de vídeo"; else -> "Tirar foto" }
+                            if (!gravando && (ocupado || processandoLenta || processandoDoc)) stateDescription = "Processando"
+                        }
+                        .clickable(role = Role.Button) { disparar() }
                 )
                 Box(modifier = Modifier.size(52.dp).clip(CircleShape).background(Color(0x33FFFFFF)).clickable {
                     if (gravacao == null) lente = if (lente == CameraSelector.LENS_FACING_BACK) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
