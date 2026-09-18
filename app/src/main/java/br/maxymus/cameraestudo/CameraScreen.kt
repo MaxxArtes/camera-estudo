@@ -104,6 +104,7 @@ import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Tonality
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.PhotoSizeSelectLarge
 import androidx.compose.material.icons.filled.WbSunny
@@ -208,6 +209,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var extensao by remember { mutableIntStateOf(ExtensionMode.NONE) }
     var extensoesDisponiveis by remember { mutableStateOf(listOf(ExtensionMode.NONE)) }
     var qualidadeMax by remember { mutableStateOf(true) }
+    // Noite: "Aparelho" = deixa o HAL fazer a foto escura em 12 MP (captura única, qualidade máxima); "Clássico" = nossa fusão. Teste A/B (Astra, 18/09).
+    var noiteAparelho by remember { mutableStateOf(false) }
     var desfoque by remember { mutableIntStateOf(5) }                   // Retrato por software: 1..10
     var resolucao by remember { mutableIntStateOf(1) }                 // lado maior da fusão: 0 rápida, 1 padrão, 2 alta
     // acabamento (como na câmera da Xiaomi): embelezador 0..100 e filtro por matriz de cor, aplicados depois da captura
@@ -276,7 +279,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         }
     }
     // rajada/HDR nossos pedem latência mínima (quadros próximos); foto simples com "Qualidade" deixa o HAL processar
-    val capturaRapida = !qualidadeMax || rajada || hdr
+    val capturaRapida = !qualidadeMax || rajada || (hdr && !noiteAparelho)   // Noite Aparelho: HDR não usa a fusão, então a captura é em qualidade máxima
     val imageCapture = remember(proporcao, capturaRapida) {
         @Suppress("DEPRECATION")
         ImageCapture.Builder().setCaptureMode(if (capturaRapida) ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY else ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY).setTargetAspectRatio(proporcao).build()
@@ -587,14 +590,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                             when { bracketReal -> Fusao.hdr(bitmaps, reciclar = true); noite -> Fusao.noite(bitmaps, reciclar = true, dessatura = if (muitoEscuro) 0.3f else 0.1f, notaQuadro = Rostos::notaOlhos); else -> Fusao.rajada(bitmaps, reciclar = true, notaQuadro = Rostos::notaOlhos) }
                         }
                     val retratoSw = modo == Modo.RETRATO && !bokehNativo
-                    val pronto = Fusao.gira(if (scanner || retratoSw) fundido else {
-                        val nitido = Fusao.nitidezLeve(fundido)
-                        if (Pessoas.ligado) { val girado = Fusao.gira(nitido, quadros[0].second); val rec = Pessoas.processar(contexto, girado)
-                            Telemetria.evento("rostos", mapOf("n" to rec.reconhecidos.size, "reconhecidos" to rec.reconhecidos.count { it.pessoa != null && !it.novo }, "novos" to rec.reconhecidos.count { it.novo }, "pele_correcao" to Math.round(rec.correcaoPele * 10) / 10.0, "modo" to "sequencia"))
-                            // já girado: desfaz para o gira() abaixo não girar duas vezes
-                            Fusao.gira(Acabamento.aplicar(girado, filtro, embelezar), (360 - quadros[0].second) % 360)
-                        } else Acabamento.aplicar(nitido, filtro, embelezar)
-                    }, quadros[0].second)
+                    // a fusão salva só o quadro fundido e nítido; o acabamento (filtro, embelezador, Pessoas, auto-máscaras)
+                    // roda UMA vez depois, em aplicarEmArquivo. Antes rodava aqui também e o filtro/embelezador/Pessoas
+                    // saíam aplicados em dobro, com recompressão dupla (bug achado pelo Astra, 18/09).
+                    val pronto = Fusao.gira(if (scanner || retratoSw) fundido else Fusao.nitidezLeve(fundido), quadros[0].second)
                     val destino = contexto.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Fotos.novaEntrada())
                     if (destino != null) contexto.contentResolver.openOutputStream(destino)?.use { pronto.compress(Bitmap.CompressFormat.JPEG, 93, it) }
                     pronto.recycle()
@@ -628,7 +627,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         if (camera == null || ligando) { Toast.makeText(contexto, "A câmera ainda está abrindo; tente de novo.", Toast.LENGTH_SHORT).show(); return }
         // HDR e rajada valem na Foto e no Retrato por software (o bokeh nativo não aceita: a extensão captura sozinha)
         val retratoSoftware = modo == Modo.RETRATO && !bokehNativo
-        if ((modo == Modo.FOTO || retratoSoftware) && hdr) { tiraVarias(true); return }
+        if ((modo == Modo.FOTO || retratoSoftware) && hdr && !noiteAparelho) { tiraVarias(true); return }   // Noite Clássico funde; Aparelho cai na captura única abaixo
         if (rajada && !modo.video && (modo != Modo.RETRATO || retratoSoftware)) { tiraVarias(false); return }
         ocupado = true
         val tFoto = Telemetria.agora()
@@ -1026,6 +1025,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     } }
                     item { Ajuste(Icons.Filled.PhotoSizeSelectLarge, "Resolução", listOf("1300 px, rápida", "2000 px", "2600 px, alta")[resolucao], resolucao != 1) { resolucao = (resolucao + 1) % 3 } }
                     item { Ajuste(Icons.Filled.HighQuality, "Qualidade", if (qualidadeMax) "Máxima" else "Rápida", qualidadeMax) { qualidadeMax = !qualidadeMax } }
+                    item { Ajuste(Icons.Filled.DarkMode, "Noite", if (noiteAparelho) "Aparelho (12 MP)" else "Clássico (fusão)", noiteAparelho) { noiteAparelho = !noiteAparelho } }
                     item { Ajuste(Icons.Filled.HdrAuto, "HDR", if (hdr) "3 exposições" else "Desligado", hdr) { hdr = !hdr } }
                     item { Ajuste(Icons.Filled.BurstMode, "Rajada", if (rajada) "4 quadros" else "Desligada", rajada) { rajada = !rajada } }
                     item { Ajuste(Icons.Filled.Grid3x3, "Grade", if (grade) "Ativado" else "Desativado", grade) { grade = !grade } }
