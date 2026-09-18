@@ -53,19 +53,29 @@ def guarda(serial):
     status = int(m.group(1)) if m else 0
     if status > TERMICO_MAX:
         raise Aborta(f"estado térmico {status} (>{TERMICO_MAX})")
+    acordado = "mWakefulness=Awake" in sh(serial, "dumpsys power | grep -m1 mWakefulness=")
+    bloqueado = "mDreamingLockscreen=true" in sh(serial, "dumpsys window | grep -m1 mDreamingLockscreen")
+    if not acordado or bloqueado:
+        # regra do Astra: tela apagada não é autorização para testar; e o executor nunca acorda nem desbloqueia
+        raise Aborta("tela apagada ou bloqueada: esperar o dono desbloquear (o executor não acorda o aparelho)")
     frente = primeiro_plano(serial)
     return {"bateria": bat, "termico": status, "primeiro_plano_inicial": frente}
 
 
 def primeiro_plano(serial):
-    saida = sh(serial, "dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity'")
-    m = re.search(r" ([a-zA-Z0-9_.]+)/", saida)
-    return m.group(1) if m else "?"
+    for cmd in ("dumpsys activity activities | grep -m1 -E 'topResumedActivity|mResumedActivity'",
+                "dumpsys window | grep -m1 -E 'mCurrentFocus|mFocusedApp'"):
+        m = re.search(r" ([a-zA-Z0-9_.]+)/", sh(serial, cmd))
+        if m:
+            return m.group(1)
+    return "?"
 
 
 def dono_retomou(serial, esperado):
     """Se o primeiro plano virou um app que não é nosso, o dono pegou o celular: parar."""
     atual = primeiro_plano(serial)
+    if atual == "?":
+        return False, atual   # leitura falhou: não é prova de que o dono retomou; fica registrado
     return atual not in NOSSOS and atual != esperado, atual
 
 
