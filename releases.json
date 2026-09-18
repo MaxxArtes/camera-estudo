@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.70",
+      "build": 77,
+      "tag": "v0.70-build77",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.70-build77.apk",
+      "mudou": [
+        "Câmera: grava EXIF real (ISO, exposição, foco, abertura) e telemetria do sensor em toda foto; 0.70"
+      ]
+    },
+    {
       "versao": "0.69",
       "build": 76,
       "tag": "v0.69-build76",
@@ -622,11 +631,11 @@
       ]
     }
   ],
-  "versionName": "0.69",
-  "versionCode": 69,
-  "build": 76,
+  "versionName": "0.70",
+  "versionCode": 70,
+  "build": 77,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.69-build76.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.70-build77.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-18T18:55:22Z"
+  "publicadoEm": "2026-09-18T22:53:03Z"
 }
