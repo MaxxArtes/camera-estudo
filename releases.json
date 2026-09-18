@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.67",
+      "build": 74,
+      "tag": "v0.67-build74",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.67-build74.apk",
+      "mudou": [
+        "IA online: Melhorar foto pelo SnapEdit (consentimento por foto, cópia nova, cota no servidor); 0.67"
+      ]
+    },
+    {
       "versao": "0.66",
       "build": 73,
       "tag": "v0.66-build73",
@@ -595,11 +604,11 @@
       ]
     }
   ],
-  "versionName": "0.66",
-  "versionCode": 66,
-  "build": 73,
+  "versionName": "0.67",
+  "versionCode": 67,
+  "build": 74,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.66-build73.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.67-build74.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-17T19:46:25Z"
+  "publicadoEm": "2026-09-18T15:38:40Z"
 }
