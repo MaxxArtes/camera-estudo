@@ -24,8 +24,9 @@ entrada para até 1,1 MP. Zoom 4x (7 créditos) ainda não medido: fica para fot
 Créditos grátis do SnapEdit: 5/dia automáticos + check-in diário (8 a 20), zeram às 00:00 UTC (20:00 Cuiabá).
 
 ## Decisões
-- 0.68 / política v2: dois provedores no servidor, em ordem. SnapEdit primeiro (limpa ruído melhor), iLoveIMG
-  (chaves ILOVEAPI_PUBLIC_KEY/SECRET_KEY no Doppler) quando o SnapEdit está sem crédito, fora do ar ou no prazo.
+- 0.68 / política v2: dois provedores no servidor em REVEZAMENTO (dono, 18/09: "use os dois"): cada pedido vai
+  para o próximo da fila; se falhar por crédito, indisponibilidade ou prazo, o outro assume. Cota 8/dia.
+  Chaves iLove: ILOVEAPI_PUBLIC_KEY/SECRET_KEY no Doppler.
   A receita devolvida (snapedit-enhance-v1 | iloveimg-upscale-v1) vai para o EXIF da cópia. Capacidade grátis:
   SnapEdit 1 a 6 fotos/dia (check-in), iLoveIMG 125/mês. Fluxo iLove no servidor testado 18/09 16:2x UTC.
 - v1 = "Melhorar (IA online)" com SnapEdit enhance; a imagem devolvida é o resultado (o app redimensiona
