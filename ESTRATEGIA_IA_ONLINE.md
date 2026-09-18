@@ -16,11 +16,18 @@ e caneca esmaltada).
 | SnapEdit enhance 2x (entrada 900x1200) fones | 1800x2400 | 10,6 s | US$ 0,008 (4 créditos) | SSIM 0,996; nitidez 1,84->2,19; textura fina levemente "pintada" |
 | SnapEdit enhance 2x caneca | 1800x2400 | 37 s | US$ 0,008 | SSIM 0,999; ruído p20 0,68->0,50; bordas intactas |
 
+| iLoveIMG upscaleimage 2x (foto inteira 1800x2400) fones | 3600x4800 | 9,6 s | 20 créditos (2.500 grátis/mês) | SSIM 0,997; nitidez 1,84->2,01; ruído 3,48->3,18 |
+| iLoveIMG upscaleimage 2x caneca | 3600x4800 | 11 s | 20 créditos | SSIM 0,999; nitidez 0,67->0,74; ruído 0,68->0,71 (não limpa) |
+
 Limite do SnapEdit para 2x: recusa 1200x1600 (1,92 MP), aceita 900x1200 (1,08 MP). O servidor reduz a
 entrada para até 1,1 MP. Zoom 4x (7 créditos) ainda não medido: fica para fotos maiores que 1800x2400 (v1.1).
 Créditos grátis do SnapEdit: 5/dia automáticos + check-in diário (8 a 20), zeram às 00:00 UTC (20:00 Cuiabá).
 
 ## Decisões
+- 0.68 / política v2: dois provedores no servidor, em ordem. SnapEdit primeiro (limpa ruído melhor), iLoveIMG
+  (chaves ILOVEAPI_PUBLIC_KEY/SECRET_KEY no Doppler) quando o SnapEdit está sem crédito, fora do ar ou no prazo.
+  A receita devolvida (snapedit-enhance-v1 | iloveimg-upscale-v1) vai para o EXIF da cópia. Capacidade grátis:
+  SnapEdit 1 a 6 fotos/dia (check-in), iLoveIMG 125/mês. Fluxo iLove no servidor testado 18/09 16:2x UTC.
 - v1 = "Melhorar (IA online)" com SnapEdit enhance; a imagem devolvida é o resultado (o app redimensiona
   para as dimensões exatas da original orientada). Sem Gemini, sem mapa de ganho.
 - Original nunca é sobrescrita; cópia nova `<nome>_ia.jpg`, EXIF Software "(melhorado online, snapedit-enhance-v1)".
