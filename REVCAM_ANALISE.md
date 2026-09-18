@@ -43,3 +43,15 @@ minhas conclusões em separado; depois cruzei os três. Dados brutos em scratchp
 ## NÃO fazer (consenso)
 Motion Photos; tags vendor / SuperNight / Vidhance por JNI reverso; copiar ISO 2407 como "ideal"; aumentar
 resolução/qualidade às cegas; concluir que houve fusão noturna (as tags são catálogo, não execução desta foto).
+
+## Implementação (18/09)
+- **0.70:** EXIF real (ISO, exposição, foco, abertura) lido do CaptureResult do Preview (Exposicao.kt) e gravado
+  em toda foto (gravaExif); telemetria do sensor no evento "foto". Ressalva do Astra: os valores vêm do Preview,
+  aproximados, não do CaptureResult exato da still (aceitável; melhor que nulo).
+- **0.71:** conserto do acabamento duplo na fusão (filtro/embelezador/Pessoas rodavam na memória E em
+  aplicarEmArquivo); opção de gaveta "Noite: Clássico (fusão) / Aparelho (12 MP)" — Aparelho desliga a fusão no HDR
+  e usa captura única em qualidade máxima, para o A/B contra a nativa. Padrão continua Clássico (não regride).
+- **Pendente (0.72+):** Ultra HDR (OUTPUT_FORMAT_JPEG_ULTRA_HDR quando supportedOutputFormats anunciar; elegível só
+  sem acabamento/fusão/extensão; opção de gaveta + selo "Ultra HDR"); redução de croma só no Clássico se o A/B pedir.
+- **Validação pendente (precisa do celular aceso):** confirmar EXIF na 0.70; A/B do Noite Clássico x Aparelho x
+  nativa na mesma cena; conferir gain map da 0.72. O Doze/indisponibilidade do celular tem travado o teste ao vivo.
