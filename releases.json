@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.71",
+      "build": 78,
+      "tag": "v0.71-build78",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.71-build78.apk",
+      "mudou": [
+        "Câmera batch 2: conserta acabamento duplo na fusão; opção Noite Clássico/Aparelho (12 MP); 0.71"
+      ]
+    },
+    {
       "versao": "0.70",
       "build": 77,
       "tag": "v0.70-build77",
@@ -631,11 +640,11 @@
       ]
     }
   ],
-  "versionName": "0.70",
-  "versionCode": 70,
-  "build": 77,
+  "versionName": "0.71",
+  "versionCode": 71,
+  "build": 78,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.70-build77.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.71-build78.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-18T22:53:03Z"
+  "publicadoEm": "2026-09-18T23:26:30Z"
 }
