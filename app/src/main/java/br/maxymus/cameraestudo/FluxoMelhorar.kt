@@ -21,7 +21,7 @@ sealed interface EstadoMelhorar {
     data object Enviando : EstadoMelhorar
     data object Aguardando : EstadoMelhorar
     data object Aplicando : EstadoMelhorar
-    data class Resultado(val bitmap: Bitmap, val original: Uri, val restantes: Int, val renovacao: String, val copia: Uri? = null, val salvando: Boolean = false, val erroSalvar: String? = null) : EstadoMelhorar
+    data class Resultado(val bitmap: Bitmap, val original: Uri, val restantes: Int, val renovacao: String, val receita: String, val copia: Uri? = null, val salvando: Boolean = false, val erroSalvar: String? = null) : EstadoMelhorar
     data object SemDiferenca : EstadoMelhorar
     data class Falha(val codigo: String) : EstadoMelhorar
     data class Cota(val renovacao: String) : EstadoMelhorar
@@ -83,7 +83,7 @@ object FluxoMelhorar {
                 }
                 mutavel.value = EstadoMelhorar.Aplicando
                 val igual = withContext(Dispatchers.Default) { resultado.bitmap.sameAs(preparada.previa) }
-                mutavel.value = if (igual) EstadoMelhorar.SemDiferenca else EstadoMelhorar.Resultado(resultado.bitmap, alvo.uri, resultado.restantes, resultado.renovacao)
+                mutavel.value = if (igual) EstadoMelhorar.SemDiferenca else EstadoMelhorar.Resultado(resultado.bitmap, alvo.uri, resultado.restantes, resultado.renovacao, resultado.receita)
             } catch (erro: ErroMelhoramento) {
                 if (erro.codigo != "PRIVACY_VERSION_CHANGED") throw erro
                 mutavel.value = EstadoMelhorar.Preparando
@@ -101,7 +101,7 @@ object FluxoMelhorar {
         mutavel.value = resultado.copy(salvando = true, erroSalvar = null)
         trabalho = escopo.launch {
             try {
-                val copia = Fotos.salvarMelhorada(app, alvo, resultado.bitmap, preparada.largura, preparada.altura)
+                val copia = Fotos.salvarMelhorada(app, alvo, resultado.bitmap, preparada.largura, preparada.altura, resultado.receita)
                 atualizacoes.value += 1
                 mutavel.value = resultado.copy(copia = copia)
             } catch (_: OutOfMemoryError) {

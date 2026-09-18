@@ -110,7 +110,7 @@ object Fotos {
         }
     }
 
-    suspend fun salvarMelhorada(contexto: Context, original: Midia, bitmap: android.graphics.Bitmap, largura: Int, altura: Int): Uri =
+    suspend fun salvarMelhorada(contexto: Context, original: Midia, bitmap: android.graphics.Bitmap, largura: Int, altura: Int, receita: String): Uri =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             if (largura <= 0 || altura <= 0 || largura.toLong() * altura > 60_000_000) throw ErroMelhoramento("IMAGEM_GRANDE")
             val resolver = contexto.contentResolver
@@ -146,7 +146,7 @@ object Fotos {
                 } finally { if (ajustado !== bitmap) ajustado.recycle() }
                 resolver.openFileDescriptor(destino, "rw")?.use {
                     val exif = androidx.exifinterface.media.ExifInterface(it.fileDescriptor)
-                    exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_SOFTWARE, "Camera Estudo ${BuildConfig.VERSION_NAME} (melhorado online, snapedit-enhance-v1)")
+                    exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_SOFTWARE, "Camera Estudo ${BuildConfig.VERSION_NAME} (melhorado online, $receita)")
                     exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_ORIENTATION, "1")
                     exif.saveAttributes()
                 } ?: throw java.io.IOException()

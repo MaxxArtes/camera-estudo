@@ -46,7 +46,7 @@ fun TelaMelhorar() {
             title = { Text("Melhorar foto com IA online?") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("Somente esta foto será enviada, em uma cópia reduzida e sem metadados EXIF ou GPS, ao servidor do Camera Estudo e SnapEdit (SilverAI). O conteúdo visível na imagem continuará presente. O tratamento e a retenção seguem a política de privacidade disponível abaixo. A detecção de rostos acontece no aparelho.")
+                    Text("Somente esta foto será enviada, em uma cópia reduzida e sem metadados EXIF ou GPS, ao servidor do Camera Estudo e a um dos provedores de melhoria nomeados na política (SnapEdit/SilverAI ou iLoveIMG/iLovePDF). O conteúdo visível na imagem continuará presente. O tratamento e a retenção seguem a política de privacidade disponível abaixo. A detecção de rostos acontece no aparelho.")
                     Text("A IA pode alterar detalhes, texturas e traços de pessoas. Confira a comparação antes de salvar. A original será preservada e só será criada uma cópia se você escolher Salvar cópia.")
                     Text(when (atual.rostos) {
                         Rostos.Presenca.Detectado -> "Detectamos rosto nesta foto. O rosto também será enviado e a IA pode alterar sua aparência. Envie apenas se você tiver autorização das pessoas retratadas."

@@ -24,11 +24,13 @@ data class UsoOnline(val unidadesCobradas: Int, val restantes: Int, val renovaca
 class ErroMelhoramento(val codigo: String, val uso: UsoOnline? = null) : Exception(codigo)
 data class CapacidadesOnline(val privacidade: String, val url: String, val habilitado: Boolean, val restantes: Int, val renovacao: String)
 data class FotoOnline(val previa: Bitmap, val jpeg: ByteArray, val largura: Int, val altura: Int)
-data class ResultadoOnline(val bitmap: Bitmap, val restantes: Int, val renovacao: String)
+data class ResultadoOnline(val bitmap: Bitmap, val restantes: Int, val renovacao: String, val receita: String)
 
 object MelhoramentoOnline {
     const val BASE = "https://pocketlm.maxymus.dev.br"
     private const val MAX_RESPOSTA = 6 * 1024 * 1024
+    // receitas que o servidor pode devolver; cada uma é um provedor nomeado na política de privacidade
+    val RECEITAS = setOf("snapedit-enhance-v1", "iloveimg-upscale-v1")
     private val executor = Executors.newCachedThreadPool()
 
     suspend fun preparar(ctx: Context, uri: Uri): FotoOnline = withContext(Dispatchers.IO) {
@@ -91,7 +93,8 @@ object MelhoramentoOnline {
         val j = JSONObject(requisicao("/camera/melhorar", corpo, id, aguardando = aguardando))
         if (j.getInt("api_version") != 1 || j.getString("request_id") != id || j.getString("status") != "ok") throw ErroMelhoramento("RESPOSTA_INVALIDA")
         val resultado = j.getJSONObject("result")
-        if (resultado.getString("kind") != "enhanced" || resultado.getString("recipe_version") != "snapedit-enhance-v1") throw ErroMelhoramento("RESPOSTA_INVALIDA")
+        val receita = resultado.getString("recipe_version")
+        if (resultado.getString("kind") != "enhanced" || receita !in RECEITAS) throw ErroMelhoramento("RESPOSTA_INVALIDA")
         val imagem = resultado.getJSONObject("image")
         if (imagem.getString("mime_type") != "image/jpeg") throw ErroMelhoramento("RESPOSTA_INVALIDA")
         val bytes = Base64.decode(imagem.getString("base64"), Base64.DEFAULT)
@@ -100,7 +103,7 @@ object MelhoramentoOnline {
         if (limites.outMimeType != "image/jpeg" || limites.outWidth != imagem.getInt("width") || limites.outHeight != imagem.getInt("height") || limites.outWidth <= 0 || limites.outHeight <= 0 || limites.outWidth.toLong() * limites.outHeight > 24_000_000) throw ErroMelhoramento("RESPOSTA_INVALIDA")
         val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: throw ErroMelhoramento("RESPOSTA_INVALIDA")
         val uso = j.getJSONObject("usage")
-        return ResultadoOnline(bitmap, uso.getInt("remaining"), uso.getString("reset_at"))
+        return ResultadoOnline(bitmap, uso.getInt("remaining"), uso.getString("reset_at"), receita)
     }
 
     private suspend fun requisicao(caminho: String, corpo: ByteArray? = null, id: String? = null, politica: Boolean = false, aguardando: () -> Unit = {}): String = withTimeout(120_000) {
