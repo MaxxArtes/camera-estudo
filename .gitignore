@@ -5,3 +5,7 @@ local.properties
 *.iml
 .idea/
 .kotlin/
+
+# evidências do executor de testes no celular (prints e logs): ficam só na bancada
+medicao/celular/
+__pycache__/
