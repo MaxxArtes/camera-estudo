@@ -2,7 +2,10 @@ package br.maxymus.cameraestudo
 
 import android.Manifest
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.CaptureResult
+import android.hardware.camera2.TotalCaptureResult
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
@@ -13,6 +16,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.runtime.DisposableEffect
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
@@ -262,6 +266,15 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
 
     // ---- objetos do CameraX ----
     val previewView = remember { PreviewView(contexto).apply { scaleType = PreviewView.ScaleType.FILL_CENTER } }
+    // lê ISO, exposição, foco e abertura reais do sensor a cada quadro da prévia; alimenta Exposicao (telemetria + EXIF)
+    val leituraSensor = remember {
+        object : CameraCaptureSession.CaptureCallback() {
+            override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+                Exposicao.registra(result.get(CaptureResult.SENSOR_SENSITIVITY), result.get(CaptureResult.SENSOR_EXPOSURE_TIME),
+                    result.get(CaptureResult.LENS_FOCAL_LENGTH), result.get(CaptureResult.LENS_APERTURE))
+            }
+        }
+    }
     // rajada/HDR nossos pedem latência mínima (quadros próximos); foto simples com "Qualidade" deixa o HAL processar
     val capturaRapida = !qualidadeMax || rajada || hdr
     val imageCapture = remember(proporcao, capturaRapida) {
@@ -286,7 +299,9 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         val provider = ProcessCameraProvider.getInstance(contexto).get()
         @Suppress("DEPRECATION")
         // vídeo grava em 16:9 (Quality.HIGHEST = 1080p); a prévia acompanha para o enquadramento bater com o arquivo (dono, 17/09)
-        val preview = Preview.Builder().setTargetAspectRatio(if (modo.video) AspectRatio.RATIO_16_9 else proporcao).build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+        val preview = Preview.Builder().setTargetAspectRatio(if (modo.video) AspectRatio.RATIO_16_9 else proporcao)
+            .also { b -> Camera2Interop.Extender(b).setSessionCaptureCallback(leituraSensor) }
+            .build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
         var seletor = CameraSelector.Builder().requireLensFacing(lente).build()
         bokehNativo = false
         if (modo == Modo.MACRO && lente == CameraSelector.LENS_FACING_BACK) {
@@ -622,7 +637,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             override fun onImageSaved(r: ImageCapture.OutputFileResults) {
                 val uri = r.savedUri
                 Telemetria.evento("foto", mapOf("modo" to modo.name.lowercase(), "ms" to Telemetria.ms(tFoto), "lente" to (if (lente == CameraSelector.LENS_FACING_FRONT) "frontal" else "traseira"),
-                    "flash" to flash, "zoom" to zoom, "bokeh_nativo" to bokehNativo, "iso" to proIso, "tempo_ns" to proTempoNs, "ev" to proEv, "ok" to (uri != null)))
+                    "flash" to flash, "zoom" to zoom, "bokeh_nativo" to bokehNativo, "iso" to (proIso ?: Exposicao.iso), "tempo_ns" to (proTempoNs ?: Exposicao.tempoNs), "foco_mm" to Exposicao.focoMm, "abertura" to Exposicao.aberturaF, "ev" to proEv, "ok" to (uri != null)))
                 if ((modo == Modo.DOCUMENTO || modo == Modo.TELA) && uri != null) {
                     trataDocumento(uri)
                 } else if (modo == Modo.RETRATO && !bokehNativo && uri != null) {

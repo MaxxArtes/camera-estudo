@@ -96,7 +96,11 @@ object Fotos {
         return (fotos + videos).sortedByDescending { it.data }.take(limite)
     }
 
-    /** EXIF nas fotos que o app monta (fusão, retrato): fabricante, modelo, software e data. Sem isso a origem se perde. */
+    /**
+     * EXIF nas fotos que o app monta (fusão, retrato, scanner, acabamento): fabricante, modelo, software, data
+     * e os parâmetros REAIS de exposição do sensor (ISO, tempo, foco, abertura), lidos do CaptureResult da câmera e
+     * guardados em [Exposicao]. Sem isso a origem e os parâmetros da foto se perdiam (a câmera do sistema grava tudo).
+     */
     fun gravaExif(contexto: Context, uri: Uri, software: String) {
         runCatching {
             contexto.contentResolver.openFileDescriptor(uri, "rw")?.use { fd ->
@@ -105,10 +109,21 @@ object Fotos {
                 exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_MODEL, Build.MODEL)
                 exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_SOFTWARE, software)
                 exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_DATETIME_ORIGINAL, SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(Date()))
+                Exposicao.iso?.let {
+                    exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY, it.toString())
+                    @Suppress("DEPRECATION")
+                    exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_ISO_SPEED_RATINGS, it.toString())
+                }
+                Exposicao.tempoNs?.let { exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_EXPOSURE_TIME, (it / 1_000_000_000.0).toString()) }
+                Exposicao.focoMm?.let { if (it > 0f) exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_FOCAL_LENGTH, racional(it)) }
+                Exposicao.aberturaF?.let { if (it > 0f) exif.setAttribute(androidx.exifinterface.media.ExifInterface.TAG_F_NUMBER, racional(it)) }
                 exif.saveAttributes()
             }
         }
     }
+
+    // ExifInterface guarda foco e abertura como racional; um decimal (5,15) vira "515/100".
+    private fun racional(v: Float): String = "${Math.round(v * 100)}/100"
 
     suspend fun salvarMelhorada(contexto: Context, original: Midia, bitmap: android.graphics.Bitmap, largura: Int, altura: Int, receita: String): Uri =
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
