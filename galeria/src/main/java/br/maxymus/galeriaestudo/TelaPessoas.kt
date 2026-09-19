@@ -229,8 +229,8 @@ private fun Vazio(texto: String) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun CelulaPessoa(p: Indice.Resumo, aoTocar: () -> Unit) {
-    Column(Modifier.fillMaxWidth().clickable(onClick = aoTocar), horizontalAlignment = Alignment.CenterHorizontally) {
+fun CelulaPessoa(p: Indice.Resumo, aoLongo: () -> Unit = {}, aoTocar: () -> Unit) {
+    Column(Modifier.fillMaxWidth().combinedClickable(onClick = aoTocar, onLongClick = aoLongo), horizontalAlignment = Alignment.CenterHorizontally) {
         Capa(p.id, 112.dp)
         Text(p.nome ?: "Sem nome", color = if (p.nome == null) Tema.Texto2 else Tema.Texto, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp))
         Text("${Midias.numero(p.fotos)} ${if (p.fotos == 1) "foto" else "fotos"}", color = Tema.Texto2, fontSize = 13.sp)
