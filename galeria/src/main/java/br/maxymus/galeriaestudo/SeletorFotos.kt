@@ -56,7 +56,7 @@ fun SeletorFotos(album: Long, midias: List<Midia>, aoFechar: () -> Unit, aoConcl
             IconButton(onClick = aoFechar) { Icon(Icons.Filled.Close, contentDescription = "Fechar", tint = Tema.Texto) }
             Column(Modifier.weight(1f)) {
                 Text("Adicionar fotos", color = Tema.Texto, fontSize = 18.sp)
-                if (selecionadas.isNotEmpty()) Text("${selecionadas.size} selecionada(s)", color = Tema.Texto2, fontSize = 13.sp)
+                if (selecionadas.isNotEmpty()) Text(Midias.selecionados(selecionadas.size), color = Tema.Texto2, fontSize = 13.sp)
             }
         }
         Box(Modifier.weight(1f)) {

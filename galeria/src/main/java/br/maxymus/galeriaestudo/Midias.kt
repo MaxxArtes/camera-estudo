@@ -49,6 +49,8 @@ object Midias {
         return FMT_ANO.format(z) to FMT_HORA.format(z)
     }
 
+    fun selecionados(n: Int): String = if (n == 1) "1 selecionado" else "$n selecionados"
+
     fun numero(n: Int): String = String.format(PT, "%,d", n)
 
     private val MESES = listOf("janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro")

@@ -141,12 +141,13 @@ fun TelaFotos(midias: List<Midia>, estado: LazyListState, parcial: Boolean, aoAb
         if (selecionando) {
             Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { sair() }) { Icon(Icons.Filled.Close, contentDescription = "Cancelar", tint = Tema.Texto) }
-                Text("${selecionadas.size} selecionada(s)", color = Tema.Texto, fontSize = 18.sp, modifier = Modifier.weight(1f))
+                Text(Midias.selecionados(selecionadas.size), color = Tema.Texto, fontSize = 18.sp, modifier = Modifier.weight(1f))
                 IconButton(enabled = selecionadas.isNotEmpty(), onClick = { excluirSel() }) {
                     Icon(Icons.Filled.Delete, contentDescription = "Excluir", tint = if (selecionadas.isNotEmpty()) Tema.Texto else Tema.Texto2)
                 }
-                IconButton(onClick = { selecionadas = if (selecionadas.size == midiasPeriodo.size) emptySet() else midiasPeriodo.map { it.id }.toSet() }) {
-                    Icon(Icons.Filled.SelectAll, contentDescription = "Selecionar tudo", tint = if (selecionadas.size == midiasPeriodo.size && midiasPeriodo.isNotEmpty()) Tema.Coral else Tema.Texto)
+                val todasSel = selecionadas.size == midiasPeriodo.size && midiasPeriodo.isNotEmpty()
+                TextButton(onClick = { selecionadas = if (todasSel) emptySet() else midiasPeriodo.map { it.id }.toSet() }) {
+                    Text(if (todasSel) "Desmarcar tudo" else "Selecionar tudo", color = Tema.Coral)
                 }
             }
         } else {

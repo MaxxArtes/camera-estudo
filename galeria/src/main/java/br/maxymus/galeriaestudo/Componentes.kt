@@ -148,13 +148,13 @@ fun Ladrilho(m: Midia, carregador: ImageLoader, selecionando: Boolean, marcada: 
     Box(modifier.aspectRatio(1f).background(Tema.Superficie).combinedClickable(onClick = aoTocar, onLongClick = aoLongo)) {
         AsyncImage(model = ImageRequest.Builder(ctx).data(m.uri).size(400).build(), imageLoader = carregador,
             contentDescription = null, contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize().then(if (marcada) Modifier.padding(10.dp) else Modifier))
+            modifier = Modifier.fillMaxSize())
         if (m.ehVideo && !selecionando) Row(Modifier.align(Alignment.BottomEnd).padding(4.dp).background(Color(0x99000000), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 1.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.PlayArrow, contentDescription = "Vídeo", tint = Color.White, modifier = Modifier.size(14.dp))
             Text(Midias.duracao(m.duracaoMs), color = Color.White, fontSize = 11.sp)
         }
         if (selecionando) {
-            if (marcada) Box(Modifier.fillMaxSize().border(3.dp, Tema.Coral))
+            if (marcada) Box(Modifier.fillMaxSize().background(Color(0x33000000)).border(2.dp, Tema.Coral))
             Icon(if (marcada) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked, contentDescription = null,
                 tint = if (marcada) Tema.Coral else Color(0xCCFFFFFF), modifier = Modifier.align(Alignment.TopStart).padding(4.dp).size(22.dp))
         }

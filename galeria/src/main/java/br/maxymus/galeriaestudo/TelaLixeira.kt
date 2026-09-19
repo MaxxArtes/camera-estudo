@@ -86,9 +86,9 @@ fun TelaLixeira(parcial: Boolean, voltar: () -> Unit, aoMudou: () -> Unit) {
     fun excluir() { val pi = Midias.pedidoExcluir(ctx, uris(selecionadas)) ?: return; lancExcluir.launch(IntentSenderRequest.Builder(pi.intentSender).build()) }
 
     Column(Modifier.fillMaxSize().background(Tema.Fundo).statusBarsPadding()) {
-        BarraSuperior(if (selecionadas.isEmpty()) "Lixeira" else "${selecionadas.size} selecionado(s)", voltar = voltar) {
-            if (itens.isNotEmpty()) androidx.compose.material3.IconButton(onClick = { selecionadas = if (selecionadas.size == itens.size) emptySet() else itens.map { it.midia.id }.toSet() }) {
-                Icon(Icons.Filled.SelectAll, contentDescription = "Selecionar tudo", tint = if (selecionadas.size == itens.size) Tema.Coral else Tema.Texto)
+        BarraSuperior(if (selecionadas.isEmpty()) "Lixeira" else Midias.selecionados(selecionadas.size), voltar = voltar) {
+            if (itens.isNotEmpty()) { val todasSel = selecionadas.size == itens.size
+                TextButton(onClick = { selecionadas = if (todasSel) emptySet() else itens.map { it.midia.id }.toSet() }) { Text(if (todasSel) "Desmarcar tudo" else "Selecionar tudo", color = Tema.Coral) }
             }
         }
         if (!semLixeira) FaixaAviso("O Android apaga os itens sozinho, em geral após cerca de 30 dias. O prazo pode variar.", null)

@@ -76,9 +76,10 @@ fun TelaAlbum(id: Long, porId: Map<Long, Midia>, versao: Int, voltar: () -> Unit
         if (selecionando) {
             Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { sair() }) { Icon(Icons.Filled.Close, contentDescription = "Cancelar", tint = Tema.Texto) }
-                Text("${selecionadas.size} selecionada(s)", color = Tema.Texto, fontSize = 18.sp, modifier = Modifier.weight(1f))
-                IconButton(onClick = { selecionadas = if (selecionadas.size == fotos.size) emptySet() else fotos.map { it.id }.toSet() }) {
-                    Icon(Icons.Filled.SelectAll, contentDescription = "Selecionar tudo", tint = if (selecionadas.size == fotos.size && fotos.isNotEmpty()) Tema.Coral else Tema.Texto)
+                Text(Midias.selecionados(selecionadas.size), color = Tema.Texto, fontSize = 18.sp, modifier = Modifier.weight(1f))
+                val todasSel = selecionadas.size == fotos.size && fotos.isNotEmpty()
+                TextButton(onClick = { selecionadas = if (todasSel) emptySet() else fotos.map { it.id }.toSet() }) {
+                    Text(if (todasSel) "Desmarcar tudo" else "Selecionar tudo", color = Tema.Coral)
                 }
             }
         } else {
