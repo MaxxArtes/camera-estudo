@@ -105,6 +105,7 @@ import androidx.compose.material.icons.filled.Timeline
 import androidx.compose.material.icons.filled.Tonality
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.HdrOn
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.PhotoSizeSelectLarge
 import androidx.compose.material.icons.filled.WbSunny
@@ -211,6 +212,9 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var qualidadeMax by remember { mutableStateOf(true) }
     // Noite: "Aparelho" = deixa o HAL fazer a foto escura em 12 MP (captura única, qualidade máxima); "Clássico" = nossa fusão. Teste A/B (Astra, 18/09).
     var noiteAparelho by remember { mutableStateOf(false) }
+    // Ultra HDR (gain map) na foto simples elegível, quando o aparelho anuncia suporte (Astra, 18/09)
+    var ultraHdrPref by remember { mutableStateOf(true) }
+    var ultraHdrSuportado by remember { mutableStateOf(false) }
     var desfoque by remember { mutableIntStateOf(5) }                   // Retrato por software: 1..10
     var resolucao by remember { mutableIntStateOf(1) }                 // lado maior da fusão: 0 rápida, 1 padrão, 2 alta
     // acabamento (como na câmera da Xiaomi): embelezador 0..100 e filtro por matriz de cor, aplicados depois da captura
@@ -280,9 +284,13 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     }
     // rajada/HDR nossos pedem latência mínima (quadros próximos); foto simples com "Qualidade" deixa o HAL processar
     val capturaRapida = !qualidadeMax || rajada || (hdr && !noiteAparelho)   // Noite Aparelho: HDR não usa a fusão, então a captura é em qualidade máxima
-    val imageCapture = remember(proporcao, capturaRapida) {
+    // Ultra HDR só na foto simples elegível: sem acabamento (que reescreve SDR), sem fusão e sem extensão
+    val ultraHdrEligivel = modo == Modo.FOTO && filtro == "Original" && embelezar == 0 && !Pessoas.ligado && !Acabamento.autoMascaras && !rajada && !hdr && extensao == ExtensionMode.NONE
+    val ultraHdrAtivo = ultraHdrPref && ultraHdrSuportado && ultraHdrEligivel
+    val imageCapture = remember(proporcao, capturaRapida, ultraHdrAtivo) {
         @Suppress("DEPRECATION")
-        ImageCapture.Builder().setCaptureMode(if (capturaRapida) ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY else ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY).setTargetAspectRatio(proporcao).build()
+        ImageCapture.Builder().setCaptureMode(if (capturaRapida) ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY else ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY).setTargetAspectRatio(proporcao)
+            .apply { if (ultraHdrAtivo) setOutputFormat(ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR) }.build()
     }
     val imageAnalysis = remember(proporcao) {
         @Suppress("DEPRECATION")
@@ -297,7 +305,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     LaunchedEffect(Unit) { ultima = Fotos.listar(contexto, limite = 1).firstOrNull()?.uri }
 
     // (Re)liga a câmera quando muda lente, modo ou proporção.
-    LaunchedEffect(lente, modo, proporcao, capturaRapida, extensao, retratoSoftware) {
+    LaunchedEffect(lente, modo, proporcao, capturaRapida, extensao, retratoSoftware, ultraHdrAtivo) {
         ligando = true
         val provider = ProcessCameraProvider.getInstance(contexto).get()
         @Suppress("DEPRECATION")
@@ -388,6 +396,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             else if (scannerVivo || retratoVivo) provider.bindToLifecycle(dono, seletor, preview, imageCapture, imageAnalysis)
             else provider.bindToLifecycle(dono, seletor, preview, imageCapture)
         }.onFailure { Telemetria.evento("erro", mapOf("onde" to "abrir_camera", "modo" to modo.name.lowercase(), "msg" to (it.message ?: ""))); Toast.makeText(contexto, "Não consegui abrir a câmera: ${it.message}", Toast.LENGTH_LONG).show() }.getOrNull()
+        // o aparelho diz se aceita Ultra HDR (CameraX 1.4+, câmera e configuração); só então o formato é pedido
+        ultraHdrSuportado = camera?.let { runCatching { ImageCapture.getImageCaptureCapabilities(it.cameraInfo).supportedOutputFormats.contains(ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR) }.getOrDefault(false) } ?: false
         // intensidade da extensão: o próprio aparelho diz se aceita (Android 14+, fabricante); só então a régua aparece
         forcaDisponivel = false
         if (extensaoAtiva != ExtensionMode.NONE && gerente != null) camera?.let { cam ->
@@ -636,7 +646,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             override fun onImageSaved(r: ImageCapture.OutputFileResults) {
                 val uri = r.savedUri
                 Telemetria.evento("foto", mapOf("modo" to modo.name.lowercase(), "ms" to Telemetria.ms(tFoto), "lente" to (if (lente == CameraSelector.LENS_FACING_FRONT) "frontal" else "traseira"),
-                    "flash" to flash, "zoom" to zoom, "bokeh_nativo" to bokehNativo, "iso" to (proIso ?: Exposicao.iso), "tempo_ns" to (proTempoNs ?: Exposicao.tempoNs), "foco_mm" to Exposicao.focoMm, "abertura" to Exposicao.aberturaF, "ev" to proEv, "ok" to (uri != null)))
+                    "flash" to flash, "zoom" to zoom, "bokeh_nativo" to bokehNativo, "iso" to (proIso ?: Exposicao.iso), "tempo_ns" to (proTempoNs ?: Exposicao.tempoNs), "foco_mm" to Exposicao.focoMm, "abertura" to Exposicao.aberturaF, "ultra_hdr" to ultraHdrAtivo, "ev" to proEv, "ok" to (uri != null)))
                 if ((modo == Modo.DOCUMENTO || modo == Modo.TELA) && uri != null) {
                     trataDocumento(uri)
                 } else if (modo == Modo.RETRATO && !bokehNativo && uri != null) {
@@ -1026,6 +1036,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     item { Ajuste(Icons.Filled.PhotoSizeSelectLarge, "Resolução", listOf("1300 px, rápida", "2000 px", "2600 px, alta")[resolucao], resolucao != 1) { resolucao = (resolucao + 1) % 3 } }
                     item { Ajuste(Icons.Filled.HighQuality, "Qualidade", if (qualidadeMax) "Máxima" else "Rápida", qualidadeMax) { qualidadeMax = !qualidadeMax } }
                     item { Ajuste(Icons.Filled.DarkMode, "Noite", if (noiteAparelho) "Aparelho (12 MP)" else "Clássico (fusão)", noiteAparelho) { noiteAparelho = !noiteAparelho } }
+                    item { Ajuste(Icons.Filled.HdrOn, "Ultra HDR", if (!ultraHdrPref) "Desligado" else if (!ultraHdrSuportado) "Sem suporte aqui" else if (ultraHdrEligivel) "Automático (ativo)" else "Indisponível com acabamento", ultraHdrAtivo) { ultraHdrPref = !ultraHdrPref } }
                     item { Ajuste(Icons.Filled.HdrAuto, "HDR", if (hdr) "3 exposições" else "Desligado", hdr) { hdr = !hdr } }
                     item { Ajuste(Icons.Filled.BurstMode, "Rajada", if (rajada) "4 quadros" else "Desligada", rajada) { rajada = !rajada } }
                     item { Ajuste(Icons.Filled.Grid3x3, "Grade", if (grade) "Ativado" else "Desativado", grade) { grade = !grade } }
