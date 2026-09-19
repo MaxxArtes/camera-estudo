@@ -96,7 +96,7 @@ fun permissoesDeFotos(): Array<String> = when {
 }
 
 /** O que está aberto em tela cheia: a coleção de origem (todas ou de uma pessoa) e a posição. */
-class Visualizacao(val lista: List<Midia>, val indice: Int, val pessoa: Long?)
+class Visualizacao(val lista: List<Midia>, val indice: Int, val pessoa: Long?, val albumManual: Long? = null)
 
 @Composable
 private fun App() {
@@ -111,6 +111,9 @@ private fun App() {
     var aba by rememberSaveable { mutableIntStateOf(0) }
     var pessoaAberta by remember { mutableStateOf<Long?>(null) }
     var visual by remember { mutableStateOf<Visualizacao?>(null) }
+    var albumAberto by remember { mutableStateOf<Long?>(null) }
+    var seletorAlbum by remember { mutableStateOf<Long?>(null) }
+    var versaoAlbuns by remember { mutableIntStateOf(0) }
     val estadoFotos = rememberLazyListState()
     val estadoPessoas = rememberLazyGridState()
 
@@ -132,19 +135,25 @@ private fun App() {
 
     val v = visual
     val p = pessoaAberta
-    BackHandler(enabled = v != null || p != null) { if (v != null) visual = null else pessoaAberta = null }
+    val alb = albumAberto; val sel = seletorAlbum
+    BackHandler(enabled = v != null || sel != null || alb != null || p != null) { when { v != null -> visual = null; sel != null -> seletorAlbum = null; alb != null -> albumAberto = null; else -> pessoaAberta = null } }
     val porId = remember(midias) { midias.associateBy { it.id } }
 
     when {
-        v != null -> Visualizador(lista = v.lista, inicial = v.indice, pessoa = v.pessoa, fechar = { visual = null },
-            aoExcluida = { m -> midias = midias.filter { it.id != m.id }; visual = null; versaoPessoas++ },
+        v != null -> Visualizador(lista = v.lista, inicial = v.indice, pessoa = v.pessoa, albumManual = v.albumManual, fechar = { visual = null },
+            aoExcluida = { m -> midias = midias.filter { it.id != m.id }; visual = null; versaoPessoas++; versaoAlbuns++ },
             aoNaoEEsta = { m ->
                 val pid = v.pessoa
                 if (pid != null) escopo.launch {
                     withContext(Dispatchers.IO) { Indice.get(ctx).naoEEstaPessoa(m.id, pid) }
                     Telemetria.evento("nao_e_esta_pessoa"); versaoPessoas++; visual = null
                 }
-            })
+            },
+            aoRemovidoDoAlbum = { visual = null; versaoAlbuns++ })
+        sel != null -> SeletorFotos(album = sel, midias = midias, aoFechar = { seletorAlbum = null }, aoConcluido = { seletorAlbum = null; versaoAlbuns++ })
+        alb != null -> TelaAlbum(id = alb, porId = porId, versao = versaoAlbuns, voltar = { albumAberto = null },
+            aoAdicionar = { seletorAlbum = alb }, aoAbrir = { lista, i -> visual = Visualizacao(lista, i, null, alb) },
+            aoMudou = { versaoAlbuns++ }, aoSumiu = { albumAberto = null; versaoAlbuns++ })
         p != null -> TelaPessoa(id = p, porId = porId, versao = versaoPessoas, voltar = { pessoaAberta = null },
             aoAbrir = { lista, i -> visual = Visualizacao(lista, i, p) }, aoMudou = { versaoPessoas++ }, aoSumiu = { pessoaAberta = null; versaoPessoas++ })
         else -> {
@@ -156,8 +165,8 @@ private fun App() {
                 }
             }) { pad ->
                 Box(Modifier.padding(pad).fillMaxSize()) {
-                    if (aba == 0) TelaFotos(midias, estadoFotos, acesso == Acesso.Parcial, aoAbrir = { lista, i -> visual = Visualizacao(lista, i, null) }, aoAbrirAlbum = { pessoaAberta = it }, aoAlterarSelecao = { pedir.launch(permissoesDeFotos()) })
-                    else TelaPessoas(estadoPessoas, versaoPessoas, acesso == Acesso.Parcial, aoAbrirPessoa = { pessoaAberta = it }, aoMudou = { versaoPessoas++ })
+                    if (aba == 0) TelaFotos(midias, estadoFotos, acesso == Acesso.Parcial, aoAbrir = { lista, i -> visual = Visualizacao(lista, i, null) }, aoAbrirAlbum = { pessoaAberta = it }, aoAbrirAlbumManual = { albumAberto = it }, aoAlterarSelecao = { pedir.launch(permissoesDeFotos()) })
+                    else TelaPessoas(estadoPessoas, versaoPessoas + versaoAlbuns, acesso == Acesso.Parcial, aoAbrirPessoa = { pessoaAberta = it }, aoAbrirAlbumManual = { albumAberto = it }, aoMudou = { versaoPessoas++ })
                 }
             }
         }

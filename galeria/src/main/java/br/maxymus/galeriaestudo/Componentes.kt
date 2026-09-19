@@ -2,7 +2,10 @@ package br.maxymus.galeriaestudo
 
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -21,7 +24,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.PhotoAlbum
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -62,6 +68,26 @@ fun FaixaAviso(texto: String, acao: String?, aoTocar: () -> Unit = {}) {
     }
 }
 
+/** Capa de álbum que preenche o modifier dado (para cartão da grade). */
+@Composable
+fun CapaAlbumFlex(fotoId: Long?, modifier: Modifier) {
+    val ctx = LocalContext.current
+    Box(modifier.clip(RoundedCornerShape(12.dp)).background(Tema.Superficie), contentAlignment = Alignment.Center) {
+        if (fotoId != null) AsyncImage(model = Midias.uriFoto(fotoId), imageLoader = remember { Miniaturas.carregador(ctx) }, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        else Icon(Icons.Filled.PhotoAlbum, contentDescription = null, tint = Tema.Texto2, modifier = Modifier.size(40.dp))
+    }
+}
+
+/** Capa quadrada de álbum manual (miniatura da foto de capa) ou ícone neutro quando vazio. */
+@Composable
+fun CapaQuadrada(fotoId: Long?, tamanho: Dp, cantos: Dp = 12.dp) {
+    val ctx = LocalContext.current
+    Box(Modifier.size(tamanho).clip(RoundedCornerShape(cantos)).background(Tema.Superficie), contentAlignment = Alignment.Center) {
+        if (fotoId != null) AsyncImage(model = Midias.uriFoto(fotoId), imageLoader = remember { Miniaturas.carregador(ctx) }, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        else Icon(Icons.Filled.PhotoAlbum, contentDescription = null, tint = Tema.Texto2, modifier = Modifier.size(tamanho * 0.4f))
+    }
+}
+
 /** Rosto circular da pessoa (capa de 160 px gerada pelo indexador); a chave de cache muda quando a capa é trocada. */
 @Composable
 fun Capa(pessoa: Long, tamanho: Dp) {
@@ -90,7 +116,7 @@ fun agrupaPorDia(midias: List<Midia>): List<Grupo> {
 /** Grade de 3 colunas por dia, cabeçalho do dia preso no topo, opcionalmente com um cabeçalho rolável antes. */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun GradePorDia(midias: List<Midia>, estado: LazyListState, cabecalho: (@Composable () -> Unit)? = null, aoAbrir: (Int) -> Unit) {
+fun GradePorDia(midias: List<Midia>, estado: LazyListState, cabecalho: (@Composable () -> Unit)? = null, selecionando: Boolean = false, selecionadas: Set<Long> = emptySet(), aoLongo: (Int) -> Unit = {}, aoAbrir: (Int) -> Unit) {
     val ctx = LocalContext.current
     val carregador = remember { Miniaturas.carregador(ctx) }
     val grupos = remember(midias) { agrupaPorDia(midias) }
@@ -107,7 +133,7 @@ fun GradePorDia(midias: List<Midia>, estado: LazyListState, cabecalho: (@Composa
                 Row(Modifier.fillMaxWidth().padding(bottom = 2.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                     for (k in 0 until 3) {
                         val i = l * 3 + k
-                        if (i < g.itens.size) Ladrilho(g.itens[i], carregador, Modifier.weight(1f)) { aoAbrir(g.inicio + i) }
+                        if (i < g.itens.size) { val idx = g.inicio + i; Ladrilho(g.itens[i], carregador, selecionando, g.itens[i].id in selecionadas, Modifier.weight(1f), aoLongo = { aoLongo(idx) }) { aoAbrir(idx) } }
                         else Spacer(Modifier.weight(1f))
                     }
                 }
@@ -116,15 +142,22 @@ fun GradePorDia(midias: List<Midia>, estado: LazyListState, cabecalho: (@Composa
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun Ladrilho(m: Midia, carregador: ImageLoader, modifier: Modifier, aoTocar: () -> Unit) {
+fun Ladrilho(m: Midia, carregador: ImageLoader, selecionando: Boolean, marcada: Boolean, modifier: Modifier, aoLongo: () -> Unit, aoTocar: () -> Unit) {
     val ctx = LocalContext.current
-    Box(modifier.aspectRatio(1f).background(Tema.Superficie).clickable(onClick = aoTocar)) {
+    Box(modifier.aspectRatio(1f).background(Tema.Superficie).combinedClickable(onClick = aoTocar, onLongClick = aoLongo)) {
         AsyncImage(model = ImageRequest.Builder(ctx).data(m.uri).size(400).build(), imageLoader = carregador,
-            contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-        if (m.ehVideo) Row(Modifier.align(Alignment.BottomEnd).padding(4.dp).background(Color(0x99000000), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 1.dp), verticalAlignment = Alignment.CenterVertically) {
+            contentDescription = null, contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize().then(if (marcada) Modifier.padding(10.dp) else Modifier))
+        if (m.ehVideo && !selecionando) Row(Modifier.align(Alignment.BottomEnd).padding(4.dp).background(Color(0x99000000), RoundedCornerShape(4.dp)).padding(horizontal = 4.dp, vertical = 1.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.PlayArrow, contentDescription = "Vídeo", tint = Color.White, modifier = Modifier.size(14.dp))
             Text(Midias.duracao(m.duracaoMs), color = Color.White, fontSize = 11.sp)
+        }
+        if (selecionando) {
+            if (marcada) Box(Modifier.fillMaxSize().border(3.dp, Tema.Coral))
+            Icon(if (marcada) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked, contentDescription = null,
+                tint = if (marcada) Tema.Coral else Color(0xCCFFFFFF), modifier = Modifier.align(Alignment.TopStart).padding(4.dp).size(22.dp))
         }
     }
 }

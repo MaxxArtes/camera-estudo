@@ -56,6 +56,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -72,6 +73,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
@@ -81,7 +83,7 @@ import kotlin.math.abs
  * e Mais (Informações; e "Não é esta pessoa" quando aberto por um álbum). Gestos portados da câmera (validados).
  */
 @Composable
-fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, fechar: () -> Unit, aoExcluida: (Midia) -> Unit, aoNaoEEsta: (Midia) -> Unit) {
+fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: Long? = null, fechar: () -> Unit, aoExcluida: (Midia) -> Unit, aoNaoEEsta: (Midia) -> Unit, aoRemovidoDoAlbum: (Midia) -> Unit = {}) {
     val ctx = LocalContext.current
     if (lista.isEmpty()) { LaunchedEffect(Unit) { fechar() }; return }
     var indice by remember { mutableIntStateOf(inicial.coerceIn(0, lista.size - 1)) }
@@ -95,6 +97,11 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, fechar: () -> 
     var menuMais by remember { mutableStateOf(false) }
     var mostrarInfo by remember { mutableStateOf(false) }
     var favorito by remember(atual.id) { mutableStateOf(Favoritos.eh(ctx, atual.uri)) }
+    val escopo = rememberCoroutineScope()
+    var folhaAlbuns by remember { mutableStateOf(false) }
+    var criarAlbumV by remember { mutableStateOf(false) }
+    var albunsV by remember { mutableStateOf<List<Indice.AlbumManual>>(emptyList()) }
+    var jaContemV by remember { mutableStateOf<Set<Long>>(emptySet()) }
     LaunchedEffect(indice) { escala = 1f; desloc = Offset.Zero }
     LaunchedEffect(controles, indice) { if (controles) { delay(2000); controles = false } }
     val excluirSistema = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
@@ -169,6 +176,14 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, fechar: () -> 
                     Acao(Icons.Filled.MoreVert, "Mais") { menuMais = true }
                     DropdownMenu(expanded = menuMais, onDismissRequest = { menuMais = false }) {
                         DropdownMenuItem(text = { Text("Informações") }, onClick = { menuMais = false; mostrarInfo = true })
+                        DropdownMenuItem(text = { Text("Adicionar a um álbum") }, onClick = {
+                            menuMais = false
+                            escopo.launch { val db = Indice.get(ctx); albunsV = kotlinx.coroutines.withContext(Dispatchers.IO) { db.listarAlbuns() }; jaContemV = kotlinx.coroutines.withContext(Dispatchers.IO) { db.albunsDaFoto(atual.id) }; folhaAlbuns = true }
+                        })
+                        if (albumManual != null) DropdownMenuItem(text = { Text("Remover deste álbum") }, onClick = {
+                            menuMais = false
+                            escopo.launch { kotlinx.coroutines.withContext(Dispatchers.IO) { Indice.get(ctx).removerDoAlbum(albumManual, atual.id) }; Toast.makeText(ctx, "Removida do álbum", Toast.LENGTH_SHORT).show(); aoRemovidoDoAlbum(atual) }
+                        })
                         if (pessoa != null) DropdownMenuItem(text = { Text("Não é esta pessoa") }, onClick = { menuMais = false; confirmarNaoE = true })
                     }
                 }
@@ -185,6 +200,13 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, fechar: () -> 
         text = { Text("A foto sai deste álbum e a correção é lembrada na próxima análise. A foto continua na galeria.") },
         confirmButton = { TextButton(onClick = { confirmarNaoE = false; aoNaoEEsta(atual) }) { Text("Remover daqui", color = Tema.Coral) } },
         dismissButton = { TextButton(onClick = { confirmarNaoE = false }) { Text("Cancelar") } })
+    if (folhaAlbuns) FolhaAlbuns(albunsV, jaContem = jaContemV, aoFechar = { folhaAlbuns = false },
+        aoCriar = { folhaAlbuns = false; criarAlbumV = true },
+        aoEscolher = { alb -> escopo.launch { val n = kotlinx.coroutines.withContext(Dispatchers.IO) { Indice.get(ctx).adicionarAoAlbum(alb, listOf(atual.id to atual.quando)) }; val nome = albunsV.firstOrNull { it.id == alb }?.nome ?: "álbum"; Toast.makeText(ctx, if (n > 0) "Foto adicionada a \"$nome\"" else "Já estava no álbum", Toast.LENGTH_SHORT).show(); folhaAlbuns = false } })
+    if (criarAlbumV) DialogoCriarAlbum(nomesExistentes = albunsV.map { it.nome }, rotuloConfirmar = "Criar e adicionar", aoFechar = { criarAlbumV = false }) { nome ->
+        criarAlbumV = false
+        escopo.launch { kotlinx.coroutines.withContext(Dispatchers.IO) { val db = Indice.get(ctx); val a = db.criarAlbum(nome); db.adicionarAoAlbum(a, listOf(atual.id to atual.quando)) }; Toast.makeText(ctx, "Foto adicionada a \"$nome\"", Toast.LENGTH_SHORT).show() }
+    }
     if (mostrarInfo) {
         val det by produceState<Midias.Detalhe?>(null, atual.id) { value = withContext(Dispatchers.IO) { Midias.detalhe(ctx, atual) } }
         val (data, hora) = Midias.rotuloDataHora(atual.quando)

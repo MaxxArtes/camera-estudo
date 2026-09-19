@@ -11,7 +11,7 @@ import java.io.File
  * Só números, caixas e vetores; nenhuma imagem além das capas de 160 px em files/. allowBackup=false no manifesto.
  * Correções do usuário (nomes, junções, "não é esta pessoa", ocultar) ficam em tabelas próprias e sobrevivem à reanálise.
  */
-class Indice private constructor(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "indice.db", null, 1) {
+class Indice private constructor(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "indice.db", null, 2) {
     companion object {
         @Volatile private var inst: Indice? = null
         fun get(ctx: Context): Indice = inst ?: synchronized(this) { inst ?: Indice(ctx).also { inst = it } }
@@ -34,8 +34,16 @@ class Indice private constructor(ctx: Context) : SQLiteOpenHelper(ctx.applicatio
         db.execSQL("CREATE INDEX i_fotos_quando ON fotos(quando)")
         db.execSQL("CREATE TABLE exclusoes(foto INTEGER NOT NULL, pessoa INTEGER NOT NULL, PRIMARY KEY(foto, pessoa))")
         db.execSQL("CREATE TABLE juncoes(id INTEGER PRIMARY KEY AUTOINCREMENT, de_pessoa INTEGER NOT NULL, para_pessoa INTEGER NOT NULL, quando INTEGER NOT NULL, rostos TEXT NOT NULL, nome_de TEXT, nome_para TEXT, desfeita INTEGER NOT NULL DEFAULT 0)")
+        criaAlbuns(db)
     }
-    override fun onUpgrade(db: SQLiteDatabase, antiga: Int, nova: Int) {}
+
+    /** Álbuns manuais (o dono monta): tabela de álbuns + itens (foto do MediaStore). Criadas na v2. */
+    private fun criaAlbuns(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS albuns(id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, criado INTEGER NOT NULL)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS album_itens(album INTEGER NOT NULL, foto INTEGER NOT NULL, quando INTEGER NOT NULL, adicionado INTEGER NOT NULL, PRIMARY KEY(album, foto))")
+        db.execSQL("CREATE INDEX IF NOT EXISTS i_album_itens_album ON album_itens(album)")
+    }
+    override fun onUpgrade(db: SQLiteDatabase, antiga: Int, nova: Int) { if (antiga < 2) criaAlbuns(db) }
 
     fun <T> transacao(bloco: (SQLiteDatabase) -> T): T {
         val db = writableDatabase
@@ -142,6 +150,53 @@ class Indice private constructor(ctx: Context) : SQLiteOpenHelper(ctx.applicatio
         db.execSQL("UPDATE rostos SET exemplar=0 WHERE foto=? AND pessoa=?", arrayOf<Any?>(foto, pessoa))
     }
     fun desfazNaoE(foto: Long, pessoa: Long) { writableDatabase.execSQL("DELETE FROM exclusoes WHERE foto=? AND pessoa=?", arrayOf<Any?>(foto, pessoa)) }
+
+    // ---------- álbuns manuais ----------
+    class AlbumManual(val id: Long, val nome: String, val fotos: Int, val capa: Long?, val criado: Long)
+
+    fun criarAlbum(nome: String): Long = writableDatabase.insert("albuns", null, ContentValues().apply { put("nome", nome.trim()); put("criado", System.currentTimeMillis()) })
+    fun renomearAlbum(id: Long, nome: String) { writableDatabase.execSQL("UPDATE albuns SET nome=? WHERE id=?", arrayOf<Any?>(nome.trim(), id)) }
+    fun apagarAlbum(id: Long): Unit = transacao { db -> db.execSQL("DELETE FROM album_itens WHERE album=?", arrayOf<Any?>(id)); db.execSQL("DELETE FROM albuns WHERE id=?", arrayOf<Any?>(id)) }
+
+    /** Adiciona fotos (id do MediaStore + carimbo de data) ao álbum; ignora as que já estão (PRIMARY KEY). Devolve quantas entraram. */
+    fun adicionarAoAlbum(album: Long, fotos: List<Pair<Long, Long>>): Int = transacao { db ->
+        var n = 0; val agora = System.currentTimeMillis()
+        for ((foto, quando) in fotos) {
+            val v = ContentValues().apply { put("album", album); put("foto", foto); put("quando", quando); put("adicionado", agora) }
+            if (db.insertWithOnConflict("album_itens", null, v, SQLiteDatabase.CONFLICT_IGNORE) >= 0) n++
+        }
+        n
+    }
+    fun removerDoAlbum(album: Long, foto: Long) { writableDatabase.execSQL("DELETE FROM album_itens WHERE album=? AND foto=?", arrayOf<Any?>(album, foto)) }
+
+    fun listarAlbuns(): List<AlbumManual> {
+        val lista = ArrayList<AlbumManual>()
+        readableDatabase.rawQuery("""SELECT a.id, a.nome, a.criado,
+            (SELECT COUNT(*) FROM album_itens i WHERE i.album=a.id) AS n,
+            (SELECT i.foto FROM album_itens i WHERE i.album=a.id ORDER BY i.quando DESC LIMIT 1) AS capa
+            FROM albuns a ORDER BY a.criado DESC""", null).use { c ->
+            while (c.moveToNext()) lista += AlbumManual(c.getLong(0), c.getString(1), c.getInt(3), if (c.isNull(4)) null else c.getLong(4), c.getLong(2))
+        }
+        return lista
+    }
+    fun albumManual(id: Long): AlbumManual? = readableDatabase.rawQuery("""SELECT a.id, a.nome, a.criado,
+        (SELECT COUNT(*) FROM album_itens i WHERE i.album=a.id) AS n,
+        (SELECT i.foto FROM album_itens i WHERE i.album=a.id ORDER BY i.quando DESC LIMIT 1) AS capa
+        FROM albuns a WHERE a.id=?""", arrayOf(id.toString())).use { c ->
+        if (c.moveToFirst()) AlbumManual(c.getLong(0), c.getString(1), c.getInt(3), if (c.isNull(4)) null else c.getLong(4), c.getLong(2)) else null
+    }
+    /** Ids das fotos do álbum, mais recentes primeiro. */
+    fun fotosDoAlbum(id: Long): List<Long> {
+        val l = ArrayList<Long>()
+        readableDatabase.rawQuery("SELECT foto FROM album_itens WHERE album=? ORDER BY quando DESC, foto DESC", arrayOf(id.toString())).use { c -> while (c.moveToNext()) l += c.getLong(0) }
+        return l
+    }
+    /** Ids dos álbuns manuais que já contêm a foto (para marcar no seletor). */
+    fun albunsDaFoto(foto: Long): Set<Long> {
+        val s = HashSet<Long>()
+        readableDatabase.rawQuery("SELECT album FROM album_itens WHERE foto=?", arrayOf(foto.toString())).use { c -> while (c.moveToNext()) s += c.getLong(0) }
+        return s
+    }
 
     /** Apaga rostos, pessoas e correções; as fotos ficam e voltam a "não analisadas". */
     fun apagarTudo(ctx: Context): Unit = transacao { db ->

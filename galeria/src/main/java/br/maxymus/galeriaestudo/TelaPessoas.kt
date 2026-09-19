@@ -1,6 +1,11 @@
 package br.maxymus.galeriaestudo
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -52,7 +57,7 @@ import kotlinx.coroutines.withContext
 
 /** Aba Pessoas: grupos de rostos (2 colunas, capas circulares), aparições únicas atrás de uma linha, estado da análise. */
 @Composable
-fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, aoAbrirPessoa: (Long) -> Unit, aoMudou: () -> Unit) {
+fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, aoAbrirPessoa: (Long) -> Unit, aoAbrirAlbumManual: (Long) -> Unit, aoMudou: () -> Unit) {
     val ctx = LocalContext.current
     val escopo = rememberCoroutineScope()
     val estado by Indexador.estado.collectAsStateWithLifecycle()
@@ -66,6 +71,9 @@ fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, aoAbr
     var sobre by remember { mutableStateOf(false) }
     var reexibir by remember { mutableStateOf<Indice.Resumo?>(null) }
     var mostrarConcluida by remember { mutableStateOf(false) }
+    var albunsManuais by remember { mutableStateOf<List<Indice.AlbumManual>>(emptyList()) }
+    var criarAlbum by remember { mutableStateOf(false) }
+    LaunchedEffect(versao) { albunsManuais = withContext(Dispatchers.IO) { Indice.get(ctx).listarAlbuns() } }
 
     // recarrega ao entrar, quando algo foi editado e a cada ~25 fotos analisadas, sem reordenar o que já está na tela
     LaunchedEffect(versao, estado.feitas / 25, estado.rodando, mostrandoOcultas) {
@@ -110,6 +118,12 @@ fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, aoAbr
                 val lista = when { mostrandoUnicas -> unicas; mostrandoOcultas -> pessoas; else -> visiveis }
                 LazyVerticalGrid(columns = GridCells.Fixed(2), state = estadoGrade, contentPadding = PaddingValues(16.dp),
                     horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(24.dp), modifier = Modifier.fillMaxSize()) {
+                    if (!subtela) {
+                        item(key = "tit-meus", span = { GridItemSpan(2) }) { SecaoTitulo("Meus álbuns", "Álbuns que você monta") }
+                        item(key = "criar") { CardCriar { criarAlbum = true } }
+                        items(albunsManuais, key = { "m" + it.id }) { a -> CardAlbumManual(a) { aoAbrirAlbumManual(a.id) } }
+                        item(key = "tit-pessoas", span = { GridItemSpan(2) }) { SecaoTitulo("Pessoas", "Agrupadas automaticamente neste aparelho") }
+                    }
                     if (!subtela && visiveis.isEmpty()) item(key = "so-unicas", span = { GridItemSpan(2) }) {
                         Text("Encontramos rostos que aparecem em uma única foto.", color = Tema.Texto2, fontSize = 14.sp)
                     }
@@ -125,6 +139,10 @@ fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, aoAbr
         }
     }
 
+    if (criarAlbum) DialogoCriarAlbum(nomesExistentes = albunsManuais.map { it.nome }, aoFechar = { criarAlbum = false }) { nome ->
+        criarAlbum = false
+        escopo.launch { val a = withContext(Dispatchers.IO) { Indice.get(ctx).criarAlbum(nome) }; aoAbrirAlbumManual(a) }
+    }
     if (sobre) AlertDialog(onDismissRequest = { sobre = false }, confirmButton = { TextButton(onClick = { sobre = false }) { Text("Fechar") } },
         title = { Text("Sobre a análise") },
         text = { Text("O app agrupa rostos parecidos neste aparelho e pode errar. Nenhuma imagem sai do celular: os dados ficam em arquivos do app e não entram no backup.\n\nVocê pode dar nome, juntar, ocultar e corrigir com \"Não é esta pessoa\". Em \"Apagar dados de rostos\" tudo isso é removido; as fotos ficam.") })
@@ -175,5 +193,32 @@ fun CelulaPessoa(p: Indice.Resumo, aoTocar: () -> Unit) {
         Capa(p.id, 112.dp)
         Text(p.nome ?: "Sem nome", color = if (p.nome == null) Tema.Texto2 else Tema.Texto, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 8.dp))
         Text("${Midias.numero(p.fotos)} ${if (p.fotos == 1) "foto" else "fotos"}", color = Tema.Texto2, fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun SecaoTitulo(titulo: String, sub: String) {
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Text(titulo, color = Tema.Texto, fontSize = 20.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
+        Text(sub, color = Tema.Texto2, fontSize = 14.sp)
+    }
+}
+
+@Composable
+private fun CardCriar(aoTocar: () -> Unit) {
+    Column(Modifier.clickable(onClick = aoTocar), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.fillMaxWidth().aspectRatio(1f).clip(androidx.compose.foundation.shape.RoundedCornerShape(12.dp)).background(Tema.Superficie).border(1.dp, Tema.Texto2, androidx.compose.foundation.shape.RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+            Icon(Icons.Filled.Add, contentDescription = null, tint = Tema.Coral, modifier = Modifier.size(40.dp))
+        }
+        Text("Criar um álbum", color = Tema.Texto, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
+    }
+}
+
+@Composable
+private fun CardAlbumManual(a: Indice.AlbumManual, aoTocar: () -> Unit) {
+    Column(Modifier.clickable(onClick = aoTocar)) {
+        CapaAlbumFlex(a.capa, Modifier.fillMaxWidth().aspectRatio(1f))
+        Text(a.nome, color = Tema.Texto, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
+        Text("${Midias.numero(a.fotos)} ${if (a.fotos == 1) "foto" else "fotos"}", color = Tema.Texto2, fontSize = 13.sp)
     }
 }

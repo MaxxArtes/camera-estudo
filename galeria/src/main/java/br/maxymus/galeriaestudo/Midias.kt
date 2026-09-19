@@ -159,6 +159,8 @@ object Midias {
         Detalhe("", 0L, 0, 0)
     }.getOrDefault(Detalhe("", 0L, 0, 0))
 
+    fun uriFoto(id: Long): android.net.Uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+
     fun tamanho(bytes: Long): String = if (bytes > 1_048_576) String.format(PT, "%.1f MB", bytes / 1_048_576.0) else "${bytes / 1024} KB"
 
         /** Decodifica com inSampleSize até o lado ≤ ladoMax e corrige a rotação do EXIF. Null se não deu. */
