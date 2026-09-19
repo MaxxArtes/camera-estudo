@@ -7,6 +7,19 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import android.widget.Toast
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.filled.LibraryAdd
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Share
+import android.content.Intent
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -57,7 +70,7 @@ import kotlinx.coroutines.withContext
 
 /** Aba Pessoas: grupos de rostos (2 colunas, capas circulares), aparições únicas atrás de uma linha, estado da análise. */
 @Composable
-fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, aoAbrirPessoa: (Long) -> Unit, aoAbrirAlbumManual: (Long) -> Unit, aoMudou: () -> Unit) {
+fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, porId: Map<Long, Midia>, aoAbrirPessoa: (Long) -> Unit, aoAbrirAlbumManual: (Long) -> Unit, aoAbrirSeletor: (Long) -> Unit, aoMudou: () -> Unit) {
     val ctx = LocalContext.current
     val escopo = rememberCoroutineScope()
     val estado by Indexador.estado.collectAsStateWithLifecycle()
@@ -73,6 +86,13 @@ fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, aoAbr
     var mostrarConcluida by remember { mutableStateOf(false) }
     var albunsManuais by remember { mutableStateOf<List<Indice.AlbumManual>>(emptyList()) }
     var criarAlbum by remember { mutableStateOf(false) }
+    var acaoManual by remember { mutableStateOf<Indice.AlbumManual?>(null) }
+    var acaoPessoa by remember { mutableStateOf<Indice.Resumo?>(null) }
+    var renomearManual by remember { mutableStateOf<Indice.AlbumManual?>(null) }
+    var renomearPessoa by remember { mutableStateOf<Indice.Resumo?>(null) }
+    var excluirManual by remember { mutableStateOf<Indice.AlbumManual?>(null) }
+    var excluirPessoa by remember { mutableStateOf<Indice.Resumo?>(null) }
+    fun compartilharTodas(uris: List<android.net.Uri>) { if (uris.isEmpty()) { Toast.makeText(ctx, "Álbum sem fotos", Toast.LENGTH_SHORT).show(); return }; val i = Intent(Intent.ACTION_SEND_MULTIPLE).apply { type = "*/*"; putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris)); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }; runCatching { ctx.startActivity(Intent.createChooser(i, "Compartilhar")) } }
     LaunchedEffect(versao) { albunsManuais = withContext(Dispatchers.IO) { Indice.get(ctx).listarAlbuns() } }
 
     // recarrega ao entrar, quando algo foi editado e a cada ~25 fotos analisadas, sem reordenar o que já está na tela
@@ -121,13 +141,13 @@ fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, aoAbr
                     if (!subtela) {
                         item(key = "tit-meus", span = { GridItemSpan(2) }) { SecaoTitulo("Meus álbuns", "Álbuns que você monta") }
                         item(key = "criar") { CardCriar { criarAlbum = true } }
-                        items(albunsManuais, key = { "m" + it.id }) { a -> CardAlbumManual(a) { aoAbrirAlbumManual(a.id) } }
+                        items(albunsManuais, key = { "m" + it.id }) { a -> CardAlbumManual(a, aoLongo = { acaoManual = a }) { aoAbrirAlbumManual(a.id) } }
                         item(key = "tit-pessoas", span = { GridItemSpan(2) }) { SecaoTitulo("Pessoas", "Agrupadas automaticamente neste aparelho") }
                     }
                     if (!subtela && visiveis.isEmpty()) item(key = "so-unicas", span = { GridItemSpan(2) }) {
                         Text("Encontramos rostos que aparecem em uma única foto.", color = Tema.Texto2, fontSize = 14.sp)
                     }
-                    items(lista, key = { it.id }) { p -> CelulaPessoa(p) { if (mostrandoOcultas) reexibir = p else aoAbrirPessoa(p.id) } }
+                    items(lista, key = { it.id }) { p -> CelulaPessoa(p, aoLongo = { if (!mostrandoOcultas) acaoPessoa = p }) { if (mostrandoOcultas) reexibir = p else aoAbrirPessoa(p.id) } }
                     if (!subtela && unicas.isNotEmpty()) item(key = "unicas", span = { GridItemSpan(2) }) {
                         Row(Modifier.fillMaxWidth().clickable { pessoas = emptyList(); mostrandoUnicas = true }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("Aparições únicas · ${unicas.size}", color = Tema.Texto, fontSize = 16.sp, modifier = Modifier.weight(1f))
@@ -139,6 +159,26 @@ fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, aoAbr
         }
     }
 
+    acaoManual?.let { a -> FolhaAcoesAlbum(a.nome, a.capa, listOf(
+        AcaoAlbum(Icons.Filled.Share, "Compartilhar", false) { acaoManual = null; escopo.launch { val uris = withContext(Dispatchers.IO) { Indice.get(ctx).fotosDoAlbum(a.id).mapNotNull { porId[it]?.uri } }; compartilharTodas(uris) } },
+        AcaoAlbum(Icons.Filled.LibraryAdd, "Adicionar fotos", false) { acaoManual = null; aoAbrirSeletor(a.id) },
+        AcaoAlbum(Icons.Filled.Edit, "Renomear", false) { renomearManual = a; acaoManual = null },
+        AcaoAlbum(Icons.Filled.Delete, "Excluir álbum", true) { excluirManual = a; acaoManual = null }
+    )) { acaoManual = null } }
+    acaoPessoa?.let { p -> FolhaAcoesAlbum(p.nome ?: "Sem nome", null, listOf(
+        AcaoAlbum(Icons.Filled.Share, "Compartilhar", false) { acaoPessoa = null; escopo.launch { val uris = withContext(Dispatchers.IO) { Indice.get(ctx).fotosDaPessoa(p.id).mapNotNull { porId[it]?.uri } }; compartilharTodas(uris) } },
+        AcaoAlbum(Icons.Filled.Edit, "Renomear", false) { renomearPessoa = p; acaoPessoa = null },
+        AcaoAlbum(Icons.Filled.VisibilityOff, "Ocultar", false) { acaoPessoa = null; escopo.launch { withContext(Dispatchers.IO) { Indice.get(ctx).ocultar(p.id, true) }; aoMudou() } },
+        AcaoAlbum(Icons.Filled.Delete, "Excluir grupo", true) { excluirPessoa = p; acaoPessoa = null }
+    ), pessoaId = p.id) { acaoPessoa = null } }
+    renomearManual?.let { a -> DialogoRenomear(a.nome) { novo -> renomearManual = null; if (novo != null) escopo.launch { withContext(Dispatchers.IO) { Indice.get(ctx).renomearAlbum(a.id, novo) }; aoMudou() } } }
+    renomearPessoa?.let { p -> DialogoRenomear(p.nome ?: "") { novo -> renomearPessoa = null; if (novo != null) escopo.launch { withContext(Dispatchers.IO) { Indice.get(ctx).renomear(p.id, novo) }; aoMudou() } } }
+    excluirManual?.let { a -> AlertDialog(onDismissRequest = { excluirManual = null }, title = { Text("Excluir o álbum \"${a.nome}\"?") }, text = { Text("As fotos continuarão no aparelho e nos outros álbuns.") },
+        confirmButton = { TextButton(onClick = { excluirManual = null; escopo.launch { withContext(Dispatchers.IO) { Indice.get(ctx).apagarAlbum(a.id) }; aoMudou() } }) { Text("Excluir álbum", color = Tema.Coral) } },
+        dismissButton = { TextButton(onClick = { excluirManual = null }) { Text("Cancelar") } }) }
+    excluirPessoa?.let { p -> AlertDialog(onDismissRequest = { excluirPessoa = null }, title = { Text("Excluir este grupo?") }, text = { Text("Remove o agrupamento de \"${p.nome ?: "Sem nome"}\". As fotos continuam no aparelho.") },
+        confirmButton = { TextButton(onClick = { excluirPessoa = null; escopo.launch { withContext(Dispatchers.IO) { Indice.get(ctx).apagarPessoa(ctx, p.id) }; aoMudou() } }) { Text("Excluir grupo", color = Tema.Coral) } },
+        dismissButton = { TextButton(onClick = { excluirPessoa = null }) { Text("Cancelar") } }) }
     if (criarAlbum) DialogoCriarAlbum(nomesExistentes = albunsManuais.map { it.nome }, aoFechar = { criarAlbum = false }) { nome ->
         criarAlbum = false
         escopo.launch { val a = withContext(Dispatchers.IO) { Indice.get(ctx).criarAlbum(nome) }; aoAbrirAlbumManual(a) }
@@ -187,6 +227,7 @@ private fun Vazio(texto: String) {
     Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) { Text(texto, color = Tema.Texto2, fontSize = 15.sp, textAlign = TextAlign.Center) }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun CelulaPessoa(p: Indice.Resumo, aoTocar: () -> Unit) {
     Column(Modifier.fillMaxWidth().clickable(onClick = aoTocar), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -214,11 +255,33 @@ private fun CardCriar(aoTocar: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun CardAlbumManual(a: Indice.AlbumManual, aoTocar: () -> Unit) {
-    Column(Modifier.clickable(onClick = aoTocar)) {
+private fun CardAlbumManual(a: Indice.AlbumManual, aoLongo: () -> Unit = {}, aoTocar: () -> Unit) {
+    Column(Modifier.combinedClickable(onClick = aoTocar, onLongClick = aoLongo)) {
         CapaAlbumFlex(a.capa, Modifier.fillMaxWidth().aspectRatio(1f))
         Text(a.nome, color = Tema.Texto, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
         Text("${Midias.numero(a.fotos)} ${if (a.fotos == 1) "foto" else "fotos"}", color = Tema.Texto2, fontSize = 13.sp)
+    }
+}
+
+class AcaoAlbum(val icone: ImageVector, val rotulo: String, val perigo: Boolean, val aoTocar: () -> Unit)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FolhaAcoesAlbum(titulo: String, capa: Long?, acoes: List<AcaoAlbum>, pessoaId: Long? = null, aoFechar: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = aoFechar, containerColor = Tema.Superficie, sheetState = rememberModalBottomSheetState()) {
+        Column(Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+            Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (pessoaId != null) Capa(pessoaId, 40.dp) else CapaQuadrada(capa, 40.dp, 8.dp)
+                Text(titulo, color = Tema.Texto, fontSize = 18.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 12.dp))
+            }
+            acoes.forEach { a ->
+                Row(Modifier.fillMaxWidth().clickable(onClick = a.aoTocar).padding(horizontal = 16.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(a.icone, contentDescription = null, tint = if (a.perigo) Tema.Coral else Tema.Texto)
+                    Text(a.rotulo, color = if (a.perigo) Tema.Coral else Tema.Texto, fontSize = 16.sp, modifier = Modifier.padding(start = 16.dp))
+                }
+            }
+        }
     }
 }

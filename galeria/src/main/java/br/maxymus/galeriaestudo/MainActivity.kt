@@ -166,7 +166,7 @@ private fun App() {
             }) { pad ->
                 Box(Modifier.padding(pad).fillMaxSize()) {
                     if (aba == 0) TelaFotos(midias, estadoFotos, acesso == Acesso.Parcial, aoAbrir = { lista, i -> visual = Visualizacao(lista, i, null) }, aoAbrirAlbum = { pessoaAberta = it }, aoAbrirAlbumManual = { albumAberto = it }, aoAlterarSelecao = { pedir.launch(permissoesDeFotos()) })
-                    else TelaPessoas(estadoPessoas, versaoPessoas + versaoAlbuns, acesso == Acesso.Parcial, aoAbrirPessoa = { pessoaAberta = it }, aoAbrirAlbumManual = { albumAberto = it }, aoMudou = { versaoPessoas++ })
+                    else TelaPessoas(estadoPessoas, versaoPessoas + versaoAlbuns, acesso == Acesso.Parcial, porId = porId, aoAbrirPessoa = { pessoaAberta = it }, aoAbrirAlbumManual = { albumAberto = it }, aoAbrirSeletor = { seletorAlbum = it }, aoMudou = { versaoPessoas++; versaoAlbuns++ })
                 }
             }
         }

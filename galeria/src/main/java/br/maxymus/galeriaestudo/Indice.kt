@@ -198,6 +198,16 @@ class Indice private constructor(ctx: Context) : SQLiteOpenHelper(ctx.applicatio
         return s
     }
 
+    /** Exclui um grupo de pessoa (rostos, exclusões, capa); as FOTOS continuam no aparelho. Reanálise não recria (fotos já marcadas). */
+    fun apagarPessoa(ctx: Context, id: Long): Unit {
+        transacao { db ->
+            db.execSQL("DELETE FROM rostos WHERE pessoa=?", arrayOf<Any?>(id))
+            db.execSQL("DELETE FROM exclusoes WHERE pessoa=?", arrayOf<Any?>(id))
+            db.execSQL("DELETE FROM pessoas WHERE id=?", arrayOf<Any?>(id))
+        }
+        capa(ctx, id).delete()
+    }
+
     /** Apaga rostos, pessoas e correções; as fotos ficam e voltam a "não analisadas". */
     fun apagarTudo(ctx: Context): Unit = transacao { db ->
         db.execSQL("DELETE FROM rostos"); db.execSQL("DELETE FROM pessoas"); db.execSQL("DELETE FROM exclusoes"); db.execSQL("DELETE FROM juncoes")
