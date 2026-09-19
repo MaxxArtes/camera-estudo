@@ -2,6 +2,15 @@
   "releases": [
     {
       "versao": "0.72",
+      "build": 80,
+      "tag": "v0.72-build80",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.72-build80.apk",
+      "mudou": [
+        "Câmera: Resolucao50.kt - captura experimental 50 MP pela config vendor QCFA (ainda NÃO ligada ao app)"
+      ]
+    },
+    {
+      "versao": "0.72",
       "build": 79,
       "tag": "v0.72-build79",
       "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.72-build79.apk",
@@ -651,9 +660,9 @@
   ],
   "versionName": "0.72",
   "versionCode": 72,
-  "build": 79,
+  "build": 80,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.72-build79.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.72-build80.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-19T01:44:37Z"
+  "publicadoEm": "2026-09-19T02:10:02Z"
 }
