@@ -55,3 +55,13 @@ resolução/qualidade às cegas; concluir que houve fusão noturna (as tags são
   sem acabamento/fusão/extensão; opção de gaveta + selo "Ultra HDR"); redução de croma só no Clássico se o A/B pedir.
 - **Validação pendente (precisa do celular aceso):** confirmar EXIF na 0.70; A/B do Noite Clássico x Aparelho x
   nativa na mesma cena; conferir gain map da 0.72. O Doze/indisponibilidade do celular tem travado o teste ao vivo.
+
+## A/B medido no aparelho (19/09, fotos do dono, mesmo quintal noturno)
+Validado com EXIF: nossas fotos 0.71 agora trazem ISO real (7154-7520); antes era nulo -> batch 1 OK.
+Noite Aparelho sai em 12,6 MP (3072x4096); Clássico em 3,1 MP (1536x2048) -> a opção nova resolve a resolução.
+Comparação Clássico x Aparelho x GCam x Xiaomi (ressalva: enquadramento variou, direcional):
+- Aparelho: 4x a resolução do Clássico, mas mais grão na sombra (captura única sem média de quadros).
+- Clássico: menos ruído (fusão faz média), porém mole e 1/4 da resolução.
+- Troca-troca real, não nocaute -> manter os DOIS como opção (Astra estava certo). Considerar Aparelho como padrão.
+- Ambos ainda perdem para Xiaomi/GCam no escuro (SuperNight/HDR+ multiquadro em hardware, fora da API pública).
+  Confirma agy+Astra: não tentar bater SuperNight por software; nosso diferencial é resolução cheia, EXIF e os modos.
