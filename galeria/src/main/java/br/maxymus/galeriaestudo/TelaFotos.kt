@@ -131,6 +131,11 @@ fun TelaFotos(midias: List<Midia>, estado: LazyListState, parcial: Boolean, aoAb
         val alvo = idsQuando()
         escopo.launch { val n = withContext(Dispatchers.IO) { Indice.get(ctx).adicionarAoAlbum(album, alvo) }; Toast.makeText(ctx, "$n ${if (n == 1) "foto adicionada" else "fotos adicionadas"}", Toast.LENGTH_SHORT).show(); folhaAlbuns = false; sair() }
     }
+    fun favoritarSel() {
+        val alvo = midiasPeriodo.filter { it.id in selecionadas }
+        alvo.forEach { if (!Favoritos.eh(ctx, it.uri)) Favoritos.alterna(ctx, it.uri) }
+        Toast.makeText(ctx, "${alvo.size} ${if (alvo.size == 1) "foto favoritada" else "fotos favoritadas"}", Toast.LENGTH_SHORT).show(); sair()
+    }
     BackHandler(enabled = selecionando) { sair() }
 
     Column(Modifier.fillMaxSize().background(Tema.Fundo)) {
@@ -138,6 +143,9 @@ fun TelaFotos(midias: List<Midia>, estado: LazyListState, parcial: Boolean, aoAb
             Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { sair() }) { Icon(Icons.Filled.Close, contentDescription = "Cancelar", tint = Tema.Texto) }
                 Text("${selecionadas.size} selecionada(s)", color = Tema.Texto, fontSize = 18.sp, modifier = Modifier.weight(1f))
+                IconButton(enabled = selecionadas.isNotEmpty(), onClick = { excluirSel() }) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Excluir", tint = if (selecionadas.isNotEmpty()) Tema.Texto else Tema.Texto2)
+                }
                 IconButton(onClick = { selecionadas = if (selecionadas.size == midiasPeriodo.size) emptySet() else midiasPeriodo.map { it.id }.toSet() }) {
                     Icon(Icons.Filled.SelectAll, contentDescription = "Selecionar tudo", tint = if (selecionadas.size == midiasPeriodo.size && midiasPeriodo.isNotEmpty()) Tema.Coral else Tema.Texto)
                 }
@@ -207,7 +215,7 @@ fun TelaFotos(midias: List<Midia>, estado: LazyListState, parcial: Boolean, aoAb
             Box {
                 AcaoBarra(Icons.Filled.MoreVert, "Mais", true) { menuSel = true }
                 DropdownMenu(expanded = menuSel, onDismissRequest = { menuSel = false }) {
-                    DropdownMenuItem(text = { Text("Excluir do aparelho") }, onClick = { menuSel = false; excluirSel() })
+                    DropdownMenuItem(text = { Text("Favoritar") }, onClick = { menuSel = false; favoritarSel() })
                 }
             }
         }
