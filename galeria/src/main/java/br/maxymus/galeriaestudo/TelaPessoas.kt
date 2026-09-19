@@ -82,12 +82,12 @@ fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, aoAbr
     val unicas = pessoas.filter { it.fotos == 1 }
     val subtela = mostrandoUnicas || mostrandoOcultas
     Column(Modifier.fillMaxSize().background(Tema.Fundo)) {
-        BarraSuperior(when { mostrandoOcultas -> "Pessoas ocultas"; mostrandoUnicas -> "Aparições únicas"; else -> "Pessoas" },
+        BarraSuperior(when { mostrandoOcultas -> "Álbuns ocultos"; mostrandoUnicas -> "Aparições únicas"; else -> "Álbuns" },
             voltar = if (subtela) ({ mostrandoUnicas = false; mostrandoOcultas = false; pessoas = emptyList() }) else null) {
             if (!subtela) Box {
                 IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, contentDescription = "Menu", tint = Tema.Texto) }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    DropdownMenuItem(text = { Text("Pessoas ocultas") }, onClick = { menu = false; pessoas = emptyList(); mostrandoOcultas = true })
+                    DropdownMenuItem(text = { Text("Álbuns ocultos") }, onClick = { menu = false; pessoas = emptyList(); mostrandoOcultas = true })
                     DropdownMenuItem(text = { Text("Sobre a análise") }, onClick = { menu = false; sobre = true })
                     if (ativada) DropdownMenuItem(text = { Text("Apagar dados de rostos") }, onClick = { menu = false; confirmarApagar = true })
                 }
@@ -95,7 +95,7 @@ fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, aoAbr
         }
         if (ativada) when {
             estado.preparando -> FaixaProgresso("Preparando análise", "Contando as fotos do aparelho.", null, null)
-            estado.rodando -> FaixaProgresso("Analisando ${Midias.numero(estado.feitas)} de ${Midias.numero(estado.total)} fotos", "Você já pode abrir as pessoas encontradas.", estado, "Pausar") { Indexador.pausar() }
+            estado.rodando -> FaixaProgresso("Analisando ${Midias.numero(estado.feitas)} de ${Midias.numero(estado.total)} fotos", "Você já pode abrir os álbuns encontrados.", estado, "Pausar") { Indexador.pausar() }
             estado.pausada -> FaixaProgresso("Pausado por você", "${Midias.numero(estado.feitas)} de ${Midias.numero(estado.total)} fotos analisadas.", estado, "Continuar") { Indexador.continuar(ctx) }
             mostrarConcluida -> FaixaProgresso("Análise concluída", "Novas fotos serão verificadas automaticamente.", null, null)
         }

@@ -152,7 +152,7 @@ private fun App() {
             Scaffold(containerColor = Tema.Fundo, bottomBar = {
                 NavigationBar(containerColor = Tema.Fundo, tonalElevation = 0.dp) {
                     NavigationBarItem(selected = aba == 0, onClick = { aba = 0 }, icon = { Icon(Icons.Filled.Photo, contentDescription = null) }, label = { Text("Fotos") }, colors = cores)
-                    NavigationBarItem(selected = aba == 1, onClick = { aba = 1; Telemetria.evento("aba_pessoas") }, icon = { Icon(Icons.Filled.Face, contentDescription = null) }, label = { Text("Pessoas") }, colors = cores)
+                    NavigationBarItem(selected = aba == 1, onClick = { aba = 1; Telemetria.evento("aba_pessoas") }, icon = { Icon(Icons.Filled.Face, contentDescription = null) }, label = { Text("Álbuns") }, colors = cores)
                 }
             }) { pad ->
                 Box(Modifier.padding(pad).fillMaxSize()) {
@@ -169,7 +169,7 @@ private fun BoasVindas(jaPediu: Boolean, aoPedir: () -> Unit) {
     val ctx = LocalContext.current
     Column(Modifier.fillMaxSize().background(Tema.Fundo).padding(32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Text("Suas fotos, no seu aparelho", color = Tema.Texto, fontSize = 24.sp, textAlign = TextAlign.Center)
-        Text("Veja suas fotos por data. Em Pessoas, organize rostos parecidos sem enviar imagens para servidores.", color = Tema.Texto2, fontSize = 16.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp, bottom = 28.dp))
+        Text("Veja suas fotos por data. Em Álbuns, cada pessoa vira um álbum, organizado no aparelho sem enviar imagens para servidores.", color = Tema.Texto2, fontSize = 16.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 12.dp, bottom = 28.dp))
         Button(onClick = aoPedir, colors = ButtonDefaults.buttonColors(containerColor = Tema.Coral, contentColor = Color.White)) { Text("Permitir acesso às fotos") }
         if (jaPediu) TextButton(onClick = {
             runCatching { ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + ctx.packageName)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
