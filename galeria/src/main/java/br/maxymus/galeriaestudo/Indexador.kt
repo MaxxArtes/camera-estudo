@@ -23,14 +23,19 @@ import kotlin.math.sqrt
  * Varre as fotos do aparelho (mais recentes primeiro), acha rostos, calcula a identidade e agrupa em pessoas.
  * Roda enquanto o app está aberto; cada foto vira uma linha no índice, então parar e continuar é natural.
  *
- * Duas passadas (crítica do agy, 19/09): em linha, a foto casa com a pessoa cujo melhor exemplar tem cosseno ≥ 0,65,
- * senão vira pessoa nova (separar errado é reversível, juntar errado não); no fim da varredura, pessoas cujos
- * centroides têm cosseno ≥ 0,62 são juntadas (junção registrada, o usuário pode desfazer). Os exemplares guardam
+ * Duas passadas (crítica do agy, 19/09): em linha, a foto casa com a pessoa cujo melhor exemplar tem cosseno ≥ 0,74
+ * (0,82 se o rosto é borrado ou de lado), senão vira pessoa nova; rosto ruim que não casa fica sem pessoa (não vira
+ * grupo de um só). No fim da varredura, pessoas cujos centroides têm cosseno ≥ 0,68 são juntadas (junção registrada,
+ * o usuário pode desfazer). Os exemplares guardam
  * variedade: até 12 por pessoa, e uma vista bem diferente (sim < 0,80) entra no lugar do exemplar mais redundante.
  */
 object Indexador {
-    private const val LIMIAR_CASA = 0.65f
-    private const val LIMIAR_CONSOLIDA = 0.62f
+    // Limiares calibrados pelo Ente Photos para esta mesma família de modelo (192-d): casa 0,76 / rosto ruim 0,84 /
+    // funde 0,70. Aqui um pouco mais frouxos porque casamos pelo MELHOR exemplar (não pelo centroide): a validação da
+    // câmera nas fotos do dono deu ≥0,78 na mesma pessoa e 0,49 em pessoa diferente. Separar errado é reversível (juntar).
+    private const val LIMIAR_CASA = 0.74f
+    private const val LIMIAR_CASA_RUIM = 0.82f     // rosto borrado ou de lado só entra num grupo com muita certeza
+    private const val LIMIAR_CONSOLIDA = 0.68f
     private const val MAX_EXEMPLARES = 12
     private const val LADO = 1000
     private const val ROSTO_MIN = 70
@@ -122,10 +127,15 @@ object Indexador {
                         for (x in vs) { val v = Embedding.sim(x.vetor, e.vetor); if (v > s) s = v }
                         if (s > melhorSim) { melhorSim = s; melhorId = pid }
                     }
-                    val nova = melhorId < 0 || melhorSim < LIMIAR_CASA
+                    val ruim = e.nitidez < 60f || r.frontal < 0.45f
+                    val nova = melhorId < 0 || melhorSim < (if (ruim) LIMIAR_CASA_RUIM else LIMIAR_CASA)
+                    val nota = r.frontal * (0.3f + 0.7f * min(1f, e.nitidez / 300f))
+                    if (nova && ruim) {   // rosto ruim sem grupo: guarda sem pessoa, não vira "aparição única" de má qualidade
+                        db.insereRosto(d, m.id, null, r.caixa.left / w, r.caixa.top / h, r.caixa.width() / w, r.caixa.height() / h, e.vetor, nota, false)
+                        entraram++; continue
+                    }
                     val pid = if (nova) db.criaPessoa(d).also { exemplares[it] = mutableListOf() } else melhorId
                     val lista = exemplares[pid] ?: mutableListOf<Indice.Exemplar>().also { exemplares[pid] = it }
-                    val nota = r.frontal * (0.3f + 0.7f * min(1f, e.nitidez / 300f))
                     // exemplar: pessoa nova; ou lista com vaga e vista não redundante; ou vista bem diferente no lugar do mais redundante
                     var substitui = -1
                     val exemplar = when {

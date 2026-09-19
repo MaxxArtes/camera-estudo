@@ -57,9 +57,9 @@ class Indice private constructor(ctx: Context) : SQLiteOpenHelper(ctx.applicatio
 
     // ---------- pessoas e rostos ----------
     fun criaPessoa(db: SQLiteDatabase): Long = db.insert("pessoas", null, ContentValues().apply { put("criado", System.currentTimeMillis()) })
-    fun insereRosto(db: SQLiteDatabase, foto: Long, pessoa: Long, nx: Float, ny: Float, nw: Float, nh: Float, vetor: FloatArray, nota: Float, exemplar: Boolean): Long =
+    fun insereRosto(db: SQLiteDatabase, foto: Long, pessoa: Long?, nx: Float, ny: Float, nw: Float, nh: Float, vetor: FloatArray, nota: Float, exemplar: Boolean): Long =
         db.insert("rostos", null, ContentValues().apply {
-            put("foto", foto); put("pessoa", pessoa); put("nx", nx); put("ny", ny); put("nw", nw); put("nh", nh)
+            put("foto", foto); if (pessoa != null) put("pessoa", pessoa) else putNull("pessoa"); put("nx", nx); put("ny", ny); put("nw", nw); put("nh", nh)
             put("vetor", Embedding.paraBytes(vetor)); put("nota", nota); put("exemplar", if (exemplar) 1 else 0)
         })
     fun capaNota(db: SQLiteDatabase, pessoa: Long): Float = db.rawQuery("SELECT capa_nota FROM pessoas WHERE id=?", arrayOf(pessoa.toString())).use { if (it.moveToFirst()) it.getFloat(0) else 0f }
