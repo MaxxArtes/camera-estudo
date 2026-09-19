@@ -10,6 +10,7 @@ import android.provider.MediaStore
 import androidx.exifinterface.media.ExifInterface
 import java.time.Instant
 import java.time.LocalDate
+import java.time.YearMonth
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -47,6 +48,68 @@ object Midias {
 
     fun numero(n: Int): String = String.format(PT, "%,d", n)
 
+    private val MESES = listOf("janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro")
+
+    /** Minúsculas sem acento e sem espaço nas pontas, para casar busca ("São" == "sao", "Março" == "marco"). */
+    fun semAcento(s: String): String = java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "").lowercase(PT)
+
+    /** Meses presentes na biblioteca, do mais novo ao mais antigo, com a contagem. */
+    fun mesesPresentes(midias: List<Midia>): List<Pair<YearMonth, Int>> {
+        val m = LinkedHashMap<YearMonth, Int>()
+        for (x in midias) { val d = x.dia; if (d != LocalDate.MIN) { val ym = YearMonth.from(d); m[ym] = (m[ym] ?: 0) + 1 } }
+        return m.entries.sortedByDescending { it.key }.map { it.key to it.value }
+    }
+
+    /** Anos presentes, do mais novo ao mais antigo. Alimenta a folha do filtro. */
+    fun anosPresentes(midias: List<Midia>): List<Int> = midias.mapNotNull { val d = it.dia; if (d != LocalDate.MIN) d.year else null }.distinct().sortedDescending()
+
+    fun rotuloMes(ym: YearMonth): String = MESES[ym.monthValue - 1].replaceFirstChar { it.uppercase() } + " " + ym.year
+    fun mesNome(mes: Int): String = MESES[mes - 1].replaceFirstChar { it.uppercase() }
+    fun mesAbrev(mes: Int): String = MESES[mes - 1].take(3).replaceFirstChar { it.uppercase() }
+
+    /** Rótulo do período no botão de filtro: "Set. 2025", "2025", "Setembro"; vazio quando não há filtro. */
+    fun rotuloPeriodo(ano: Int?, mes: Int?): String = when {
+        ano != null && mes != null -> mesAbrev(mes) + ". " + ano
+        ano != null -> ano.toString()
+        mes != null -> mesNome(mes)
+        else -> ""
+    }
+
+    /** Escopo por extenso, para o rótulo "Fotos · ...". */
+    fun escopoData(ano: Int?, mes: Int?): String = when {
+        ano != null && mes != null -> MESES[mes - 1] + " de " + ano
+        ano != null -> "de " + ano
+        mes != null -> MESES[mes - 1] + " de todos os anos"
+        else -> ""
+    }
+
+    /** Interpreta o texto de busca como data. Devolve (ano?, mês?) ou null. Mês sozinho = todos os anos. */
+    fun casaData(texto: String): Pair<Int?, Int?>? {
+        val t = semAcento(texto).trim()
+        if (t.isEmpty()) return null
+        Regex("""(\d{1,2})[/-](\d{4})""").find(t)?.let { return it.groupValues[2].toInt() to it.groupValues[1].toInt().coerceIn(1, 12) }
+        Regex("""(\d{4})[-/](\d{1,2})""").find(t)?.let { return it.groupValues[1].toInt() to it.groupValues[2].toInt().coerceIn(1, 12) }
+        val ano = Regex("""\b(19|20)\d{2}\b""").find(t)?.value?.toInt()
+        val soLetras = t.replace(Regex("[^a-z]"), "")
+        if (soLetras.length >= 3) {
+            val mes = MESES.indexOfFirst { semAcento(it).startsWith(soLetras.take(4)) }
+            if (mes >= 0) return ano to (mes + 1)
+        }
+        if (ano != null && Regex("""^(19|20)\d{2}$""").matches(t)) return ano to null
+        return null
+    }
+
+    /** Texto que parece começo de data mas ainda não é uma (ex.: "09/", "09/20"). */
+    fun dataIncompleta(texto: String): Boolean {
+        val t = texto.trim()
+        return casaData(t) == null && Regex("""^\d{1,2}[/-]\d{0,3}$""").matches(t)
+    }
+
+    /** Fotos do período (ano/mês, cada um opcional). Sem filtro devolve a lista inteira. */
+    fun filtraData(midias: List<Midia>, ano: Int?, mes: Int?): List<Midia> =
+        if (ano == null && mes == null) midias
+        else midias.filter { val d = it.dia; d != LocalDate.MIN && (ano == null || d.year == ano) && (mes == null || d.monthValue == mes) }
+
     fun duracao(ms: Long): String {
         val s = ms / 1000; val m = s / 60
         return if (m >= 60) String.format(PT, "%d:%02d:%02d", m / 60, m % 60, s % 60) else String.format(PT, "%d:%02d", m, s % 60)
@@ -83,7 +146,22 @@ object Midias {
         return saida
     }
 
-    /** Decodifica com inSampleSize até o lado ≤ ladoMax e corrige a rotação do EXIF. Null se não deu. */
+    class Detalhe(val nome: String, val bytes: Long, val largura: Int, val altura: Int)
+
+    /** Nome, tamanho e dimensões da mídia, consultados sob demanda (para "Informações"). */
+    fun detalhe(ctx: Context, m: Midia): Detalhe = runCatching {
+        val proj = arrayOf(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, android.provider.MediaStore.MediaColumns.SIZE, android.provider.MediaStore.MediaColumns.WIDTH, android.provider.MediaStore.MediaColumns.HEIGHT)
+        ctx.contentResolver.query(m.uri, proj, null, null, null)?.use { c ->
+            if (c.moveToFirst()) return@runCatching Detalhe(
+                c.getString(0) ?: "", if (c.isNull(1)) 0L else c.getLong(1),
+                if (c.isNull(2)) 0 else c.getInt(2), if (c.isNull(3)) 0 else c.getInt(3))
+        }
+        Detalhe("", 0L, 0, 0)
+    }.getOrDefault(Detalhe("", 0L, 0, 0))
+
+    fun tamanho(bytes: Long): String = if (bytes > 1_048_576) String.format(PT, "%.1f MB", bytes / 1_048_576.0) else "${bytes / 1024} KB"
+
+        /** Decodifica com inSampleSize até o lado ≤ ladoMax e corrige a rotação do EXIF. Null se não deu. */
     fun decodeReduzido(ctx: Context, uri: Uri, ladoMax: Int): Bitmap? {
         return try {
             val medidas = BitmapFactory.Options().apply { inJustDecodeBounds = true }

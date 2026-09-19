@@ -35,12 +35,18 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PersonOff
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -49,6 +55,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -63,12 +70,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 
 /**
  * Tela cheia sobre preto: deslizar troca de foto, pinça dá zoom (1x a 6x), toque duplo alterna 1x/2,5x, toque simples
- * mostra ou esconde os controles (somem sozinhos em 2 s). Gestos portados do visualizador da câmera (validados no aparelho).
+ * mostra ou esconde os controles (somem sozinhos em 2 s). Barra de baixo com Compartilhar, Editar, Favorito, Excluir
+ * e Mais (Informações; e "Não é esta pessoa" quando aberto por um álbum). Gestos portados da câmera (validados).
  */
 @Composable
 fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, fechar: () -> Unit, aoExcluida: (Midia) -> Unit, aoNaoEEsta: (Midia) -> Unit) {
@@ -82,6 +92,9 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, fechar: () -> 
     var controles by remember { mutableStateOf(true) }
     var confirmarExcluir by remember { mutableStateOf(false) }
     var confirmarNaoE by remember { mutableStateOf(false) }
+    var menuMais by remember { mutableStateOf(false) }
+    var mostrarInfo by remember { mutableStateOf(false) }
+    var favorito by remember(atual.id) { mutableStateOf(Favoritos.eh(ctx, atual.uri)) }
     LaunchedEffect(indice) { escala = 1f; desloc = Offset.Zero }
     LaunchedEffect(controles, indice) { if (controles) { delay(2000); controles = false } }
     val excluirSistema = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
@@ -96,6 +109,10 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, fechar: () -> 
     fun compartilhar() {
         val envio = Intent(Intent.ACTION_SEND).apply { type = if (atual.ehVideo) "video/*" else "image/*"; putExtra(Intent.EXTRA_STREAM, atual.uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
         runCatching { ctx.startActivity(Intent.createChooser(envio, "Compartilhar")) }
+    }
+    fun editar() {
+        val i = Intent(Intent.ACTION_EDIT).apply { setDataAndType(atual.uri, if (atual.ehVideo) "video/*" else "image/*"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+        runCatching { ctx.startActivity(Intent.createChooser(i, "Editar com")) }.onFailure { Toast.makeText(ctx, "Nenhum editor instalado", Toast.LENGTH_SHORT).show() }
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -133,7 +150,7 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, fechar: () -> 
         AnimatedVisibility(visible = controles, enter = fadeIn(tween(180)), exit = fadeOut(tween(180)), modifier = Modifier.align(Alignment.TopCenter)) {
             val (data, hora) = Midias.rotuloDataHora(atual.quando)
             Row(Modifier.fillMaxWidth().background(Color(0x99000000)).statusBarsPadding().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = fechar) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White) }
+                androidx.compose.material3.IconButton(onClick = fechar) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White) }
                 Column(Modifier.weight(1f)) {
                     Text(data, color = Color.White, fontSize = 16.sp)
                     if (hora.isNotEmpty()) Text(hora, color = Color(0xFFBBBBBB), fontSize = 12.sp)
@@ -143,8 +160,18 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, fechar: () -> 
         AnimatedVisibility(visible = controles, enter = fadeIn(tween(180)), exit = fadeOut(tween(180)), modifier = Modifier.align(Alignment.BottomCenter)) {
             Row(Modifier.fillMaxWidth().background(Color(0x99000000)).navigationBarsPadding().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                 Acao(Icons.Filled.Share, "Compartilhar") { compartilhar() }
+                Acao(Icons.Filled.Edit, "Editar") { editar() }
+                Acao(if (favorito) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favorito", if (favorito) Tema.Coral else Color.White) {
+                    favorito = Favoritos.alterna(ctx, atual.uri); Telemetria.evento("favorito", mapOf("ligou" to favorito))
+                }
                 Acao(Icons.Filled.Delete, "Excluir") { excluir() }
-                if (pessoa != null) Acao(Icons.Filled.PersonOff, "Não é esta pessoa") { confirmarNaoE = true }
+                Box {
+                    Acao(Icons.Filled.MoreVert, "Mais") { menuMais = true }
+                    DropdownMenu(expanded = menuMais, onDismissRequest = { menuMais = false }) {
+                        DropdownMenuItem(text = { Text("Informações") }, onClick = { menuMais = false; mostrarInfo = true })
+                        if (pessoa != null) DropdownMenuItem(text = { Text("Não é esta pessoa") }, onClick = { menuMais = false; confirmarNaoE = true })
+                    }
+                }
             }
         }
     }
@@ -158,12 +185,29 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, fechar: () -> 
         text = { Text("A foto sai deste álbum e a correção é lembrada na próxima análise. A foto continua na galeria.") },
         confirmButton = { TextButton(onClick = { confirmarNaoE = false; aoNaoEEsta(atual) }) { Text("Remover daqui", color = Tema.Coral) } },
         dismissButton = { TextButton(onClick = { confirmarNaoE = false }) { Text("Cancelar") } })
+    if (mostrarInfo) {
+        val det by produceState<Midias.Detalhe?>(null, atual.id) { value = withContext(Dispatchers.IO) { Midias.detalhe(ctx, atual) } }
+        val (data, hora) = Midias.rotuloDataHora(atual.quando)
+        AlertDialog(onDismissRequest = { mostrarInfo = false }, confirmButton = { TextButton(onClick = { mostrarInfo = false }) { Text("Fechar") } },
+            title = { Text("Informações") },
+            text = {
+                Column {
+                    val d = det
+                    if (d != null && d.nome.isNotEmpty()) Text("Arquivo: ${d.nome}")
+                    Text("Data: $data" + if (hora.isNotEmpty()) " $hora" else "")
+                    if (d != null && d.bytes > 0) Text("Tamanho: ${Midias.tamanho(d.bytes)}")
+                    if (d != null && d.largura > 0) Text("Dimensões: ${d.largura} × ${d.altura}")
+                    if (atual.ehVideo && atual.duracaoMs > 0) Text("Duração: ${Midias.duracao(atual.duracaoMs)}")
+                    if (favorito) Text("Favorito", color = Tema.Coral)
+                }
+            })
+    }
 }
 
 @Composable
-private fun Acao(icone: ImageVector, rotulo: String, aoTocar: () -> Unit) {
-    Column(Modifier.clickable(onClick = aoTocar).height(48.dp).padding(horizontal = 12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-        Icon(icone, contentDescription = rotulo, tint = Color.White)
+private fun Acao(icone: ImageVector, rotulo: String, cor: Color = Color.White, aoTocar: () -> Unit) {
+    Column(Modifier.clickable(onClick = aoTocar).height(52.dp).padding(horizontal = 10.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        Icon(icone, contentDescription = rotulo, tint = cor)
         Text(rotulo, color = Color.White, fontSize = 11.sp)
     }
 }
