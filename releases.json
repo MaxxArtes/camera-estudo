@@ -2,6 +2,15 @@
   "releases": [
     {
       "versao": "0.72",
+      "build": 81,
+      "tag": "v0.72-build81",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.72-build81.apk",
+      "mudou": [
+        "Galeria Estudo v0.1: módulo :galeria (fotos por data, pessoas por rosto offline), CI própria só no R2"
+      ]
+    },
+    {
+      "versao": "0.72",
       "build": 80,
       "tag": "v0.72-build80",
       "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.72-build80.apk",
@@ -660,9 +669,9 @@
   ],
   "versionName": "0.72",
   "versionCode": 72,
-  "build": 80,
+  "build": 81,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.72-build80.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.72-build81.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-19T02:10:02Z"
+  "publicadoEm": "2026-09-19T05:14:12Z"
 }
