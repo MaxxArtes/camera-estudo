@@ -16,7 +16,20 @@ Escopo pedido pelo dono antes de dormir: "faz o simples: organizado por data, e 
   reconhecimento facial offline (modelos, limiares, custo, LGPD).
 
 ## Resultado da análise noturna
-(preenchido ao fim da indexação)
+- **6.332 fotos analisadas, 0 erros.** ~1.690 tinham rosto. Tempo médio ~280 ms por foto; ~34 min de análise ao todo
+  (interrompidos por um crash no meio, ver abaixo).
+- **760 pessoas** ao final. O agrupamento bruto achou ~914 grupos e a consolidação por centroide juntou 156 pares.
+- **Um crash, encontrado e corrigido (0.1 -> 0.2):** aos 3.700 de 6.332 a análise abortou com um erro de bitmap
+  reciclado (recorte de capa devolvia a própria imagem de trabalho quando o rosto preenchia o quadro). Consertado,
+  reinstalado por cima mantendo o banco, retomou do 3.700 e terminou limpo. Nenhum dado perdido: cada foto é gravada
+  ao terminar. Lição salva na memória (createBitmap/createScaledBitmap devolvem a fonte no recorte-identidade).
+
+## Qualidade do agrupamento (honesto)
+760 pessoas é MUITO para uma biblioteca só sua: a mesma pessoa está partida em vários grupos. Isso é de propósito:
+escolhi limiares que preferem SEPARAR a JUNTAR, porque juntar é reversível com um toque ("Juntar") e separar errado
+não seria. Os grupos GRANDES (você, família) saíram limpos no que vi. O trabalho de afinação para a próxima rodada:
+baixar um pouco o limiar de consolidação ou usar a distância mediana entre grupos (receita do Ente) para juntar mais
+os fragmentos, medindo a pureza antes. Enquanto isso, a aba "Aparições únicas" já esconde a cauda de rostos de 1 foto.
 
 ## O que eu vi e preciso te contar
 1. **Você mesmo acionou a análise** às 01:31 (8 s depois de eu abrir o app): a telemetria mostra `aba_pessoas` e
