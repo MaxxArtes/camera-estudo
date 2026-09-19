@@ -105,13 +105,12 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: L
     LaunchedEffect(indice) { escala = 1f; desloc = Offset.Zero }
     LaunchedEffect(controles, indice) { if (controles) { delay(2000); controles = false } }
     val excluirSistema = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
-        if (r.resultCode == Activity.RESULT_OK) { Telemetria.evento("excluir"); aoExcluida(atual) }
+        if (r.resultCode == Activity.RESULT_OK) { Telemetria.evento("lixeira"); Toast.makeText(ctx, "Movida para a lixeira", Toast.LENGTH_SHORT).show(); aoExcluida(atual) }
     }
     fun excluir() {
-        if (Build.VERSION.SDK_INT >= 30) {
-            val pi = MediaStore.createDeleteRequest(ctx.contentResolver, listOf(atual.uri))
-            excluirSistema.launch(IntentSenderRequest.Builder(pi.intentSender).build())
-        } else confirmarExcluir = true
+        val pi = Midias.pedidoLixeira(ctx, listOf(atual.uri), true)
+        if (pi != null) excluirSistema.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+        else confirmarExcluir = true
     }
     fun compartilhar() {
         val envio = Intent(Intent.ACTION_SEND).apply { type = if (atual.ehVideo) "video/*" else "image/*"; putExtra(Intent.EXTRA_STREAM, atual.uri); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }

@@ -7,6 +7,9 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.net.Uri
 import android.provider.MediaStore
+import android.os.Bundle
+import android.content.ContentResolver
+import android.app.PendingIntent
 import androidx.exifinterface.media.ExifInterface
 import java.time.Instant
 import java.time.LocalDate
@@ -162,6 +165,57 @@ object Midias {
     fun uriFoto(id: Long): android.net.Uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
 
     fun tamanho(bytes: Long): String = if (bytes > 1_048_576) String.format(PT, "%.1f MB", bytes / 1_048_576.0) else "${bytes / 1024} KB"
+
+        /** Um item na lixeira: a mídia e o instante de expiração (epoch em segundos; 0 = desconhecido). */
+    class ItemLixeira(val midia: Midia, val expiraEm: Long)
+
+    fun rotuloExpira(expiraEm: Long): String {
+        if (expiraEm <= 0L) return "Prazo indisponível"
+        val dias = ((expiraEm * 1000L - System.currentTimeMillis()) / 86_400_000L).toInt()
+        return when { dias <= 0 -> "Expira em breve"; dias == 1 -> "≈ 1 dia"; else -> "≈ $dias dias" }
+    }
+
+    /** Itens na lixeira do sistema (API 30+), ordenados por vencimento mais próximo. Vazio em versões antigas. */
+    fun listarLixeira(ctx: Context): List<ItemLixeira> {
+        if (android.os.Build.VERSION.SDK_INT < 30) return emptyList()
+        val colecao = MediaStore.Files.getContentUri("external")
+        val cId = MediaStore.Files.FileColumns._ID; val cTipo = MediaStore.Files.FileColumns.MEDIA_TYPE
+        val cMod = MediaStore.Files.FileColumns.DATE_MODIFIED; val cAdd = MediaStore.Files.FileColumns.DATE_ADDED; val cDur = "duration"
+        val cExp = MediaStore.MediaColumns.DATE_EXPIRES
+        val proj = arrayOf(cId, cTipo, "datetaken", cMod, cAdd, cDur, cExp)
+        val tImg = MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(); val tVid = MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString()
+        val args = Bundle().apply {
+            putString(ContentResolver.QUERY_ARG_SQL_SELECTION, "$cTipo IN (?,?)")
+            putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, arrayOf(tImg, tVid))
+            putInt(MediaStore.QUERY_ARG_MATCH_TRASHED, MediaStore.MATCH_ONLY)
+        }
+        val saida = ArrayList<ItemLixeira>()
+        ctx.contentResolver.query(colecao, proj, args, null)?.use { c ->
+            val iId = c.getColumnIndexOrThrow(cId); val iTipo = c.getColumnIndexOrThrow(cTipo)
+            val iTaken = c.getColumnIndex("datetaken"); val iMod = c.getColumnIndex(cMod); val iAdd = c.getColumnIndex(cAdd); val iDur = c.getColumnIndex(cDur); val iExp = c.getColumnIndex(cExp)
+            while (c.moveToNext()) {
+                val id = c.getLong(iId); val video = c.getInt(iTipo) == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO
+                val taken = if (iTaken < 0 || c.isNull(iTaken)) 0L else c.getLong(iTaken)
+                val mod = if (iMod < 0 || c.isNull(iMod)) 0L else c.getLong(iMod) * 1000
+                val add = if (iAdd < 0 || c.isNull(iAdd)) 0L else c.getLong(iAdd) * 1000
+                val quando = when { taken > 0L -> taken; mod > 0L -> mod; else -> add }
+                val uri = ContentUris.withAppendedId(if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+                val dur = if (iDur < 0 || c.isNull(iDur)) 0L else c.getLong(iDur)
+                val exp = if (iExp < 0 || c.isNull(iExp)) 0L else c.getLong(iExp)
+                saida += ItemLixeira(Midia(id, uri, video, quando, dur), exp)
+            }
+        }
+        saida.sortWith(compareBy { if (it.expiraEm <= 0L) Long.MAX_VALUE else it.expiraEm })
+        return saida
+    }
+
+    /** PendingIntent para MOVER para a lixeira (paraLixeira=true) ou RESTAURAR (false). Null em API < 30. */
+    fun pedidoLixeira(ctx: Context, uris: List<android.net.Uri>, paraLixeira: Boolean): PendingIntent? =
+        if (android.os.Build.VERSION.SDK_INT >= 30 && uris.isNotEmpty()) runCatching { MediaStore.createTrashRequest(ctx.contentResolver, uris, paraLixeira) }.getOrNull() else null
+
+    /** PendingIntent para excluir de vez (permanente). API 30+. */
+    fun pedidoExcluir(ctx: Context, uris: List<android.net.Uri>): PendingIntent? =
+        if (android.os.Build.VERSION.SDK_INT >= 30 && uris.isNotEmpty()) runCatching { MediaStore.createDeleteRequest(ctx.contentResolver, uris) }.getOrNull() else null
 
         /** Decodifica com inSampleSize até o lado ≤ ladoMax e corrige a rotação do EXIF. Null se não deu. */
     fun decodeReduzido(ctx: Context, uri: Uri, ladoMax: Int): Bitmap? {

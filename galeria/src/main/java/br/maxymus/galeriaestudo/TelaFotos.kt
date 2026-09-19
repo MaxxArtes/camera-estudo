@@ -78,7 +78,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
-fun TelaFotos(midias: List<Midia>, estado: LazyListState, parcial: Boolean, aoAbrir: (List<Midia>, Int) -> Unit, aoAbrirAlbum: (Long) -> Unit, aoAbrirAlbumManual: (Long) -> Unit, aoAlterarSelecao: () -> Unit) {
+fun TelaFotos(midias: List<Midia>, estado: LazyListState, parcial: Boolean, aoAbrir: (List<Midia>, Int) -> Unit, aoAbrirAlbum: (Long) -> Unit, aoAbrirAlbumManual: (Long) -> Unit, aoAbrirLixeira: () -> Unit, aoAlterarSelecao: () -> Unit) {
     val ctx = LocalContext.current
     val escopo = rememberCoroutineScope()
     var menu by remember { mutableStateOf(false) }
@@ -114,7 +114,7 @@ fun TelaFotos(midias: List<Midia>, estado: LazyListState, parcial: Boolean, aoAb
     fun urisSel(): ArrayList<android.net.Uri> = ArrayList(midiasPeriodo.filter { it.id in selecionadas }.map { it.uri })
     fun idsQuando(): List<Pair<Long, Long>> = midiasPeriodo.filter { it.id in selecionadas }.map { it.id to it.quando }
     val excluirVarias = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
-        if (r.resultCode == Activity.RESULT_OK) { Telemetria.evento("excluir_varias", mapOf("n" to selecionadas.size)); sair() }
+        if (r.resultCode == Activity.RESULT_OK) { Telemetria.evento("lixeira_varias", mapOf("n" to selecionadas.size)); Toast.makeText(ctx, "Movidas para a lixeira", Toast.LENGTH_SHORT).show(); sair() }
     }
     fun compartilharSel() {
         val i = Intent(Intent.ACTION_SEND_MULTIPLE).apply { type = "*/*"; putParcelableArrayListExtra(Intent.EXTRA_STREAM, urisSel()); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
@@ -122,10 +122,9 @@ fun TelaFotos(midias: List<Midia>, estado: LazyListState, parcial: Boolean, aoAb
     }
     fun excluirSel() {
         val uris = urisSel(); if (uris.isEmpty()) return
-        if (android.os.Build.VERSION.SDK_INT >= 30) {
-            val pi = MediaStore.createDeleteRequest(ctx.contentResolver, uris)
-            excluirVarias.launch(IntentSenderRequest.Builder(pi.intentSender).build())
-        } else { uris.forEach { runCatching { ctx.contentResolver.delete(it, null, null) } }; Toast.makeText(ctx, "Excluídas", Toast.LENGTH_SHORT).show(); sair() }
+        val pi = Midias.pedidoLixeira(ctx, uris, true)
+        if (pi != null) excluirVarias.launch(IntentSenderRequest.Builder(pi.intentSender).build())
+        else { uris.forEach { runCatching { ctx.contentResolver.delete(it, null, null) } }; Toast.makeText(ctx, "Excluídas", Toast.LENGTH_SHORT).show(); sair() }
     }
     fun adicionarSelAoAlbum(album: Long) {
         val alvo = idsQuando()
@@ -167,6 +166,7 @@ fun TelaFotos(midias: List<Midia>, estado: LazyListState, parcial: Boolean, aoAb
                                 }
                             }
                         })
+                        DropdownMenuItem(text = { Text("Lixeira") }, onClick = { menu = false; aoAbrirLixeira() })
                         DropdownMenuItem(text = { Text("Sobre") }, onClick = { menu = false; sobre = true })
                     }
                 }

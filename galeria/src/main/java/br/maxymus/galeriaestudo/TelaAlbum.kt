@@ -135,8 +135,8 @@ fun TelaAlbum(id: Long, porId: Map<Long, Midia>, versao: Int, voltar: () -> Unit
 }
 
 @Composable
-fun AcaoBarra(icone: androidx.compose.ui.graphics.vector.ImageVector, rotulo: String, ativo: Boolean, aoTocar: () -> Unit) {
-    val cor = if (ativo) Tema.Texto else Tema.Texto2
+fun AcaoBarra(icone: androidx.compose.ui.graphics.vector.ImageVector, rotulo: String, ativo: Boolean, corAtivo: Color = Color.Unspecified, aoTocar: () -> Unit) {
+    val cor = if (!ativo) Tema.Texto2 else if (corAtivo != Color.Unspecified) corAtivo else Tema.Texto
     val base = Modifier.height(56.dp)
     Column((if (ativo) base.clickable(onClick = aoTocar) else base).padding(horizontal = 12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
         Icon(icone, contentDescription = rotulo, tint = cor)

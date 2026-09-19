@@ -70,7 +70,7 @@ import kotlinx.coroutines.withContext
 
 /** Aba Pessoas: grupos de rostos (2 colunas, capas circulares), aparições únicas atrás de uma linha, estado da análise. */
 @Composable
-fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, porId: Map<Long, Midia>, aoAbrirPessoa: (Long) -> Unit, aoAbrirAlbumManual: (Long) -> Unit, aoAbrirSeletor: (Long) -> Unit, aoMudou: () -> Unit) {
+fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, porId: Map<Long, Midia>, aoAbrirPessoa: (Long) -> Unit, aoAbrirAlbumManual: (Long) -> Unit, aoAbrirSeletor: (Long) -> Unit, aoAbrirLixeira: () -> Unit, aoMudou: () -> Unit) {
     val ctx = LocalContext.current
     val escopo = rememberCoroutineScope()
     val estado by Indexador.estado.collectAsStateWithLifecycle()
@@ -151,6 +151,13 @@ fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, porId
                     if (!subtela && unicas.isNotEmpty()) item(key = "unicas", span = { GridItemSpan(2) }) {
                         Row(Modifier.fillMaxWidth().clickable { pessoas = emptyList(); mostrandoUnicas = true }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("Aparições únicas · ${unicas.size}", color = Tema.Texto, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Tema.Texto2)
+                        }
+                    }
+                    if (!subtela) item(key = "lixeira", span = { GridItemSpan(2) }) {
+                        Row(Modifier.fillMaxWidth().padding(top = 24.dp).clickable(onClick = aoAbrirLixeira).padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Delete, contentDescription = null, tint = Tema.Texto2)
+                            Text("Lixeira", color = Tema.Texto, fontSize = 16.sp, modifier = Modifier.weight(1f).padding(start = 12.dp))
                             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Tema.Texto2)
                         }
                     }
