@@ -46,8 +46,9 @@ object Indexador {
     private val _estado = MutableStateFlow(Estado())
     val estado: StateFlow<Estado> = _estado
     private val escopo = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private var job: Job? = null
+    @Volatile private var job: Job? = null
     @Volatile private var pedidoPausa = false
+    @Volatile private var rodandoAgora = false
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("indexador", Context.MODE_PRIVATE)
     fun ativada(ctx: Context) = prefs(ctx).getBoolean("ativa", false)
@@ -66,6 +67,8 @@ object Indexador {
     fun continuar(ctx: Context) { pedidoPausa = false; iniciar(ctx) }
 
     private suspend fun rodar(ctx: Context) {
+        if (rodandoAgora) return   // trava dura: nunca dois trabalhadores (o guard do job tem janela entre threads)
+        rodandoAgora = true
         _estado.update { it.copy(ativa = true, rodando = true, pausada = false, preparando = true) }
         val trava = runCatching { (ctx.getSystemService(Context.POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "galeria:indexador").also { it.acquire(4 * 60 * 60 * 1000L) } }.getOrNull()
         try {
@@ -104,7 +107,7 @@ object Indexador {
             }
             Telemetria.evento("indexacao_fim", mapOf("feitas" to n, "com_rosto" to comRosto, "pessoas" to exemplares.size, "juncoes_auto" to juncoes, "ms_media" to (if (n > 0) somaMs / n else 0L), "erros" to erros, "terminou" to terminou, "ms_total" to Telemetria.ms(t0)))
             _estado.update { it.copy(rodando = false, pausada = !terminou, pessoas = exemplares.size, concluiuEm = if (terminou) System.currentTimeMillis() else it.concluiuEm) }
-        } finally { runCatching { if (trava != null && trava.isHeld) trava.release() } }
+        } finally { runCatching { if (trava != null && trava.isHeld) trava.release() }; rodandoAgora = false }
     }
 
     /** Uma foto: decodifica, detecta, identifica, grava. Devolve quantos rostos entraram. */
@@ -211,9 +214,13 @@ object Indexador {
         val lado = (max(r.caixa.width(), r.caixa.height()) * 1.8f).toInt().coerceIn(8, min(b.width, b.height))
         val x = (r.caixa.exactCenterX() - lado / 2f).toInt().coerceIn(0, max(0, b.width - lado))
         val y = (r.caixa.exactCenterY() - lado / 2f).toInt().coerceIn(0, max(0, b.height - lado))
+        // createBitmap(b, 0,0,largura,altura) DEVOLVE o próprio b (identidade); recyclar "rec" matava o bitmap de
+        // trabalho quando o rosto preenchia o quadro -> SIGABRT no drawBitmap seguinte (bug achado na noite 19/09).
         val rec = Bitmap.createBitmap(b, x, y, min(lado, b.width - x), min(lado, b.height - y))
-        val peq = Bitmap.createScaledBitmap(rec, 160, 160, true); if (peq !== rec) rec.recycle()
-        Indice.capa(ctx, pessoa).outputStream().use { peq.compress(Bitmap.CompressFormat.JPEG, 88, it) }; peq.recycle()
+        val peq = if (rec.width == 160 && rec.height == 160) rec else Bitmap.createScaledBitmap(rec, 160, 160, true)
+        Indice.capa(ctx, pessoa).outputStream().use { peq.compress(Bitmap.CompressFormat.JPEG, 88, it) }
+        if (peq !== rec) peq.recycle()
+        if (rec !== b) rec.recycle()
         true
     }.getOrDefault(false)
 }

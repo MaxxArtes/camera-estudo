@@ -51,3 +51,24 @@ e MobileCLIP para busca semântica, tudo no aparelho. https://ente.com/ml/
 
 **Evitar:** RMBG-2.0 (comercial só com contrato), YOLO-seg da Ultralytics (AGPL, a câmera aceitou só para ela),
 MobileCLIP (pesos só pesquisa), InsightFace (modelos não comerciais), CodeFormer (não comercial), SkyAR (CC BY-NC-SA).
+
+## No aparelho do dono (dumpsys package, 20/09 01:40, só leitura)
+- **Galeria** `com.miui.gallery` 4.3.1.18-global (minSdk 31, targetSdk 35), 111 atividades, 74 permissões. Componentes
+  que mostram recurso: `PeoplePageActivity`, `PickFaceAlbumActivity`, `PickPeopleActivity`, **`IgnorePeoplePageActivity`**
+  (ocultar pessoas, igual ao nosso "Ocultar"), `SearchActivity`/`SearchProvider`, `TrashActivity`, `SecretAlbumDetailActivity`,
+  `ShareAlbumDetailActivity` + convites (álbum compartilhado), `CloudSettings`/`GallerySyncService` (Xiaomi Cloud),
+  widgets 2x2/2x3/4x2/4x4 (`CustomWidgetProvider*`, `RecommendWidgetProvider*` = "memórias"), `AiAddToAlbumPageActivity`,
+  `GalleryProviderForAiToolbox` + `AIActionProvider` (integração com o AI Toolbox do HyperOS; permissões
+  `aiservice.permission.AI_ABILITY`, `hyperos.permission.READ_AIACTION`), `GalleryProviderForMediaEditor` (ponte para o editor).
+- **Editor** `com.miui.mediaeditor` 2.4.0.5.2-global (minSdk 32), 45 atividades, 7 filtros de `ACTION_EDIT`
+  (`ExternalPhotoEditor` é a porta de entrada; a nossa galeria pode chamar `ACTION_EDIT` e cair nele). Componentes:
+  `AiClawService`, `AiActionProvider`, `AIResultExportActivity` (IA generativa: pedido→serviço→exportar resultado),
+  **`DocPhotoPostProcessingActivity`** e **`IDCardPhotoPostProcessingActivity`** (pós-processo de documento e de foto
+  3x4/identidade: recurso que o nosso scanner já cobre em parte), `MotionPhotoActivity`, `MovieActivity`,
+  `VideoEditorActivity`, `VlogAutoGenerateActivity`/`VlogTemplate*` (vlog automático por modelo),
+  **`ReEditServiceActivity`** (reedição = histórico não destrutivo), `PhotoEditorTipsActivity`, `MlKitInitProvider`
+  (o editor usa ML Kit do Google), `AvifInitProvider` (AVIF), Firebase Messaging, WorkManager com restrições
+  BatteryCharging/BatteryNotLow/NetworkState/StorageNotLow (trabalho pesado só carregando e com rede: mesma política que o
+  Ente usa e que a nossa indexação deve adotar).
+- Não é possível ler o índice de rostos deles nem os modelos (dados privados do app; sem root). O que vale copiar de
+  desenho: pessoas com "ignorar", reedição não destrutiva, pós-processo de documento/3x4, trabalho pesado só carregando.
