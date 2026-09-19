@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.72",
+      "build": 79,
+      "tag": "v0.72-build79",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.72-build79.apk",
+      "mudou": [
+        "Câmera: Ultra HDR (gain map) na foto simples elegível, com opção na gaveta; 0.72"
+      ]
+    },
+    {
       "versao": "0.71",
       "build": 78,
       "tag": "v0.71-build78",
@@ -640,11 +649,11 @@
       ]
     }
   ],
-  "versionName": "0.71",
-  "versionCode": 71,
-  "build": 78,
+  "versionName": "0.72",
+  "versionCode": 72,
+  "build": 79,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.71-build78.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.72-build79.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-18T23:26:30Z"
+  "publicadoEm": "2026-09-19T01:44:37Z"
 }
