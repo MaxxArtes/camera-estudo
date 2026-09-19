@@ -2,6 +2,7 @@ name: build
 on:
   push:
     branches: [main]
+    paths-ignore: ['galeria/**', '.github/workflows/galeria.yml']
   workflow_dispatch:
 jobs:
   apk:

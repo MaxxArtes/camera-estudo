@@ -8,4 +8,4 @@ pluginManagement {
 }
 dependencyResolutionManagement { repositories { google(); mavenCentral() } }
 rootProject.name = "camera-estudo"
-include(":app")
+include(":app", ":galeria")

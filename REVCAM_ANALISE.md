@@ -65,3 +65,56 @@ Comparação Clássico x Aparelho x GCam x Xiaomi (ressalva: enquadramento vario
 - Troca-troca real, não nocaute -> manter os DOIS como opção (Astra estava certo). Considerar Aparelho como padrão.
 - Ambos ainda perdem para Xiaomi/GCam no escuro (SuperNight/HDR+ multiquadro em hardware, fora da API pública).
   Confirma agy+Astra: não tentar bater SuperNight por software; nosso diferencial é resolução cheia, EXIF e os modos.
+
+## A/B objetivo por EXIF (19/09, 16 fotos noturnas do dono, mesmo poste, 22:05-22:10)
+Ferramenta: PIL no servidor (sem exiftool); script scratchpad/exif16.py. Fonte identificada pelo campo Software
+(à prova de chute): GCam=`HDR+ 1.0.6955...`, nativa=`MediaTek Camera Application`, nosso=`Camera Estudo 0.72 (modo)`.
+
+Traseira principal (foco 4,95 mm):
+| # | Fonte | Resolução | ISO | Exposição | gain map |
+|---|---|---|---|---|---|
+| 01 | GCam (HDR+) | 12,6 MP | 506 | 1/10 | sim |
+| 02 | GCam (HDR+) | 12,6 MP | 283 | 1/6 | sim |
+| 04 | Nativa MediaTek | 12,6 MP | 2500 | 1/11 | sim |
+| 03,05 | Nosso app (foto) | 12,6 MP | 3239 | 1/20 | não |
+| 06 | Nosso app (noite) | 5,1 MP | 3073 | 1/20 | não |
+
+Frontal (foco 2,24 mm): selfies 08-15 = nosso app, 5,0 MP (1944x2592); a 09 tem desfoque de fundo (Retrato,
+bom resultado); a 16 = nativa, **20,2 MP** (3888x5184), gain map, ISO 1600. Nossa frontal sai a 1/4 da nativa.
+
+Conclusões (viram trabalho):
+1. **Frontal 5 vs 20 MP.** Mesma trava do 50 MP traseiro, mas na frontal; sensor 20 MP binado 4:1. Pedir resolução
+   cheia é código nosso (ResolutionSelector), não depende de tag vendor. Medir detalhe real vs upscale.
+2. **Noite se ganha na exposição, não na média.** GCam ISO 283-506 @ 1/6-1/10; nós ISO ~3200 @ 1/20. GCam expõe
+   ~2x mais tempo com ~6x menos ISO e empilha alinhado. Nossa noite faz média de quadros CURTOS (ISO alto) e cai
+   para 5,1 MP. Direção: alongar exposição/baixar ISO no noite (Camera2Interop SENSOR_EXPOSURE_TIME/SENSITIVITY,
+   AE off), risco de borrão. Não é "bater o SuperNight", é fechar parte da distância de ruído.
+3. **Foto normal nossa já é 12,6 MP** (igual nativa/GCam). Só o noite reduz.
+4. **DateTime ausente no EXIF nosso** (GCam/nativa gravam). Trivial de corrigir no gravaExif.
+5. **Ultra HDR (0.72) nunca disparou:** todas as 16 tinham acabamento ligado (Pessoas + Auto-máscaras) que bloqueia
+   por regra. Zero gain map nas nossas. O selo "indisponível com acabamento" (print do dono) está CORRETO; para
+   validar, desligar Pessoas + Auto-máscaras, Filtro Original, HDR/Rajada off.
+
+## Rodada árvore (19/09, 4 fotos, cena de alto contraste) + bug de UX do selo Ultra HDR
+Fontes: A/C/D = nativa (MediaTek), B = nosso app "(hdr_rajada)" 5,1 MP. Gain map: nativa A e D sim, C não
+(a nativa nem sempre emite Ultra HDR — depende da cena); B (nosso) não.
+- Reforça: nossos modos multiquadro (hdr/rajada/noite) caem para 5,1 MP; foto simples fica 12,6 MP.
+- **Ultra HDR ainda NÃO validado:** o disparo nosso veio em HDR ligado, que bloqueia o Ultra HDR pela regra
+  (ultraHdrEligivel exige !hdr && !rajada && !Pessoas && !autoMascaras && filtro Original). Duas tentativas do dono
+  caíram fora: 1ª com acabamento (Pessoas+Auto-máscaras), 2ª com HDR.
+- **BUG DE UX a corrigir (0.73):** o subtítulo do botão diz sempre "indisponível com acabamento", mas o bloqueador
+  pode ser HDR/Rajada/filtro/extensão — nomear o motivo real ("desligue HDR", "desligue Pessoas", etc.). É o
+  conserto de ergonomia (pavimentar a estrada) que faz o dono chegar no estado elegível sem eu recitar a lista.
+  Passa pelo Astra (regra de design) antes de aplicar.
+
+## CORREÇÃO + Ultra HDR validado (19/09, 23:13)
+O dono corrigiu: "todos foram da nossa câmera". Ele estava certo; eu tinha lido "MediaTek Camera Application"
+como nativa. O código prova o contrário: em tiraFoto(), sem acabamento/HDR/rajada, o ramo `else` salva o JPEG do
+HAL DIRETO (OutputFileOptions, sem recomprimir, sem gravaExif). Logo o caminho LIMPO do nosso app carrega o EXIF
+do aparelho E o gain map do hardware. EXIF não distingue nosso-limpo de nativa; só "Camera Estudo" (processado) e
+"HDR+" (GCam) são inequívocos.
+- **Ultra HDR VALIDADO:** foto do portão, drawer "Automático (ativo)", tudo de acabamento off -> 12,6 MP COM gain
+  map. OUTPUT_FORMAT_JPEG_ULTRA_HDR (0.72) funciona. Fecha a validação pendente.
+- **Reenquadramento:** no caminho limpo já somos qualidade nativa (12,6 MP + Ultra HDR + EXIF do HAL). O gap só
+  surge quando o dono liga NOSSO processamento: acabamento/fusão recomprimem (perdem gain map) e noite cai p/ 5,1 MP.
+- Alvo de qualidade real = preservar Ultra HDR/resolução ATRAVÉS do acabamento, não competir com o HAL no caminho limpo.
