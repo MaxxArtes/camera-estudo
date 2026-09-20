@@ -78,6 +78,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
+import kotlin.math.min
 
 /**
  * Tela cheia sobre preto: deslizar troca de foto, pinça dá zoom (1x a 6x), toque duplo alterna 1x/2,5x, toque simples
@@ -106,6 +107,7 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: L
     var jaContemV by remember { mutableStateOf<Set<Long>>(emptySet()) }
     val carregador = remember { Miniaturas.carregador(ctx) }
     var erroImagem by remember(atual.id) { mutableStateOf<String?>(null) }
+    var proporcao by remember(atual.id) { mutableFloatStateOf(0f) }   // largura/altura da imagem exibida
     LaunchedEffect(indice) { escala = 1f; desloc = Offset.Zero }
     LaunchedEffect(controles, indice) { if (controles) { delay(2000); controles = false } }
     val excluirSistema = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
@@ -136,7 +138,7 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: L
                             pinca = true
                             val zoom = ev.calculateZoom(); val pan = ev.calculatePan(); val centro = ev.calculateCentroid()
                             val nova = (escala * zoom).coerceIn(1f, 6f)
-                            val lim = Offset(size.width * (nova - 1) / 2, size.height * (nova - 1) / 2)
+                            val lim = limiteArrasto(size.width.toFloat(), size.height.toFloat(), proporcao, nova)
                             val d = if (nova == 1f) Offset.Zero else (desloc + pan + (centro - Offset(size.width / 2f, size.height / 2f)) * (escala - nova))
                             escala = nova; desloc = Offset(d.x.coerceIn(-lim.x, lim.x), d.y.coerceIn(-lim.y, lim.y))
                             ev.changes.forEach { it.consume() }
@@ -148,7 +150,7 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: L
                     }
                 }
             }
-            .pointerInput(atual.id) { detectTapGestures(onTap = { controles = !controles }, onDoubleTap = { if (escala > 1f) { escala = 1f; desloc = Offset.Zero } else escala = 2.5f }) },
+            .pointerInput(atual.id) { detectTapGestures(onTap = { controles = !controles }, onDoubleTap = { escala = if (escala > 1f) 1f else 2.5f; desloc = Offset.Zero }) },
             contentAlignment = Alignment.Center) {
             AsyncImage(model = atual.uri, contentDescription = null, imageLoader = carregador, contentScale = ContentScale.Fit,
                 onState = { st ->
@@ -158,7 +160,11 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: L
                             erroImagem = t.message ?: t::class.java.simpleName
                             Telemetria.evento("erro", mapOf("onde" to "visualizador", "msg" to (erroImagem ?: ""), "video" to atual.ehVideo))
                         }
-                        is AsyncImagePainter.State.Success -> erroImagem = null
+                        is AsyncImagePainter.State.Success -> {
+                            erroImagem = null
+                            val dr = st.result.drawable
+                            if (dr.intrinsicWidth > 0 && dr.intrinsicHeight > 0) proporcao = dr.intrinsicWidth.toFloat() / dr.intrinsicHeight
+                        }
                         else -> {}
                     }
                 },
@@ -252,4 +258,21 @@ private fun Acao(icone: ImageVector, rotulo: String, cor: Color = Color.White, a
         Icon(icone, contentDescription = rotulo, tint = cor)
         Text(rotulo, color = Color.White, fontSize = 11.sp)
     }
+}
+
+/**
+ * Até onde a foto pode ser arrastada sem sair da tela. O limite é da IMAGEM exibida, não da tela: com
+ * ContentScale.Fit sobra tarja preta, e usar o tamanho da tela deixava arrastar a foto inteira para fora
+ * (tela preta em zoom alto, dono 20/09). Sem proporção conhecida, cai no comportamento antigo.
+ */
+private fun limiteArrasto(largura: Float, altura: Float, proporcao: Float, escala: Float): Offset {
+    if (proporcao <= 0f || largura <= 0f || altura <= 0f) {
+        return Offset((largura * (escala - 1) / 2).coerceAtLeast(0f), (altura * (escala - 1) / 2).coerceAtLeast(0f))
+    }
+    val larguraAjustada = min(largura, altura * proporcao)      // como o Fit desenha
+    val alturaAjustada = larguraAjustada / proporcao
+    return Offset(
+        ((larguraAjustada * escala - largura) / 2).coerceAtLeast(0f),
+        ((alturaAjustada * escala - altura) / 2).coerceAtLeast(0f)
+    )
 }
