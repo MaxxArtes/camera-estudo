@@ -69,8 +69,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.compose.AsyncImagePainter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -102,6 +104,8 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: L
     var criarAlbumV by remember { mutableStateOf(false) }
     var albunsV by remember { mutableStateOf<List<Indice.AlbumManual>>(emptyList()) }
     var jaContemV by remember { mutableStateOf<Set<Long>>(emptySet()) }
+    val carregador = remember { Miniaturas.carregador(ctx) }
+    var erroImagem by remember(atual.id) { mutableStateOf<String?>(null) }
     LaunchedEffect(indice) { escala = 1f; desloc = Offset.Zero }
     LaunchedEffect(controles, indice) { if (controles) { delay(2000); controles = false } }
     val excluirSistema = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
@@ -146,8 +150,25 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: L
             }
             .pointerInput(atual.id) { detectTapGestures(onTap = { controles = !controles }, onDoubleTap = { if (escala > 1f) { escala = 1f; desloc = Offset.Zero } else escala = 2.5f }) },
             contentAlignment = Alignment.Center) {
-            AsyncImage(model = atual.uri, contentDescription = null, contentScale = ContentScale.Fit,
+            AsyncImage(model = atual.uri, contentDescription = null, imageLoader = carregador, contentScale = ContentScale.Fit,
+                onState = { st ->
+                    when (st) {
+                        is AsyncImagePainter.State.Error -> {
+                            val t = st.result.throwable
+                            erroImagem = t.message ?: t::class.java.simpleName
+                            Telemetria.evento("erro", mapOf("onde" to "visualizador", "msg" to (erroImagem ?: ""), "video" to atual.ehVideo))
+                        }
+                        is AsyncImagePainter.State.Success -> erroImagem = null
+                        else -> {}
+                    }
+                },
                 modifier = Modifier.fillMaxSize().graphicsLayer { scaleX = escala; scaleY = escala; translationX = desloc.x; translationY = desloc.y })
+            erroImagem?.let { msg ->
+                Column(Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Não consegui abrir este arquivo", color = Color.White, fontSize = 16.sp, textAlign = TextAlign.Center)
+                    Text(msg, color = Color(0xFFA3A3AA), fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
+                }
+            }
             if (atual.ehVideo) Box(Modifier.size(72.dp).background(Color(0x99000000), CircleShape).clickable {
                 runCatching { ctx.startActivity(Intent(Intent.ACTION_VIEW).apply { setDataAndType(atual.uri, "video/*"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }) }
                     .onFailure { Toast.makeText(ctx, "Nenhum player disponível", Toast.LENGTH_SHORT).show() }
