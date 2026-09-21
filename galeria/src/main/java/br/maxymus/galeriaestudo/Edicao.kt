@@ -230,7 +230,11 @@ object Edicao {
         }.getOrNull() ?: "foto"
         val base = nomeOrig.substringBeforeLast('.').take(60)
         val nome = "${base}_edit_${java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.US).format(java.util.Date())}." + (if (png) "png" else "jpg")
-        val pasta = original.pasta.ifBlank { "Pictures/Galeria Estudo/" }
+        // O MediaStore só aceita DCIM/ e Pictures/ como diretório primário de imagem. Foto do WhatsApp mora em
+        // Android/media/com.whatsapp/... e a inserção falhava com "Primary directory Android not allowed"; nesse caso
+        // (e em qualquer outra raiz não permitida) a cópia vai para a pasta do app.
+        val raiz = original.pasta.trim('/').substringBefore('/')
+        val pasta = if (raiz == "DCIM" || raiz == "Pictures") original.pasta else "Pictures/Galeria Estudo/"
         val v = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, nome); put(MediaStore.MediaColumns.MIME_TYPE, if (png) "image/png" else "image/jpeg")
             put(MediaStore.MediaColumns.RELATIVE_PATH, pasta); put(MediaStore.MediaColumns.IS_PENDING, 1)
