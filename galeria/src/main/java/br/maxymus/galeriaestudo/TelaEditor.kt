@@ -95,7 +95,7 @@ import kotlin.math.roundToInt
 private typealias Receita = Edicao.Receita
 
 /** Grupos da faixa (Astra 20/09): ordem fixa, nome e ícone sempre visíveis. Marcações e Perspectiva entram quando prontos. */
-private enum class Grupo(val rotulo: String, val icone: ImageVector, val parametros: List<String>) {
+private enum class GrupoEditor(val rotulo: String, val icone: ImageVector, val parametros: List<String>) {
     Luz("Luz", Icons.Filled.WbSunny, listOf("Brilho", "Contraste", "Realces", "Sombras", "Brancos", "Pretos")),
     Cor("Cor", Icons.Filled.Palette, listOf("Temperatura", "Matiz", "Saturação")),
     Recortar("Recortar", Icons.Filled.Crop, emptyList()),
@@ -137,7 +137,7 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
     var receita by remember { mutableStateOf(Receita()) }
     val historico = remember { mutableStateOf(listOf(Receita())) }
     var posHist by remember { mutableStateOf(0) }
-    var grupo by remember { mutableStateOf<Grupo?>(null) }
+    var grupo by remember { mutableStateOf<GrupoEditor?>(null) }
     var parametro by remember { mutableStateOf("Brilho") }
     var proporcao by remember { mutableStateOf(0f) }
     var comparando by remember { mutableStateOf(false) }
@@ -163,9 +163,9 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
         previaOrientada = withContext(Dispatchers.Default) { Edicao.aplicaGeometria(p, Edicao.Geometria(receita.geo.giros, receita.geo.espelhado)) }
     }
     // geometria muda → recalcula prévia, bitmap de trabalho, miniatura e invalida a máscara (a pessoa mudou de lugar)
-    LaunchedEffect(previa, receita.geo, grupo == Grupo.Recortar) {
+    LaunchedEffect(previa, receita.geo, grupo == GrupoEditor.Recortar) {
         val p = previa ?: return@LaunchedEffect
-        if (grupo == Grupo.Recortar) return@LaunchedEffect
+        if (grupo == GrupoEditor.Recortar) return@LaunchedEffect
         val g = withContext(Dispatchers.Default) { Edicao.aplicaGeometria(p, receita.geo) }
         previaGeo = g; mascara = null
         trabalho = withContext(Dispatchers.Default) { val esc = LADO_TRABALHO.toFloat() / maxOf(g.width, g.height); if (esc >= 1f) g else Bitmap.createScaledBitmap(g, (g.width * esc).roundToInt().coerceAtLeast(1), (g.height * esc).roundToInt().coerceAtLeast(1), true) }
@@ -267,7 +267,7 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
             when {
                 erro != null -> Text(erro!!, color = Tema.Texto2, modifier = Modifier.padding(24.dp))
                 previa == null -> CircularProgressIndicator(color = Tema.Coral)
-                grupo == Grupo.Recortar -> previaOrientada?.let { b -> Recorte(b, receita.geo, proporcao, densidade.density, filtroCor) { novaGeo -> registra(receita.copy(geo = novaGeo)) } }
+                grupo == GrupoEditor.Recortar -> previaOrientada?.let { b -> Recorte(b, receita.geo, proporcao, densidade.density, filtroCor) { novaGeo -> registra(receita.copy(geo = novaGeo)) } }
                 else -> {
                     val exibida = if (comparando) previaGeo else (previaCpu ?: previaGeo ?: previa)
                     exibida?.let { b ->
@@ -313,14 +313,14 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
         AnimatedVisibility(visible = grupo != null) {
             Box(Modifier.fillMaxWidth().height(144.dp).background(Tema.Superficie)) {
                 when (val g = grupo) {
-                    Grupo.Recortar -> PainelRecorte(receita.geo, proporcao, aoProporcao = { proporcao = it; registra(receita.copy(geo = receita.geo.copy(recorte = recorteCentral(previaOrientada, it)))) },
+                    GrupoEditor.Recortar -> PainelRecorte(receita.geo, proporcao, aoProporcao = { proporcao = it; registra(receita.copy(geo = receita.geo.copy(recorte = recorteCentral(previaOrientada, it)))) },
                         aoGirar = { registra(receita.copy(geo = receita.geo.copy(giros = (receita.geo.giros + 1) % 4, recorte = RectF(0f, 0f, 1f, 1f)))) },
                         aoEspelhar = { registra(receita.copy(geo = receita.geo.copy(espelhado = !receita.geo.espelhado, recorte = RectF(0f, 0f, 1f, 1f)))) },
                         aoEndireitar = { v -> receita = receita.copy(geo = receita.geo.copy(endireitar = v)) }, aoEndireitarFim = { registra(receita) },
                         aoRedefinir = { proporcao = 0f; registra(receita.copy(geo = Edicao.Geometria())) })
-                    Grupo.Filtros -> PainelFiltros(miniatura, receita.cor, aoFiltro = { f -> registra(receita.copy(cor = receita.cor.copy(filtro = f, intensidade = 100f))) },
+                    GrupoEditor.Filtros -> PainelFiltros(miniatura, receita.cor, aoFiltro = { f -> registra(receita.copy(cor = receita.cor.copy(filtro = f, intensidade = 100f))) },
                         aoIntensidade = { v -> receita = receita.copy(cor = receita.cor.copy(intensidade = v)) }, aoIntensidadeFim = { registra(receita) })
-                    Grupo.Fundo -> PainelFundo(receita.fundo, aoModo = { m -> registra(receita.copy(fundo = receita.fundo.copy(modo = m))) },
+                    GrupoEditor.Fundo -> PainelFundo(receita.fundo, aoModo = { m -> registra(receita.copy(fundo = receita.fundo.copy(modo = m))) },
                         aoIntensidade = { v -> receita = receita.copy(fundo = receita.fundo.copy(intensidade = v)) }, aoIntensidadeFim = { registra(receita) },
                         aoCor = { c -> registra(receita.copy(fundo = receita.fundo.copy(modo = Fundo.Modo.Cor, cor = c))) })
                     null -> {}
@@ -333,7 +333,7 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
 
         // ---- faixa de grupos (72 dp, rolável) ----
         Row(Modifier.fillMaxWidth().height(72.dp).background(Tema.Fundo).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-            Grupo.values().forEach { g ->
+            GrupoEditor.values().forEach { g ->
                 val ativo = grupo == g
                 Column(Modifier.width(86.dp).fillMaxSize().clickable { grupo = if (ativo) null else g; if (g.parametros.isNotEmpty() && parametro !in g.parametros) parametro = g.parametros[0] },
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
