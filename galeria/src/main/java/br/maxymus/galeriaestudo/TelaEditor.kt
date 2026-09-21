@@ -58,6 +58,9 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -116,6 +119,9 @@ private enum class GrupoEditor(val rotulo: String, val icone: ImageVector, val p
     Corrigir("Corrigir", Icons.Filled.Healing, listOf("Pele", "Cicatrizar"))
 }
 private val PROPORCOES = listOf("Livre" to 0f, "1:1" to 1f, "4:3" to 4f / 3f, "3:4" to 3f / 4f, "16:9" to 16f / 9f, "9:16" to 9f / 16f)
+/** Paleta fotográfica do Astra (21/09): âmbar, laranja, coral, rosa, magenta, violeta, azul, ciano, teal, verde. */
+private val CORES_LOCAL = listOf(0xFFFFC107, 0xFFFF7A1A, 0xFFFF575F, 0xFFFF7EA8, 0xFFE040FB, 0xFF7C4DFF, 0xFF3D6BFF, 0xFF26C6DA, 0xFF1E8E7E, 0xFF4CAF50).map { it.toInt() }
+private val CORES_MARCACAO = listOf(0xFFFF575F to "Coral", 0xFF22D3EE to "Ciano", 0xFFA3E635 to "Verde-lima", 0xFFFFFFFF to "Branco", 0xFF111114 to "Preto").map { it.first.toInt() to it.second }
 private val CORES_FUNDO = listOf(0xFFFFFFFF, 0xFF111114, 0xFF8A8A92, 0xFFFF575F, 0xFF3D6BFF, 0xFF3D8A4A, 0xFFEFBD45).map { it.toInt() }
 private const val LADO_TRABALHO = 1024
 
@@ -192,6 +198,8 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
     var verMascara by remember { mutableStateOf(false) }
     var escolhendoTipo by remember { mutableStateOf(false) }
     var localVisual by remember { mutableStateOf<Bitmap?>(null) }
+    var escolhendoCor by remember { mutableStateOf<String?>(null) }   // "A", "B" ou "Marcacao"
+    var corMarcacao by remember { mutableStateOf(prefs.getInt("cor_marcacao", 0xFFFF575F.toInt())) }
     var curando by remember { mutableStateOf(false) }
     var curaDp by remember { mutableStateOf(24f) }
     var campoHsl by remember { mutableStateOf("Saturação") }
@@ -250,14 +258,14 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
         if (t == null || m == null) return@LaunchedEffect
         mascaraVisual = withContext(Dispatchers.Default) { Fundo.visual(t, m, receita.fundo.tracos) }
     }
-    LaunchedEffect(grupo, localAba, verMascara, localSel, receita.local, trabalho, plenaTrabalho) {
+    LaunchedEffect(grupo, localAba, verMascara, localSel, receita.local, trabalho, plenaTrabalho, corMarcacao) {
         val t = trabalho; val m = receita.local.mascaras.getOrNull(localSel)
         if (grupo != GrupoEditor.Local || m == null || t == null || !(localAba == "Forma" || verMascara)) { localVisual = null; return@LaunchedEffect }
         val pl = plenaTrabalho
         localVisual = withContext(Dispatchers.Default) {
             val w = t.width; val h = t.height
             val pesos = FloatArray(w * h) { k -> Local.peso(m, (k % w) / (w - 1f), (k / w) / (h - 1f), pl, w, h) }
-            Fundo.visualDe(pesos, w, h, 0.35f)
+            Fundo.visualDe(pesos, w, h, 0.35f, corMarcacao)
         }
     }
     fun mudou() = receita != receitaBase
@@ -427,7 +435,7 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                                     val ch = ev.changes.firstOrNull { it.pressed }; if (ch != null) { pontos = pontos + ch.position; tracoAtual = pontos; ch.consume() }
                                 } while (ev.changes.any { it.pressed })
                                 if (pontos.isNotEmpty()) fechaCura(pontos, b); tracoAtual = emptyList()
-                            } else if (grupo == GrupoEditor.Local && localAba == "Forma" && localSel >= 0) awaitEachGesture {   // alças da máscara
+                            } else if (grupo == GrupoEditor.Local && (localAba == "Forma" || localAba == "Cor") && localSel >= 0) awaitEachGesture {   // alças da máscara
                                 val baixo = awaitFirstDown(); val e = encaixe(b); val m0 = receita.local.mascaras.getOrNull(localSel)
                                 if (e == null || m0 == null || m0.tipo == Local.Tipo.Pessoa) return@awaitEachGesture
                                 val toque = 24f * densidade.density
@@ -475,7 +483,7 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                             if (grupo == GrupoEditor.Local && localSel >= 0 && !comparando) {
                                 localVisual?.let { lv -> Image(bitmap = lv.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
                                 val mk = receita.local.mascaras.getOrNull(localSel); val e = encaixe(b)
-                                if (mk != null && e != null && localAba == "Forma") Canvas(Modifier.fillMaxSize()) {
+                                if (mk != null && e != null && (localAba == "Forma" || localAba == "Cor")) Canvas(Modifier.fillMaxSize()) {
                                     fun tela(nx: Float, ny: Float) = Offset(e[0] + nx * e[2], e[1] + ny * e[3])
                                     val rA = 12f * density
                                     when (mk.tipo) {
@@ -546,6 +554,8 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                         aoExcluir = { i -> registra(receita.copy(local = receita.local.copy(mascaras = receita.local.mascaras.filterIndexed { j, _ -> j != i }))); localSel = -1 },
                         aoInverter = { i -> val mk = receita.local.mascaras[i]; registra(receita.copy(local = receita.local.copy(mascaras = receita.local.mascaras.toMutableList().also { it[i] = mk.copy(invertida = !mk.invertida) }))) },
                         aoSuavidade = { v -> receita.local.mascaras.getOrNull(localSel)?.let { mk -> trocaLocal(localSel, mk.copy(suavidade = v)) } }, aoSuavidadeFim = { registra(receita) },
+                        aoEscolherCor = { escolhendoCor = it },
+                        aoForcaCor = { v -> receita.local.mascaras.getOrNull(localSel)?.let { mk -> trocaLocal(localSel, mk.copy(forcaCor = v)) } },
                         aoValor = { v -> receita.local.mascaras.getOrNull(localSel)?.let { mk -> trocaLocal(localSel, mk.com(localParam, v)) } }, aoValorFim = { registra(receita) },
                         aoZerar = { receita.local.mascaras.getOrNull(localSel)?.let { mk -> trocaLocal(localSel, mk.com(localParam, 0f)); registra(receita) } })
                     GrupoEditor.Corrigir -> PainelCorrigir(receita, parametro, curando, curaDp, aoParametro = { parametro = it; curando = it == "Cicatrizar" },
@@ -580,6 +590,26 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
         }
     }
 
+    escolhendoCor?.let { alvo ->
+        val mk = receita.local.mascaras.getOrNull(localSel)
+        FolhaCor(
+            titulo = when (alvo) { "Marcacao" -> "Cor da marcação"; "B" -> "Segunda cor"; else -> "Cor da área" },
+            cores = if (alvo == "Marcacao") CORES_MARCACAO else CORES_LOCAL.map { it to "" },
+            atual = when (alvo) { "Marcacao" -> corMarcacao; "B" -> mk?.corB ?: 0; else -> mk?.corA ?: 0 },
+            livre = alvo != "Marcacao",
+            podeRemover = alvo == "B" && (mk?.corB ?: 0) != 0,
+            podeTrocar = alvo == "B" && (mk?.corB ?: 0) != 0 && (mk?.corA ?: 0) != 0,
+            aoFechar = { escolhendoCor = null },
+            aoRemover = { mk?.let { trocaLocal(localSel, it.copy(corB = 0)); registra(receita) }; escolhendoCor = null },
+            aoTrocar = { mk?.let { trocaLocal(localSel, it.copy(corA = it.corB, corB = it.corA)); registra(receita) }; escolhendoCor = null },
+            aoCor = { c ->
+                when (alvo) {
+                    "Marcacao" -> { corMarcacao = c; prefs.edit().putInt("cor_marcacao", c).apply() }
+                    "B" -> mk?.let { trocaLocal(localSel, it.copy(corB = c, forcaCor = if (it.forcaCor == 0f) 60f else it.forcaCor)); registra(receita) }
+                    else -> mk?.let { trocaLocal(localSel, it.copy(corA = c, forcaCor = if (it.forcaCor == 0f) 60f else it.forcaCor)); registra(receita) }
+                }
+            })
+    }
     if (confirmarSaida) AlertDialog(onDismissRequest = { confirmarSaida = false }, title = { Text("Descartar edições?") },
         text = { Text("A foto original não foi alterada.") },
         confirmButton = { TextButton(onClick = { confirmarSaida = false; fechar() }) { Text("Descartar", color = Tema.Coral) } },
@@ -833,14 +863,19 @@ private fun LinhaMotor(motor: Fundo.Motor, aplicando: Boolean, estado: IsnetOnnx
     }
 }
 
-/** Local (Astra): chips Local 1/2/3 + "+", abas Forma/Ajustes, um slider por vez. Pessoa só uma vez. */
+/**
+ * Local (Astra): chips Local 1/2/3 + "+", abas Forma/Ajustes/Cor/Inverter, um slider por vez. Pessoa só uma vez.
+ * A aba Cor tinge a área: uma cor some junto com a máscara (filtro graduado); a segunda cor transforma em gradiente
+ * que cobre a foto (cor A onde a máscara vale 1, cor B onde vale 0), que é o gradiente do Photoshop.
+ */
 @Composable
 private fun PainelLocal(p: Local.Parametros, sel: Int, aba: String, param: String, verMascara: Boolean, escolhendoTipo: Boolean,
                         aoSelecionar: (Int) -> Unit, aoAba: (String) -> Unit, aoParam: (String) -> Unit, aoVerMascara: (Boolean) -> Unit, aoEscolherTipo: (Boolean) -> Unit,
                         aoNova: (Local.Tipo) -> Unit, aoExcluir: (Int) -> Unit, aoInverter: (Int) -> Unit, aoSuavidade: (Float) -> Unit, aoSuavidadeFim: () -> Unit,
+                        aoEscolherCor: (String) -> Unit, aoForcaCor: (Float) -> Unit,
                         aoValor: (Float) -> Unit, aoValorFim: () -> Unit, aoZerar: () -> Unit) {
     val m = p.mascaras.getOrNull(sel)
-    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.SpaceBetween) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalArrangement = Arrangement.SpaceBetween) {
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             p.mascaras.forEachIndexed { i, mk -> Chip("Local ${i + 1} · ${when (mk.tipo) { Local.Tipo.Radial -> "Radial"; Local.Tipo.Linear -> "Linear"; else -> "Pessoa" }}", sel == i, marcado = !mk.neutra) { aoSelecionar(i) } }
             if (p.mascaras.size < Local.MAX) Chip("+", escolhendoTipo) { aoEscolherTipo(!escolhendoTipo) }
@@ -852,28 +887,106 @@ private fun PainelLocal(p: Local.Parametros, sel: Int, aba: String, param: Strin
                 if (p.mascaras.none { it.tipo == Local.Tipo.Pessoa }) Chip("Pessoa", false) { aoNova(Local.Tipo.Pessoa) }
                 if (m == null) Text("Crie uma máscara e ajuste só aquela área.", color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
             }
-            else -> {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Chip("Forma", aba == "Forma") { aoAba("Forma") }; Chip("Ajustes", aba == "Ajustes") { aoAba("Ajustes") }
+            else -> Column {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Chip("Forma", aba == "Forma") { aoAba("Forma") }
+                    Chip("Ajustes", aba == "Ajustes") { aoAba("Ajustes") }
+                    Chip("Cor", aba == "Cor", marcado = m.temCor) { aoAba("Cor") }
                     Chip("Inverter", m.invertida) { aoInverter(sel) }
                     if (aba == "Ajustes") Chip("Ver máscara", verMascara) { aoVerMascara(!verMascara) }
                 }
-                if (aba == "Forma") {
-                    if (m.tipo == Local.Tipo.Radial) Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Suavidade ${m.suavidade.roundToInt()}", color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.width(100.dp))
-                        Slider(value = m.suavidade, onValueChange = { aoSuavidade(it.roundToInt().toFloat()) }, onValueChangeFinished = aoSuavidadeFim, valueRange = 0f..100f, modifier = Modifier.weight(1f).height(28.dp),
-                            colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
-                    } else Text(if (m.tipo == Local.Tipo.Linear) "Arraste as alças: coral = 100% do efeito, branca = 0%. Arraste a linha para mover." else "Máscara da pessoa, separada automaticamente.", color = Tema.Texto2, fontSize = 12.sp)
-                } else {
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { Local.SLIDERS.forEach { s2 -> Chip(s2, param == s2, marcado = m.valor(s2) != 0f) { aoParam(s2) } } }
-                    val v = m.valor(param)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text((if (v > 0) "+" else "") + v.roundToInt().toString(), color = Tema.Texto, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(40.dp))
-                        Slider(value = v, onValueChange = { aoValor(it.roundToInt().toFloat()) }, onValueChangeFinished = aoValorFim, valueRange = -100f..100f, modifier = Modifier.weight(1f).height(28.dp),
-                            colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
-                        TextButton(onClick = aoZerar, enabled = v != 0f) { Text("Redefinir", color = if (v != 0f) Tema.Texto2 else Color.Transparent, fontSize = 12.sp) }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    when (aba) {
+                        "Forma" -> {
+                            if (m.tipo == Local.Tipo.Radial) {
+                                Text("Suavidade ${m.suavidade.roundToInt()}", color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.width(100.dp))
+                                Slider(value = m.suavidade, onValueChange = { aoSuavidade(it.roundToInt().toFloat()) }, onValueChangeFinished = aoSuavidadeFim, valueRange = 0f..100f, modifier = Modifier.weight(1f).height(28.dp),
+                                    colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
+                            } else Text(if (m.tipo == Local.Tipo.Linear) "Arraste as alças: coral = 100% do efeito, branca = 0%." else "Máscara da pessoa, separada automaticamente.",
+                                color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                            TextButton(onClick = { aoEscolherCor("Marcacao") }, modifier = Modifier.height(48.dp)) { Text("Marcação", color = Tema.Texto2, fontSize = 12.sp) }
+                        }
+                        "Cor" -> {
+                            Amostra(m.corA, "A") { aoEscolherCor("A") }
+                            if (m.corB != 0) Amostra(m.corB, "B") { aoEscolherCor("B") }
+                            else TextButton(onClick = { aoEscolherCor("B") }, enabled = m.corA != 0, modifier = Modifier.height(48.dp)) {
+                                Text("+ Cor B", color = if (m.corA != 0) Tema.Texto2 else Color(0x33FFFFFF), fontSize = 12.sp)
+                            }
+                            if (m.corA != 0) {
+                                Text(m.forcaCor.roundToInt().toString(), color = Tema.Texto, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(32.dp))
+                                Slider(value = m.forcaCor, onValueChange = { aoForcaCor(it.roundToInt().toFloat()) }, onValueChangeFinished = aoValorFim, valueRange = 0f..100f,
+                                    modifier = Modifier.weight(1f).height(28.dp), colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
+                            } else Text("Escolha uma cor para tingir a área.", color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.weight(1f).padding(start = 8.dp))
+                        }
+                        else -> {
+                            Column(Modifier.fillMaxWidth()) {
+                                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { Local.SLIDERS.forEach { s2 -> Chip(s2, param == s2, marcado = m.valor(s2) != 0f) { aoParam(s2) } } }
+                                val v = m.valor(param)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text((if (v > 0) "+" else "") + v.roundToInt().toString(), color = Tema.Texto, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(40.dp))
+                                    Slider(value = v, onValueChange = { aoValor(it.roundToInt().toFloat()) }, onValueChangeFinished = aoValorFim, valueRange = -100f..100f, modifier = Modifier.weight(1f).height(28.dp),
+                                        colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
+                                    TextButton(onClick = aoZerar, enabled = v != 0f) { Text("Redefinir", color = if (v != 0f) Tema.Texto2 else Color.Transparent, fontSize = 12.sp) }
+                                }
+                            }
+                        }
                     }
                 }
+            }
+        }
+    }
+}
+
+/** Amostra de cor de 28 dp dentro de um alvo de 48 dp; vazia mostra só o contorno com a letra. */
+@Composable
+private fun Amostra(cor: Int, letra: String, aoTocar: () -> Unit) {
+    Box(Modifier.size(48.dp).clickable(onClick = aoTocar), contentAlignment = Alignment.Center) {
+        if (cor == 0) Box(Modifier.size(28.dp).clip(CircleShape).border(1.dp, Tema.Texto2, CircleShape), contentAlignment = Alignment.Center) {
+            Text(letra, color = Tema.Texto2, fontSize = 11.sp)
+        } else Box(Modifier.size(28.dp).clip(CircleShape).background(Color(cor)).border(2.dp, Color(0x55FFFFFF), CircleShape))
+    }
+}
+
+/** Folha inferior de escolha de cor: paleta em 2 linhas de 5 e, quando `livre`, matiz/saturação/brilho. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FolhaCor(titulo: String, cores: List<Pair<Int, String>>, atual: Int, livre: Boolean, podeRemover: Boolean, podeTrocar: Boolean,
+                     aoFechar: () -> Unit, aoRemover: () -> Unit, aoTrocar: () -> Unit, aoCor: (Int) -> Unit) {
+    val hsv = remember(atual) { FloatArray(3).also { if (atual != 0) android.graphics.Color.colorToHSV(atual, it) else { it[0] = 200f; it[1] = 0.7f; it[2] = 0.9f } } }
+    var matiz by remember(atual) { mutableStateOf(hsv[0]) }
+    var sat by remember(atual) { mutableStateOf(hsv[1]) }
+    var brilho by remember(atual) { mutableStateOf(hsv[2]) }
+    ModalBottomSheet(onDismissRequest = aoFechar, containerColor = Tema.Superficie, sheetState = rememberModalBottomSheetState()) {
+        Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(titulo, color = Tema.Texto, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            cores.chunked(5).forEach { linha ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    linha.forEach { (c, _) ->
+                        Box(Modifier.size(48.dp).clickable { aoCor(c) }, contentAlignment = Alignment.Center) {
+                            Box(Modifier.size(28.dp).clip(CircleShape).background(Color(c)).border(if (c == atual) 3.dp else 1.dp, if (c == atual) Tema.Texto else Color(0x55FFFFFF), CircleShape))
+                        }
+                    }
+                    repeat(5 - linha.size) { Spacer(Modifier.size(48.dp)) }
+                }
+            }
+            if (livre) {
+                Text("Cor livre", color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                val corLivre = android.graphics.Color.HSVToColor(floatArrayOf(matiz, sat, brilho))
+                listOf(Triple("Matiz", matiz / 360f, 0), Triple("Saturação", sat, 1), Triple("Brilho", brilho, 2)).forEach { (rot, v, i) ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(rot, color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.width(78.dp))
+                        Slider(value = v, onValueChange = { nv -> when (i) { 0 -> matiz = nv * 360f; 1 -> sat = nv; else -> brilho = nv } },
+                            modifier = Modifier.weight(1f).height(28.dp), colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
+                    }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Box(Modifier.size(36.dp).clip(CircleShape).background(Color(corLivre)).border(1.dp, Color(0x55FFFFFF), CircleShape))
+                    Button(onClick = { aoCor(corLivre) }, colors = ButtonDefaults.buttonColors(containerColor = Tema.Coral, contentColor = Color.White)) { Text("Usar esta cor", fontSize = 13.sp) }
+                }
+            }
+            if (podeTrocar || podeRemover) Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 4.dp)) {
+                if (podeTrocar) TextButton(onClick = aoTrocar, modifier = Modifier.height(48.dp)) { Text("Trocar A e B", color = Tema.Texto2, fontSize = 13.sp) }
+                if (podeRemover) TextButton(onClick = aoRemover, modifier = Modifier.height(48.dp)) { Text("Remover segunda cor", color = Tema.Coral, fontSize = 13.sp) }
             }
         }
     }

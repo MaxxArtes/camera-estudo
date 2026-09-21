@@ -223,8 +223,9 @@ object Fundo {
     }
 
     /** Sobreposição coral translúcida de uma máscara qualquer (FloatArray w×h). */
-    fun visualDe(plena: FloatArray, w: Int, h: Int, forca: Float = 0.5f): Bitmap {
-        val out = IntArray(w * h) { k -> val a = (plena[k].coerceIn(0f, 1f) * 255f * forca).toInt().coerceIn(0, 255); (a shl 24) or 0x00FF575F }
+    fun visualDe(plena: FloatArray, w: Int, h: Int, forca: Float = 0.5f, cor: Int = 0xFF575F): Bitmap {
+        val rgb = cor and 0x00FFFFFF
+        val out = IntArray(w * h) { k -> val a = (plena[k].coerceIn(0f, 1f) * 255f * forca).toInt().coerceIn(0, 255); (a shl 24) or rgb }
         return Bitmap.createBitmap(out, w, h, Bitmap.Config.ARGB_8888)
     }
 

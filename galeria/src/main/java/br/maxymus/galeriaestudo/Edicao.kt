@@ -58,7 +58,8 @@ object Edicao {
             put("hsl", org.json.JSONObject().apply { put("m", org.json.JSONArray(hsl.matiz)); put("s", org.json.JSONArray(hsl.saturacao)); put("l", org.json.JSONArray(hsl.luminancia)) })
             put("local", org.json.JSONArray().apply { local.mascaras.forEach { m -> put(org.json.JSONObject().apply {
                 put("tipo", m.tipo.name); put("cx", m.cx); put("cy", m.cy); put("rx", m.rx); put("ry", m.ry); put("suav", m.suavidade); put("x1", m.x1); put("y1", m.y1); put("x2", m.x2); put("y2", m.y2); put("inv", m.invertida)
-                put("exp", m.exposicao); put("con", m.contraste); put("sat", m.saturacao); put("tmp", m.temperatura); put("som", m.sombras); put("rea", m.realces) }) } })
+                put("exp", m.exposicao); put("con", m.contraste); put("sat", m.saturacao); put("tmp", m.temperatura); put("som", m.sombras); put("rea", m.realces)
+                put("ca", m.corA); put("cb", m.corB); put("fc", m.forcaCor) }) } })
             put("cura", org.json.JSONArray().apply { cura.pinceladas.forEach { t -> put(org.json.JSONObject().apply { put("r", t.raio); put("p", org.json.JSONArray(t.pontos.flatMap { listOf(it.first, it.second) })) }) } })
             put("fundo", org.json.JSONObject().apply { put("modo", fundo.modo.name); put("intensidade", fundo.intensidade); put("cor", fundo.cor); put("pele", fundo.pele); put("motor", fundo.motor.name)
                 put("tracos", org.json.JSONArray().apply { fundo.tracos.forEach { t -> put(org.json.JSONObject().apply { put("a", t.adiciona); put("r", t.raio); put("p", org.json.JSONArray(t.pontos.flatMap { listOf(it.first, it.second) })) }) } }) })
@@ -76,7 +77,8 @@ object Edicao {
                 return Local.Parametros(List(a.length()) { i -> val o = a.getJSONObject(i)
                     Local.Mascara(Local.Tipo.valueOf(o.getString("tipo")), o.getDouble("cx").toFloat(), o.getDouble("cy").toFloat(), o.getDouble("rx").toFloat(), o.getDouble("ry").toFloat(), o.getDouble("suav").toFloat(),
                         o.getDouble("x1").toFloat(), o.getDouble("y1").toFloat(), o.getDouble("x2").toFloat(), o.getDouble("y2").toFloat(), o.getBoolean("inv"),
-                        o.getDouble("exp").toFloat(), o.getDouble("con").toFloat(), o.getDouble("sat").toFloat(), o.getDouble("tmp").toFloat(), o.getDouble("som").toFloat(), o.getDouble("rea").toFloat()) })
+                        o.getDouble("exp").toFloat(), o.getDouble("con").toFloat(), o.getDouble("sat").toFloat(), o.getDouble("tmp").toFloat(), o.getDouble("som").toFloat(), o.getDouble("rea").toFloat(),
+                        o.optInt("ca", 0), o.optInt("cb", 0), o.optDouble("fc", 0.0).toFloat()) })
             }
             private fun curaDe(a: org.json.JSONArray?): Cura.Parametros {
                 if (a == null) return Cura.Parametros()
