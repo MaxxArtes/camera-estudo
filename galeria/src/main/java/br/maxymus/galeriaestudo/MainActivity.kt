@@ -116,6 +116,7 @@ private fun App() {
     var versaoAlbuns by remember { mutableIntStateOf(0) }
     var lixeiraAberta by remember { mutableStateOf(false) }
     var pastaAberta by remember { mutableStateOf<String?>(null) }
+    var editando by remember { mutableStateOf<Midia?>(null) }
     val estadoFotos = rememberLazyListState()
     val estadoPessoas = rememberLazyGridState()
 
@@ -137,11 +138,15 @@ private fun App() {
 
     val v = visual
     val p = pessoaAberta
-    val alb = albumAberto; val sel = seletorAlbum; val pasta = pastaAberta
-    BackHandler(enabled = v != null || sel != null || alb != null || lixeiraAberta || pasta != null || p != null) { when { v != null -> visual = null; sel != null -> seletorAlbum = null; alb != null -> albumAberto = null; lixeiraAberta -> lixeiraAberta = false; pasta != null -> pastaAberta = null; else -> pessoaAberta = null } }
+    val alb = albumAberto; val sel = seletorAlbum; val pasta = pastaAberta; val ed = editando
+    BackHandler(enabled = ed == null && (v != null || sel != null || alb != null || lixeiraAberta || pasta != null || p != null)) { when { v != null -> visual = null; sel != null -> seletorAlbum = null; alb != null -> albumAberto = null; lixeiraAberta -> lixeiraAberta = false; pasta != null -> pastaAberta = null; else -> pessoaAberta = null } }
     val porId = remember(midias) { midias.associateBy { it.id } }
 
     when {
+        ed != null -> TelaEditor(midia = ed, fechar = { editando = null }, aoSalvo = { copia ->
+            editando = null; versaoMidias++; versaoAlbuns++
+            visual = Visualizacao(listOf(copia), 0, null)
+        })
         v != null -> Visualizador(lista = v.lista, inicial = v.indice, pessoa = v.pessoa, albumManual = v.albumManual, fechar = { visual = null },
             aoExcluida = { m -> midias = midias.filter { it.id != m.id }; visual = null; versaoPessoas++; versaoAlbuns++ },
             aoNaoEEsta = { m ->
@@ -151,7 +156,8 @@ private fun App() {
                     Telemetria.evento("nao_e_esta_pessoa"); versaoPessoas++; visual = null
                 }
             },
-            aoRemovidoDoAlbum = { visual = null; versaoAlbuns++ })
+            aoRemovidoDoAlbum = { visual = null; versaoAlbuns++ },
+            aoEditar = { editando = it })
         sel != null -> SeletorFotos(album = sel, midias = midias, aoFechar = { seletorAlbum = null }, aoConcluido = { seletorAlbum = null; versaoAlbuns++ })
         alb != null -> TelaAlbum(id = alb, porId = porId, versao = versaoAlbuns, voltar = { albumAberto = null },
             aoAdicionar = { seletorAlbum = alb }, aoAbrir = { lista, i -> visual = Visualizacao(lista, i, null, alb) },

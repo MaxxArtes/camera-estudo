@@ -86,7 +86,7 @@ import kotlin.math.min
  * e Mais (Informações; e "Não é esta pessoa" quando aberto por um álbum). Gestos portados da câmera (validados).
  */
 @Composable
-fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: Long? = null, fechar: () -> Unit, aoExcluida: (Midia) -> Unit, aoNaoEEsta: (Midia) -> Unit, aoRemovidoDoAlbum: (Midia) -> Unit = {}) {
+fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: Long? = null, fechar: () -> Unit, aoExcluida: (Midia) -> Unit, aoNaoEEsta: (Midia) -> Unit, aoRemovidoDoAlbum: (Midia) -> Unit = {}, aoEditar: (Midia) -> Unit = {}) {
     val ctx = LocalContext.current
     if (lista.isEmpty()) { LaunchedEffect(Unit) { fechar() }; return }
     var indice by remember { mutableIntStateOf(inicial.coerceIn(0, lista.size - 1)) }
@@ -193,7 +193,7 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: L
         AnimatedVisibility(visible = controles, enter = fadeIn(tween(180)), exit = fadeOut(tween(180)), modifier = Modifier.align(Alignment.BottomCenter)) {
             Row(Modifier.fillMaxWidth().background(Color(0x99000000)).navigationBarsPadding().padding(vertical = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
                 Acao(Icons.Filled.Share, "Compartilhar") { compartilhar() }
-                Acao(Icons.Filled.Edit, "Editar") { editar() }
+                Acao(Icons.Filled.Edit, "Editar") { if (atual.ehVideo) editar() else aoEditar(atual) }
                 Acao(if (favorito) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder, "Favorito", if (favorito) Tema.Coral else Color.White) {
                     favorito = Favoritos.alterna(ctx, atual.uri); Telemetria.evento("favorito", mapOf("ligou" to favorito))
                 }
@@ -202,6 +202,7 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: L
                     Acao(Icons.Filled.MoreVert, "Mais") { menuMais = true }
                     DropdownMenu(expanded = menuMais, onDismissRequest = { menuMais = false }) {
                         DropdownMenuItem(text = { Text("Informações") }, onClick = { menuMais = false; mostrarInfo = true })
+                        DropdownMenuItem(text = { Text("Editar em outro app") }, onClick = { menuMais = false; editar() })
                         DropdownMenuItem(text = { Text("Adicionar a um álbum") }, onClick = {
                             menuMais = false
                             escopo.launch { val db = Indice.get(ctx); albunsV = kotlinx.coroutines.withContext(Dispatchers.IO) { db.listarAlbuns() }; jaContemV = kotlinx.coroutines.withContext(Dispatchers.IO) { db.albunsDaFoto(atual.id) }; folhaAlbuns = true }
