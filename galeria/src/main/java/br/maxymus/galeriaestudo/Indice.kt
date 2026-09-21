@@ -11,7 +11,7 @@ import java.io.File
  * Só números, caixas e vetores; nenhuma imagem além das capas de 160 px em files/. allowBackup=false no manifesto.
  * Correções do usuário (nomes, junções, "não é esta pessoa", ocultar) ficam em tabelas próprias e sobrevivem à reanálise.
  */
-class Indice private constructor(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "indice.db", null, 2) {
+class Indice private constructor(ctx: Context) : SQLiteOpenHelper(ctx.applicationContext, "indice.db", null, 3) {
     companion object {
         @Volatile private var inst: Indice? = null
         fun get(ctx: Context): Indice = inst ?: synchronized(this) { inst ?: Indice(ctx).also { inst = it } }
@@ -35,15 +35,28 @@ class Indice private constructor(ctx: Context) : SQLiteOpenHelper(ctx.applicatio
         db.execSQL("CREATE TABLE exclusoes(foto INTEGER NOT NULL, pessoa INTEGER NOT NULL, PRIMARY KEY(foto, pessoa))")
         db.execSQL("CREATE TABLE juncoes(id INTEGER PRIMARY KEY AUTOINCREMENT, de_pessoa INTEGER NOT NULL, para_pessoa INTEGER NOT NULL, quando INTEGER NOT NULL, rostos TEXT NOT NULL, nome_de TEXT, nome_para TEXT, desfeita INTEGER NOT NULL DEFAULT 0)")
         criaAlbuns(db)
+        criaEdicoes(db)
     }
 
     /** Álbuns manuais (o dono monta): tabela de álbuns + itens (foto do MediaStore). Criadas na v2. */
+    /** Receita de cada cópia gerada pelo editor: permite reabrir a cópia e "reeditar desde a original" (não destrutivo). */
+    private fun criaEdicoes(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS edicoes(copia INTEGER PRIMARY KEY, original INTEGER NOT NULL, receita TEXT NOT NULL, versao INTEGER NOT NULL, quando INTEGER NOT NULL)")
+    }
+    fun guardaEdicao(copia: Long, original: Long, receitaJson: String, versao: Int = 1) = transacao { db ->
+        db.execSQL("INSERT OR REPLACE INTO edicoes(copia, original, receita, versao, quando) VALUES (?,?,?,?,?)", arrayOf<Any?>(copia, original, receitaJson, versao, System.currentTimeMillis()))
+    }
+    class EdicaoSalva(val copia: Long, val original: Long, val receita: String, val versao: Int)
+    fun edicaoDe(copia: Long): EdicaoSalva? = readableDatabase.rawQuery("SELECT copia, original, receita, versao FROM edicoes WHERE copia=?", arrayOf(copia.toString())).use { c ->
+        if (c.moveToFirst()) EdicaoSalva(c.getLong(0), c.getLong(1), c.getString(2), c.getInt(3)) else null
+    }
+
     private fun criaAlbuns(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE IF NOT EXISTS albuns(id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT NOT NULL, criado INTEGER NOT NULL)")
         db.execSQL("CREATE TABLE IF NOT EXISTS album_itens(album INTEGER NOT NULL, foto INTEGER NOT NULL, quando INTEGER NOT NULL, adicionado INTEGER NOT NULL, PRIMARY KEY(album, foto))")
         db.execSQL("CREATE INDEX IF NOT EXISTS i_album_itens_album ON album_itens(album)")
     }
-    override fun onUpgrade(db: SQLiteDatabase, antiga: Int, nova: Int) { if (antiga < 2) criaAlbuns(db) }
+    override fun onUpgrade(db: SQLiteDatabase, antiga: Int, nova: Int) { if (antiga < 2) criaAlbuns(db); if (antiga < 3) criaEdicoes(db) }
 
     fun <T> transacao(bloco: (SQLiteDatabase) -> T): T {
         val db = writableDatabase
