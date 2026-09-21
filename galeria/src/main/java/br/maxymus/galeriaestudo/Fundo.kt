@@ -16,7 +16,10 @@ import kotlin.math.sqrt
  */
 object Fundo {
     enum class Modo { Nenhum, Desfocar, PretoEBranco, Cor, Remover }
-    data class Parametros(val modo: Modo = Modo.Nenhum, val intensidade: Float = 60f, val cor: Int = 0xFFFFFFFF.toInt(), val pele: Float = 0f) {
+    /** Pincelada de correção da máscara: adiciona (vira pessoa, sai do desfoque) ou remove (vira fundo). Normalizada. */
+    data class Traco(val pontos: List<Pair<Float, Float>>, val raio: Float, val adiciona: Boolean)
+
+    data class Parametros(val modo: Modo = Modo.Nenhum, val intensidade: Float = 60f, val cor: Int = 0xFFFFFFFF.toInt(), val pele: Float = 0f, val tracos: List<Traco> = emptyList()) {
         val neutro: Boolean get() = modo == Modo.Nenhum && pele == 0f
     }
 
@@ -32,6 +35,39 @@ object Fundo {
         }
         /** fração da imagem coberta pela pessoa, 0..1 */
         val cobertura: Float get() { var c = 0; for (v in bruta) if (v > 0.5f) c++; return c.toFloat() / bruta.size }
+
+        /**
+         * Máscara no tamanho da imagem: bilinear do 256², depois FILTRO GUIADO pela luminância da foto (a borda da
+         * máscara passa a seguir as bordas reais: cabelo, braço, perna — dono 20/09, grupo de 12 pessoas com pés
+         * desfocados), depois as pinceladas do usuário. Raio relativo ao tamanho: prévia e arquivo batem.
+         */
+        fun plena(px: IntArray, w: Int, h: Int, tracos: List<Traco>): FloatArray {
+            val n = w * h
+            val m = FloatArray(n) { k -> pessoa((k % w) / (w - 1f), (k / w) / (h - 1f)) }
+            val guia = FloatArray(n) { k -> val c = px[k]; ((c shr 16 and 255) * 0.299f + (c shr 8 and 255) * 0.587f + (c and 255) * 0.114f) / 255f }
+            val r = max(3, min(w, h) / 100); val eps = 0.02f
+            val mI = caixaF(guia, w, h, r); val mP = caixaF(m, w, h, r)
+            val ii = FloatArray(n) { guia[it] * guia[it] }; val ip = FloatArray(n) { guia[it] * m[it] }
+            val cI = caixaF(ii, w, h, r); val cIP = caixaF(ip, w, h, r)
+            val a = FloatArray(n); val b = FloatArray(n)
+            for (k in 0 until n) { val varI = cI[k] - mI[k] * mI[k]; val cov = cIP[k] - mI[k] * mP[k]; a[k] = cov / (varI + eps); b[k] = mP[k] - a[k] * mI[k] }
+            val mA = caixaF(a, w, h, r); val mB = caixaF(b, w, h, r)
+            for (k in 0 until n) m[k] = (mA[k] * guia[k] + mB[k]).coerceIn(0f, 1f)
+            for (t in tracos) {
+                val rp = max(1f, t.raio * w); val alvo = if (t.adiciona) 1f else 0f
+                for ((nx, ny) in t.pontos) {
+                    val cx = nx * (w - 1); val cy = ny * (h - 1)
+                    val x0 = max(0, (cx - rp).toInt()); val x1 = min(w - 1, (cx + rp).toInt() + 1); val y0 = max(0, (cy - rp).toInt()); val y1 = min(h - 1, (cy + rp).toInt() + 1)
+                    for (y in y0..y1) for (x in x0..x1) {
+                        val dx = x - cx; val dy = y - cy; val d = sqrt(dx * dx + dy * dy) / rp
+                        if (d > 1f) continue
+                        val peso = 1f - suave(d, 0.7f, 1f)   // miolo cheio, borda macia
+                        val k = y * w + x; m[k] += (alvo - m[k]) * peso
+                    }
+                }
+            }
+            return m
+        }
     }
 
     private val paraLinear = FloatArray(256) { val c = it / 255f; if (c <= 0.04045f) c / 12.92f else ((c + 0.055f) / 1.055f).pow(2.4f) }
@@ -84,6 +120,16 @@ object Fundo {
         return out
     }
 
+    /** Média em caixa separável (raio r) sobre floats. */
+    private fun caixaF(a: FloatArray, w: Int, h: Int, r: Int): FloatArray {
+        val t = FloatArray(a.size); val o = FloatArray(a.size)
+        for (y in 0 until h) { val l = y * w; var s = 0f; var c = 0; for (x in 0 until min(w, r)) { s += a[l + x]; c++ }
+            for (x in 0 until w) { if (x + r < w) { s += a[l + x + r]; c++ }; if (x - r - 1 >= 0) { s -= a[l + x - r - 1]; c-- }; t[l + x] = s / c } }
+        for (x in 0 until w) { var s = 0f; var c = 0; for (y in 0 until min(h, r)) { s += t[y * w + x]; c++ }
+            for (y in 0 until h) { if (y + r < h) { s += t[(y + r) * w + x]; c++ }; if (y - r - 1 >= 0) { s -= t[(y - r - 1) * w + x]; c-- }; o[y * w + x] = s / c } }
+        return o
+    }
+
     private fun caixa(px: IntArray, w: Int, h: Int, r: Int, desloc: Int): IntArray {
         val integ = LongArray((w + 1) * (h + 1))
         for (y in 1..h) { var linha = 0L; for (x in 1..w) { linha += (px[(y - 1) * w + x - 1] shr desloc and 255); integ[y * (w + 1) + x] = integ[(y - 1) * (w + 1) + x] + linha } }
@@ -93,36 +139,46 @@ object Fundo {
             (s / ((x1 - x0) * (y1 - y0))).toInt() }
     }
 
+    /** Sobreposição coral translúcida da área de PESSOA (o que fica fora do desfoque), no tamanho do bitmap dado. */
+    fun visual(b: Bitmap, m: Mascara, tracos: List<Traco>): Bitmap {
+        val w = b.width; val h = b.height
+        val px = IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) }
+        val plena = m.plena(px, w, h, tracos)
+        val out = IntArray(w * h) { k -> val a = (suave(plena[k], 0.2f, 0.8f) * 140f).toInt().coerceIn(0, 255); (a shl 24) or 0x00FF575F }
+        return Bitmap.createBitmap(out, w, h, Bitmap.Config.ARGB_8888)
+    }
+
     /** Aplica o modo escolhido. Devolve bitmap novo (com alfa no modo Remover). */
     fun aplicar(b: Bitmap, m: Mascara, p: Parametros): Bitmap {
         if (p.neutro) return b
         val w = b.width; val h = b.height; val n = w * h
         var px = IntArray(n).also { b.getPixels(it, 0, w, 0, 0, w, h) }
         if (p.pele > 0f) px = embelezar(px, w, h, m, p.pele)
+        val plena = if (p.modo == Modo.Nenhum) FloatArray(0) else m.plena(px, w, h, p.tracos)
         val saida = when (p.modo) {
             Modo.Nenhum -> px
-            Modo.Desfocar -> desfocar(px, w, h, m, p.intensidade)
-            Modo.PretoEBranco -> IntArray(n) { k -> val c = px[k]; val a = suave(m.pessoa((k % w) / (w - 1f), (k / w) / (h - 1f)), 0.2f, 0.8f)
+            Modo.Desfocar -> desfocar(px, w, h, plena, p.intensidade)
+            Modo.PretoEBranco -> IntArray(n) { k -> val c = px[k]; val a = suave(plena[k], 0.2f, 0.8f)
                 val l = ((c shr 16 and 255) * 54 + (c shr 8 and 255) * 183 + (c and 255) * 19) shr 8
                 val r = ((c shr 16 and 255) * a + l * (1 - a)).toInt(); val g = ((c shr 8 and 255) * a + l * (1 - a)).toInt(); val bl = ((c and 255) * a + l * (1 - a)).toInt()
                 (0xFF shl 24) or (r shl 16) or (g shl 8) or bl }
             Modo.Cor -> { val cr = p.cor shr 16 and 255; val cg = p.cor shr 8 and 255; val cb = p.cor and 255
-                IntArray(n) { k -> val c = px[k]; val a = suave(m.pessoa((k % w) / (w - 1f), (k / w) / (h - 1f)), 0.2f, 0.8f)
+                IntArray(n) { k -> val c = px[k]; val a = suave(plena[k], 0.2f, 0.8f)
                     val r = ((c shr 16 and 255) * a + cr * (1 - a)).toInt(); val g = ((c shr 8 and 255) * a + cg * (1 - a)).toInt(); val bl = ((c and 255) * a + cb * (1 - a)).toInt()
                     (0xFF shl 24) or (r shl 16) or (g shl 8) or bl } }
-            Modo.Remover -> IntArray(n) { k -> val a = suave(m.pessoa((k % w) / (w - 1f), (k / w) / (h - 1f)), 0.2f, 0.8f)
+            Modo.Remover -> IntArray(n) { k -> val a = suave(plena[k], 0.2f, 0.8f)
                 (px[k] and 0x00FFFFFF) or ((a * 255f).toInt().coerceIn(0, 255) shl 24) }
         }
         return Bitmap.createBitmap(saida, w, h, Bitmap.Config.ARGB_8888)
     }
 
     /** Desfoque do fundo: disco normalizado em luz linear numa cópia de 600 px (pessoa com peso 0), composto por alfa suave. */
-    private fun desfocar(pFrente: IntArray, w: Int, h: Int, m: Mascara, intensidade: Float): IntArray {
+    private fun desfocar(pFrente: IntArray, w: Int, h: Int, plena: FloatArray, intensidade: Float): IntArray {
         val escF = min(1f, 600f / max(w, h)); val fw = max(1, (w * escF).toInt()); val fh = max(1, (h * escF).toInt())
         val lr = FloatArray(fw * fh); val lg = FloatArray(fw * fh); val lb = FloatArray(fw * fh); val peso = FloatArray(fw * fh)
         for (y in 0 until fh) for (x in 0 until fw) {
             val sx = min(w - 1, (x / escF).toInt()); val sy = min(h - 1, (y / escF).toInt()); val c = pFrente[sy * w + sx]
-            val pf = 1f - suave(m.pessoa(x / (fw - 1f), y / (fh - 1f)), 0.05f, 0.30f)
+            val pf = 1f - suave(plena[sy * w + sx], 0.05f, 0.30f)
             val k = y * fw + x; peso[k] = pf; lr[k] = paraLinear[c shr 16 and 255] * pf; lg[k] = paraLinear[c shr 8 and 255] * pf; lb[k] = paraLinear[c and 255] * pf
         }
         val raio = (2f + (intensidade / 100f) * 8f).toInt().coerceIn(2, 10)
@@ -144,7 +200,7 @@ object Fundo {
         for (y in 0 until h) { val ny = y / (h - 1f)
             for (x in 0 until w) {
                 val i = y * w + x; val nx = x / (w - 1f)
-                val a = suave(m.pessoa(nx, ny), 0.20f, 0.80f)
+                val a = suave(plena[i], 0.20f, 0.80f)
                 val f = pFrente[i]
                 if (a >= 0.995f) { saida[i] = f; continue }
                 val br = srgb(fundo(fR, nx, ny)); val bg = srgb(fundo(fG, nx, ny)); val bl = srgb(fundo(fB, nx, ny))

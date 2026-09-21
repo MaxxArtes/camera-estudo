@@ -55,9 +55,17 @@ object Edicao {
             put("geo", org.json.JSONObject().apply { put("giros", geo.giros); put("espelhado", geo.espelhado); put("endireitar", geo.endireitar); put("recorte", org.json.JSONArray(listOf(geo.recorte.left, geo.recorte.top, geo.recorte.right, geo.recorte.bottom))) })
             put("tom", org.json.JSONObject().apply { put("realces", tom.realces); put("sombras", tom.sombras); put("brancos", tom.brancos); put("pretos", tom.pretos); put("nitidez", tom.nitidez); put("vinheta", tom.vinheta); put("granulacao", tom.granulacao); put("textura", tom.textura); put("clareza", tom.clareza) })
             put("hsl", org.json.JSONObject().apply { put("m", org.json.JSONArray(hsl.matiz)); put("s", org.json.JSONArray(hsl.saturacao)); put("l", org.json.JSONArray(hsl.luminancia)) })
-            put("fundo", org.json.JSONObject().apply { put("modo", fundo.modo.name); put("intensidade", fundo.intensidade); put("cor", fundo.cor); put("pele", fundo.pele) })
+            put("fundo", org.json.JSONObject().apply { put("modo", fundo.modo.name); put("intensidade", fundo.intensidade); put("cor", fundo.cor); put("pele", fundo.pele)
+                put("tracos", org.json.JSONArray().apply { fundo.tracos.forEach { t -> put(org.json.JSONObject().apply { put("a", t.adiciona); put("r", t.raio); put("p", org.json.JSONArray(t.pontos.flatMap { listOf(it.first, it.second) })) }) } }) })
         }.toString()
         companion object {
+            private fun tracosDe(a: org.json.JSONArray?): List<Fundo.Traco> {
+                if (a == null) return emptyList()
+                return List(a.length()) { i ->
+                    val o = a.getJSONObject(i); val p = o.getJSONArray("p")
+                    Fundo.Traco(List(p.length() / 2) { j -> p.getDouble(2 * j).toFloat() to p.getDouble(2 * j + 1).toFloat() }, o.getDouble("r").toFloat(), o.getBoolean("a"))
+                }
+            }
             private fun hslDe(hj: org.json.JSONObject?): Hsl.Parametros {
                 if (hj == null) return Hsl.Parametros()
                 fun lista(k: String): List<Float> { val a = hj.getJSONArray(k); return List(8) { i -> a.getDouble(i).toFloat() } }
@@ -69,7 +77,7 @@ object Edicao {
                     Cor(c.getDouble("brilho").toFloat(), c.getDouble("contraste").toFloat(), c.getDouble("saturacao").toFloat(), c.getDouble("temperatura").toFloat(), c.getDouble("matiz").toFloat(), c.getString("filtro"), c.getDouble("intensidade").toFloat(), c.optDouble("exposicao", 0.0).toFloat()),
                     Geometria(g.getInt("giros"), g.getBoolean("espelhado"), g.getDouble("endireitar").toFloat(), RectF(r.getDouble(0).toFloat(), r.getDouble(1).toFloat(), r.getDouble(2).toFloat(), r.getDouble(3).toFloat())),
                     Tom.Parametros(t.getDouble("realces").toFloat(), t.getDouble("sombras").toFloat(), t.getDouble("brancos").toFloat(), t.getDouble("pretos").toFloat(), t.getDouble("nitidez").toFloat(), t.getDouble("vinheta").toFloat(), t.getDouble("granulacao").toFloat(), t.optDouble("textura", 0.0).toFloat(), t.optDouble("clareza", 0.0).toFloat()),
-                    Fundo.Parametros(Fundo.Modo.valueOf(f.getString("modo")), f.getDouble("intensidade").toFloat(), f.getInt("cor"), f.getDouble("pele").toFloat()),
+                    Fundo.Parametros(Fundo.Modo.valueOf(f.getString("modo")), f.getDouble("intensidade").toFloat(), f.getInt("cor"), f.getDouble("pele").toFloat(), tracosDe(f.optJSONArray("tracos"))),
                     hslDe(o.optJSONObject("hsl"))
                 )
             }.getOrNull()
