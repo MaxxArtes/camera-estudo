@@ -48,8 +48,9 @@ object Edicao {
 
     /** Receita completa e serializável (o histórico e o banco guardam ISSO, nunca bitmaps). */
     data class Receita(val cor: Cor = Cor(), val geo: Geometria = Geometria(), val tom: Tom.Parametros = Tom.Parametros(), val fundo: Fundo.Parametros = Fundo.Parametros(), val hsl: Hsl.Parametros = Hsl.Parametros(),
-                       val local: Local.Parametros = Local.Parametros(), val cura: Cura.Parametros = Cura.Parametros()) {
-        val neutra: Boolean get() = cor.neutra && geo.neutra && tom.neutro && fundo.neutro && hsl.neutro && local.neutro && cura.neutro
+                       val local: Local.Parametros = Local.Parametros(), val cura: Cura.Parametros = Cura.Parametros(),
+                       val escultura: Escultura.Parametros = Escultura.Parametros()) {
+        val neutra: Boolean get() = cor.neutra && geo.neutra && tom.neutro && fundo.neutro && hsl.neutro && local.neutro && cura.neutro && escultura.neutro
         fun toJson(): String = org.json.JSONObject().apply {
             put("v", 1)
             put("cor", org.json.JSONObject().apply { put("brilho", cor.brilho); put("contraste", cor.contraste); put("saturacao", cor.saturacao); put("temperatura", cor.temperatura); put("matiz", cor.matiz); put("filtro", cor.filtro); put("intensidade", cor.intensidade); put("exposicao", cor.exposicao) })
@@ -60,6 +61,7 @@ object Edicao {
                 put("tipo", m.tipo.name); put("cx", m.cx); put("cy", m.cy); put("rx", m.rx); put("ry", m.ry); put("suav", m.suavidade); put("x1", m.x1); put("y1", m.y1); put("x2", m.x2); put("y2", m.y2); put("inv", m.invertida)
                 put("exp", m.exposicao); put("con", m.contraste); put("sat", m.saturacao); put("tmp", m.temperatura); put("som", m.sombras); put("rea", m.realces)
                 put("ca", m.corA); put("cb", m.corB); put("fc", m.forcaCor) }) } })
+            put("escultura", org.json.JSONObject().apply { put("af", escultura.afinar); put("qx", escultura.queixo); put("ol", escultura.olhos); put("na", escultura.nariz); put("lb", escultura.labios) })
             put("cura", org.json.JSONArray().apply { cura.pinceladas.forEach { t -> put(org.json.JSONObject().apply { put("r", t.raio); put("p", org.json.JSONArray(t.pontos.flatMap { listOf(it.first, it.second) })) }) } })
             put("fundo", org.json.JSONObject().apply { put("modo", fundo.modo.name); put("intensidade", fundo.intensidade); put("cor", fundo.cor); put("pele", fundo.pele); put("motor", fundo.motor.name); put("imagem", fundo.imagem); put("credito", fundo.credito)
                 put("tracos", org.json.JSONArray().apply { fundo.tracos.forEach { t -> put(org.json.JSONObject().apply { put("a", t.adiciona); put("r", t.raio); put("p", org.json.JSONArray(t.pontos.flatMap { listOf(it.first, it.second) })) }) } }) })
@@ -80,6 +82,11 @@ object Edicao {
                         o.getDouble("exp").toFloat(), o.getDouble("con").toFloat(), o.getDouble("sat").toFloat(), o.getDouble("tmp").toFloat(), o.getDouble("som").toFloat(), o.getDouble("rea").toFloat(),
                         o.optInt("ca", 0), o.optInt("cb", 0), o.optDouble("fc", 0.0).toFloat()) })
             }
+            private fun esculturaDe(o: org.json.JSONObject?): Escultura.Parametros {
+                if (o == null) return Escultura.Parametros()
+                return Escultura.Parametros(o.optDouble("af", 0.0).toFloat(), o.optDouble("qx", 0.0).toFloat(),
+                    o.optDouble("ol", 0.0).toFloat(), o.optDouble("na", 0.0).toFloat(), o.optDouble("lb", 0.0).toFloat())
+            }
             private fun curaDe(a: org.json.JSONArray?): Cura.Parametros {
                 if (a == null) return Cura.Parametros()
                 return Cura.Parametros(List(a.length()) { i -> val o = a.getJSONObject(i); val p = o.getJSONArray("p")
@@ -98,7 +105,7 @@ object Edicao {
                     Tom.Parametros(t.getDouble("realces").toFloat(), t.getDouble("sombras").toFloat(), t.getDouble("brancos").toFloat(), t.getDouble("pretos").toFloat(), t.getDouble("nitidez").toFloat(), t.getDouble("vinheta").toFloat(), t.getDouble("granulacao").toFloat(), t.optDouble("textura", 0.0).toFloat(), t.optDouble("clareza", 0.0).toFloat()),
                     Fundo.Parametros(Fundo.Modo.valueOf(f.getString("modo")), f.getDouble("intensidade").toFloat(), f.getInt("cor"), f.getDouble("pele").toFloat(), tracosDe(f.optJSONArray("tracos")),
                         runCatching { Fundo.Motor.valueOf(f.optString("motor", "Leve")) }.getOrDefault(Fundo.Motor.Leve), f.optString("imagem", ""), f.optString("credito", "")),
-                    hslDe(o.optJSONObject("hsl")), localDe(o.optJSONArray("local")), curaDe(o.optJSONArray("cura"))
+                    hslDe(o.optJSONObject("hsl")), localDe(o.optJSONArray("local")), curaDe(o.optJSONArray("cura")), esculturaDe(o.optJSONObject("escultura"))
                 )
             }.getOrNull()
         }
