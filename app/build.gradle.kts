@@ -11,8 +11,8 @@ android {
         applicationId = "br.maxymus.cameraestudo"
         minSdk = 26
         targetSdk = 34
-        versionCode = 72
-        versionName = "0.72"
+        versionCode = 73
+        versionName = "0.73"
         // Só arm64: todo celular Android de 2017 em diante. Sem isto o ML Kit traz 20 MB de
         // biblioteca nativa por arquitetura (x86, x86_64, armeabi-v7a) que ninguém usa no aparelho.
         ndk { abiFilters += listOf("arm64-v8a") }
@@ -56,12 +56,12 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.5")
-    implementation("androidx.camera:camera-core:1.4.2")
-    implementation("androidx.camera:camera-camera2:1.4.2")
-    implementation("androidx.camera:camera-lifecycle:1.4.2")
-    implementation("androidx.camera:camera-view:1.4.2")
-    implementation("androidx.camera:camera-video:1.4.2")
-    implementation("androidx.camera:camera-extensions:1.4.2")           // bokeh/HDR nativos, quando o aparelho tem
+    implementation("androidx.camera:camera-core:1.5.3")          // 1.5 trouxe OUTPUT_FORMAT_RAW_JPEG (captura RAW+JPEG)
+    implementation("androidx.camera:camera-camera2:1.5.3")
+    implementation("androidx.camera:camera-lifecycle:1.5.3")
+    implementation("androidx.camera:camera-view:1.5.3")
+    implementation("androidx.camera:camera-video:1.5.3")
+    implementation("androidx.camera:camera-extensions:1.5.3")           // bokeh/HDR nativos, quando o aparelho tem
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6") // retrato por software (pessoa x fundo)
     implementation("com.google.mlkit:face-detection:16.1.7")            // rostos: olhos abertos na rajada, cadastro de pessoas

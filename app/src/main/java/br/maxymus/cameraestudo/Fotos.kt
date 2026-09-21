@@ -32,12 +32,13 @@ object Fotos {
     const val PASTA = "CameraEstudo"
     private const val PREFS = "favoritos"
 
-    private fun carimbo() = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+    fun carimbo() = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
 
     /** Valores para o ImageCapture gravar direto no MediaStore. */
-    fun novaEntrada(): ContentValues = ContentValues().apply {
-        put(MediaStore.MediaColumns.DISPLAY_NAME, "FOTO_${carimbo()}.jpg")
-        put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+    /** `base` permite que o DNG e o JPEG da mesma captura RAW saiam com o MESMO nome, mudando só a extensão. */
+    fun novaEntrada(base: String = carimbo(), dng: Boolean = false): ContentValues = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, "FOTO_$base." + (if (dng) "dng" else "jpg"))
+        put(MediaStore.MediaColumns.MIME_TYPE, if (dng) "image/x-adobe-dng" else "image/jpeg")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/" + PASTA)
         }

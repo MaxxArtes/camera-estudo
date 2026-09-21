@@ -106,6 +106,7 @@ import androidx.compose.material.icons.filled.Tonality
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.HdrOn
+import androidx.compose.material.icons.filled.RawOn
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.PhotoSizeSelectLarge
 import androidx.compose.material.icons.filled.WbSunny
@@ -215,6 +216,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     // Ultra HDR (gain map) na foto simples elegível, quando o aparelho anuncia suporte (Astra, 18/09)
     var ultraHdrPref by remember { mutableStateOf(true) }
     var ultraHdrSuportado by remember { mutableStateOf(false) }
+    // RAW: guarda o DNG cru ao lado do JPEG, para revelar depois na galeria (pedido do dono, 21/09).
+    // CameraX 1.5 entrega os dois numa captura só (OUTPUT_FORMAT_RAW_JPEG); o aparelho diz se aceita.
+    var rawPref by remember { mutableStateOf(false) }
+    var rawSuportado by remember { mutableStateOf(false) }
     var desfoque by remember { mutableIntStateOf(5) }                   // Retrato por software: 1..10
     var resolucao by remember { mutableIntStateOf(1) }                 // lado maior da fusão: 0 rápida, 1 padrão, 2 alta
     // acabamento (como na câmera da Xiaomi): embelezador 0..100 e filtro por matriz de cor, aplicados depois da captura
@@ -285,12 +290,16 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     // rajada/HDR nossos pedem latência mínima (quadros próximos); foto simples com "Qualidade" deixa o HAL processar
     val capturaRapida = !qualidadeMax || rajada || (hdr && !noiteAparelho)   // Noite Aparelho: HDR não usa a fusão, então a captura é em qualidade máxima
     // Ultra HDR só na foto simples elegível: sem acabamento (que reescreve SDR), sem fusão e sem extensão
-    val ultraHdrEligivel = modo == Modo.FOTO && filtro == "Original" && embelezar == 0 && !Pessoas.ligado && !Acabamento.autoMascaras && !rajada && !hdr && extensao == ExtensionMode.NONE
+    // RAW e Ultra HDR são formatos de saída diferentes: não cabem na mesma captura, e o RAW ganha quando ligado.
+    // Fusão e rajada também não: elas juntam vários quadros, e aí o "cru" deixaria de corresponder à foto.
+    val rawEligivel = modo == Modo.FOTO && !rajada && !hdr && extensao == ExtensionMode.NONE
+    val rawAtivo = rawPref && rawSuportado && rawEligivel
+    val ultraHdrEligivel = modo == Modo.FOTO && filtro == "Original" && embelezar == 0 && !Pessoas.ligado && !Acabamento.autoMascaras && !rajada && !hdr && extensao == ExtensionMode.NONE && !rawAtivo
     val ultraHdrAtivo = ultraHdrPref && ultraHdrSuportado && ultraHdrEligivel
-    val imageCapture = remember(proporcao, capturaRapida, ultraHdrAtivo) {
+    val imageCapture = remember(proporcao, capturaRapida, ultraHdrAtivo, rawAtivo) {
         @Suppress("DEPRECATION")
         ImageCapture.Builder().setCaptureMode(if (capturaRapida) ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY else ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY).setTargetAspectRatio(proporcao)
-            .apply { if (ultraHdrAtivo) setOutputFormat(ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR) }.build()
+            .apply { if (rawAtivo) setOutputFormat(ImageCapture.OUTPUT_FORMAT_RAW_JPEG) else if (ultraHdrAtivo) setOutputFormat(ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR) }.build()
     }
     val imageAnalysis = remember(proporcao) {
         @Suppress("DEPRECATION")
@@ -305,7 +314,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     LaunchedEffect(Unit) { ultima = Fotos.listar(contexto, limite = 1).firstOrNull()?.uri }
 
     // (Re)liga a câmera quando muda lente, modo ou proporção.
-    LaunchedEffect(lente, modo, proporcao, capturaRapida, extensao, retratoSoftware, ultraHdrAtivo) {
+    LaunchedEffect(lente, modo, proporcao, capturaRapida, extensao, retratoSoftware, ultraHdrAtivo, rawAtivo) {
         ligando = true
         val provider = ProcessCameraProvider.getInstance(contexto).get()
         @Suppress("DEPRECATION")
@@ -398,6 +407,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         }.onFailure { Telemetria.evento("erro", mapOf("onde" to "abrir_camera", "modo" to modo.name.lowercase(), "msg" to (it.message ?: ""))); Toast.makeText(contexto, "Não consegui abrir a câmera: ${it.message}", Toast.LENGTH_LONG).show() }.getOrNull()
         // o aparelho diz se aceita Ultra HDR (CameraX 1.4+, câmera e configuração); só então o formato é pedido
         ultraHdrSuportado = camera?.let { runCatching { ImageCapture.getImageCaptureCapabilities(it.cameraInfo).supportedOutputFormats.contains(ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR) }.getOrDefault(false) } ?: false
+        rawSuportado = camera?.let { runCatching { ImageCapture.getImageCaptureCapabilities(it.cameraInfo).supportedOutputFormats.contains(ImageCapture.OUTPUT_FORMAT_RAW_JPEG) }.getOrDefault(false) } ?: false
         // intensidade da extensão: o próprio aparelho diz se aceita (Android 14+, fabricante); só então a régua aparece
         forcaDisponivel = false
         if (extensaoAtiva != ExtensionMode.NONE && gerente != null) camera?.let { cam ->
@@ -641,12 +651,18 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         if (rajada && !modo.video && (modo != Modo.RETRATO || retratoSoftware)) { tiraVarias(false); return }
         ocupado = true
         val tFoto = Telemetria.agora()
-        val saida = ImageCapture.OutputFileOptions.Builder(contexto.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Fotos.novaEntrada()).build()
-        imageCapture.takePicture(saida, ContextCompat.getMainExecutor(contexto), object : ImageCapture.OnImageSavedCallback {
+        val base = Fotos.carimbo()
+        val saida = ImageCapture.OutputFileOptions.Builder(contexto.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Fotos.novaEntrada(base)).build()
+        val tratador = object : ImageCapture.OnImageSavedCallback {
             override fun onImageSaved(r: ImageCapture.OutputFileResults) {
+                // na captura RAW o retorno vem duas vezes; o DNG é só guardado, e o fluxo segue com o JPEG
+                if (r.imageFormat == android.graphics.ImageFormat.RAW_SENSOR) {
+                    Telemetria.evento("foto_raw", mapOf("ok" to (r.savedUri != null)))
+                    return
+                }
                 val uri = r.savedUri
                 Telemetria.evento("foto", mapOf("modo" to modo.name.lowercase(), "ms" to Telemetria.ms(tFoto), "lente" to (if (lente == CameraSelector.LENS_FACING_FRONT) "frontal" else "traseira"),
-                    "flash" to flash, "zoom" to zoom, "bokeh_nativo" to bokehNativo, "iso" to (proIso ?: Exposicao.iso), "tempo_ns" to (proTempoNs ?: Exposicao.tempoNs), "foco_mm" to Exposicao.focoMm, "abertura" to Exposicao.aberturaF, "ultra_hdr" to ultraHdrAtivo, "ev" to proEv, "ok" to (uri != null)))
+                    "flash" to flash, "zoom" to zoom, "bokeh_nativo" to bokehNativo, "iso" to (proIso ?: Exposicao.iso), "tempo_ns" to (proTempoNs ?: Exposicao.tempoNs), "foco_mm" to Exposicao.focoMm, "abertura" to Exposicao.aberturaF, "ultra_hdr" to ultraHdrAtivo, "raw" to rawAtivo, "ev" to proEv, "ok" to (uri != null)))
                 if ((modo == Modo.DOCUMENTO || modo == Modo.TELA) && uri != null) {
                     trataDocumento(uri)
                 } else if (modo == Modo.RETRATO && !bokehNativo && uri != null) {
@@ -661,7 +677,11 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 } else { ocupado = false; ultima = uri }
             }
             override fun onError(e: ImageCaptureException) { ocupado = false; Telemetria.evento("erro", mapOf("onde" to "foto", "msg" to (e.message ?: ""))); Toast.makeText(contexto, "Falhou: ${e.message}", Toast.LENGTH_LONG).show() }
-        })
+        }
+        if (rawAtivo) {
+            val cru = ImageCapture.OutputFileOptions.Builder(contexto.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, Fotos.novaEntrada(base, dng = true)).build()
+            imageCapture.takePicture(cru, saida, ContextCompat.getMainExecutor(contexto), tratador)   // ordem da API: cru primeiro, JPEG depois
+        } else imageCapture.takePicture(saida, ContextCompat.getMainExecutor(contexto), tratador)
     }
 
     fun disparar() {
@@ -1036,6 +1056,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     item { Ajuste(Icons.Filled.PhotoSizeSelectLarge, "Resolução", listOf("1300 px, rápida", "2000 px", "2600 px, alta")[resolucao], resolucao != 1) { resolucao = (resolucao + 1) % 3 } }
                     item { Ajuste(Icons.Filled.HighQuality, "Qualidade", if (qualidadeMax) "Máxima" else "Rápida", qualidadeMax) { qualidadeMax = !qualidadeMax } }
                     item { Ajuste(Icons.Filled.DarkMode, "Noite", if (noiteAparelho) "Aparelho (12 MP)" else "Clássico (fusão)", noiteAparelho) { noiteAparelho = !noiteAparelho } }
+                    item { Ajuste(Icons.Filled.RawOn, "RAW", if (!rawSuportado) "Sem suporte aqui" else if (!rawPref) "Desligado" else if (rawEligivel) "DNG + JPEG" else "Indisponível com HDR/rajada", rawAtivo) { if (rawSuportado) rawPref = !rawPref } }
                     item { Ajuste(Icons.Filled.HdrOn, "Ultra HDR", if (!ultraHdrPref) "Desligado" else if (!ultraHdrSuportado) "Sem suporte aqui" else if (ultraHdrEligivel) "Automático (ativo)" else "Indisponível com acabamento", ultraHdrAtivo) { ultraHdrPref = !ultraHdrPref } }
                     item { Ajuste(Icons.Filled.HdrAuto, "HDR", if (hdr) "3 exposições" else "Desligado", hdr) { hdr = !hdr } }
                     item { Ajuste(Icons.Filled.BurstMode, "Rajada", if (rajada) "4 quadros" else "Desligada", rajada) { rajada = !rajada } }
