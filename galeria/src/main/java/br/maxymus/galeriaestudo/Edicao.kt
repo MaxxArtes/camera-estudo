@@ -33,9 +33,9 @@ object Edicao {
     data class Cor(
         val brilho: Float = 0f, val contraste: Float = 0f, val saturacao: Float = 0f,
         val temperatura: Float = 0f, val matiz: Float = 0f,
-        val filtro: String = "Original", val intensidade: Float = 100f
+        val filtro: String = "Original", val intensidade: Float = 100f, val exposicao: Float = 0f
     ) {
-        val neutra: Boolean get() = brilho == 0f && contraste == 0f && saturacao == 0f && temperatura == 0f && matiz == 0f && filtro == "Original"
+        val neutra: Boolean get() = brilho == 0f && contraste == 0f && saturacao == 0f && temperatura == 0f && matiz == 0f && filtro == "Original" && exposicao == 0f
     }
 
     /** Geometria: giros de 90° (0..3), espelho horizontal, endireitar em graus, recorte normalizado sobre a imagem já orientada e endireitada. */
@@ -47,23 +47,25 @@ object Edicao {
     }
 
     /** Receita completa e serializável (o histórico e o banco guardam ISSO, nunca bitmaps). */
-    data class Receita(val cor: Cor = Cor(), val geo: Geometria = Geometria(), val tom: Tom.Parametros = Tom.Parametros(), val fundo: Fundo.Parametros = Fundo.Parametros()) {
-        val neutra: Boolean get() = cor.neutra && geo.neutra && tom.neutro && fundo.neutro
+    data class Receita(val cor: Cor = Cor(), val geo: Geometria = Geometria(), val tom: Tom.Parametros = Tom.Parametros(), val fundo: Fundo.Parametros = Fundo.Parametros(), val hsl: Hsl.Parametros = Hsl.Parametros()) {
+        val neutra: Boolean get() = cor.neutra && geo.neutra && tom.neutro && fundo.neutro && hsl.neutro
         fun toJson(): String = org.json.JSONObject().apply {
             put("v", 1)
-            put("cor", org.json.JSONObject().apply { put("brilho", cor.brilho); put("contraste", cor.contraste); put("saturacao", cor.saturacao); put("temperatura", cor.temperatura); put("matiz", cor.matiz); put("filtro", cor.filtro); put("intensidade", cor.intensidade) })
+            put("cor", org.json.JSONObject().apply { put("brilho", cor.brilho); put("contraste", cor.contraste); put("saturacao", cor.saturacao); put("temperatura", cor.temperatura); put("matiz", cor.matiz); put("filtro", cor.filtro); put("intensidade", cor.intensidade); put("exposicao", cor.exposicao) })
             put("geo", org.json.JSONObject().apply { put("giros", geo.giros); put("espelhado", geo.espelhado); put("endireitar", geo.endireitar); put("recorte", org.json.JSONArray(listOf(geo.recorte.left, geo.recorte.top, geo.recorte.right, geo.recorte.bottom))) })
-            put("tom", org.json.JSONObject().apply { put("realces", tom.realces); put("sombras", tom.sombras); put("brancos", tom.brancos); put("pretos", tom.pretos); put("nitidez", tom.nitidez); put("vinheta", tom.vinheta); put("granulacao", tom.granulacao) })
+            put("tom", org.json.JSONObject().apply { put("realces", tom.realces); put("sombras", tom.sombras); put("brancos", tom.brancos); put("pretos", tom.pretos); put("nitidez", tom.nitidez); put("vinheta", tom.vinheta); put("granulacao", tom.granulacao); put("textura", tom.textura); put("clareza", tom.clareza) })
+            put("hsl", org.json.JSONObject().apply { put("m", org.json.JSONArray(hsl.matiz)); put("s", org.json.JSONArray(hsl.saturacao)); put("l", org.json.JSONArray(hsl.luminancia)) })
             put("fundo", org.json.JSONObject().apply { put("modo", fundo.modo.name); put("intensidade", fundo.intensidade); put("cor", fundo.cor); put("pele", fundo.pele) })
         }.toString()
         companion object {
             fun fromJson(j: String): Receita? = runCatching {
                 val o = org.json.JSONObject(j); val c = o.getJSONObject("cor"); val g = o.getJSONObject("geo"); val t = o.getJSONObject("tom"); val f = o.getJSONObject("fundo"); val r = g.getJSONArray("recorte")
                 Receita(
-                    Cor(c.getDouble("brilho").toFloat(), c.getDouble("contraste").toFloat(), c.getDouble("saturacao").toFloat(), c.getDouble("temperatura").toFloat(), c.getDouble("matiz").toFloat(), c.getString("filtro"), c.getDouble("intensidade").toFloat()),
+                    Cor(c.getDouble("brilho").toFloat(), c.getDouble("contraste").toFloat(), c.getDouble("saturacao").toFloat(), c.getDouble("temperatura").toFloat(), c.getDouble("matiz").toFloat(), c.getString("filtro"), c.getDouble("intensidade").toFloat(), c.optDouble("exposicao", 0.0).toFloat()),
                     Geometria(g.getInt("giros"), g.getBoolean("espelhado"), g.getDouble("endireitar").toFloat(), RectF(r.getDouble(0).toFloat(), r.getDouble(1).toFloat(), r.getDouble(2).toFloat(), r.getDouble(3).toFloat())),
-                    Tom.Parametros(t.getDouble("realces").toFloat(), t.getDouble("sombras").toFloat(), t.getDouble("brancos").toFloat(), t.getDouble("pretos").toFloat(), t.getDouble("nitidez").toFloat(), t.getDouble("vinheta").toFloat(), t.getDouble("granulacao").toFloat()),
-                    Fundo.Parametros(Fundo.Modo.valueOf(f.getString("modo")), f.getDouble("intensidade").toFloat(), f.getInt("cor"), f.getDouble("pele").toFloat())
+                    Tom.Parametros(t.getDouble("realces").toFloat(), t.getDouble("sombras").toFloat(), t.getDouble("brancos").toFloat(), t.getDouble("pretos").toFloat(), t.getDouble("nitidez").toFloat(), t.getDouble("vinheta").toFloat(), t.getDouble("granulacao").toFloat(), t.optDouble("textura", 0.0).toFloat(), t.optDouble("clareza", 0.0).toFloat()),
+                    Fundo.Parametros(Fundo.Modo.valueOf(f.getString("modo")), f.getDouble("intensidade").toFloat(), f.getInt("cor"), f.getDouble("pele").toFloat()),
+                    o.optJSONObject("hsl")?.let { hj -> fun lista(k: String) = hj.getJSONArray(k).let { a -> List(8) { i -> a.getDouble(i).toFloat() } }; Hsl.Parametros(lista("m"), lista("s"), lista("l")) } ?: Hsl.Parametros()
                 )
             }.getOrNull()
         }
@@ -78,6 +80,7 @@ object Edicao {
     private fun saturacaoM(v: Float) = ColorMatrix().apply { setSaturation((1f + v / 100f).coerceAtLeast(0f)) }
     private fun temperaturaM(v: Float) = escala(1f + 0.18f * v / 100f, 1f, 1f - 0.18f * v / 100f)
     private fun matizM(v: Float) = escala(1f, 1f + 0.12f * v / 100f, 1f)
+    private fun exposicaoM(v: Float): ColorMatrix { val g = Math.pow(2.0, (v / 100f * 1.5f).toDouble()).toFloat(); return escala(g, g, g) }
 
     private fun preset(nome: String): ColorMatrix = when (nome) {
         "Vívido" -> ColorMatrix().apply { postConcat(saturacaoM(30f)); postConcat(contrasteM(12f)) }
@@ -94,7 +97,7 @@ object Edicao {
     /** Matriz final: filtro (com intensidade) e depois os ajustes. Afim, então interpolar com a identidade é válido. */
     fun matriz(c: Cor): ColorMatrix {
         val m = ColorMatrix()
-        m.postConcat(brilhoM(c.brilho)); m.postConcat(contrasteM(c.contraste)); m.postConcat(saturacaoM(c.saturacao))
+        m.postConcat(exposicaoM(c.exposicao)); m.postConcat(brilhoM(c.brilho)); m.postConcat(contrasteM(c.contraste)); m.postConcat(saturacaoM(c.saturacao))
         m.postConcat(temperaturaM(c.temperatura)); m.postConcat(matizM(c.matiz))
         val f = preset(c.filtro).array; val id = ColorMatrix().array; val k = (c.intensidade / 100f).coerceIn(0f, 1f)
         m.postConcat(ColorMatrix(FloatArray(20) { id[it] * (1f - k) + f[it] * k }))

@@ -13,9 +13,9 @@ import kotlin.math.sqrt
 object Tom {
     data class Parametros(
         val realces: Float = 0f, val sombras: Float = 0f, val brancos: Float = 0f, val pretos: Float = 0f,
-        val nitidez: Float = 0f, val vinheta: Float = 0f, val granulacao: Float = 0f
+        val nitidez: Float = 0f, val vinheta: Float = 0f, val granulacao: Float = 0f, val textura: Float = 0f, val clareza: Float = 0f
     ) {
-        val neutro: Boolean get() = realces == 0f && sombras == 0f && brancos == 0f && pretos == 0f && nitidez == 0f && vinheta == 0f && granulacao == 0f
+        val neutro: Boolean get() = realces == 0f && sombras == 0f && brancos == 0f && pretos == 0f && nitidez == 0f && vinheta == 0f && granulacao == 0f && textura == 0f && clareza == 0f
     }
 
     private fun suave(t: Float): Float { val x = t.coerceIn(0f, 1f); return x * x * (3f - 2f * x) }
@@ -49,6 +49,25 @@ object Tom {
                 val novaBase = tab[(base[k] * 1024f).toInt().coerceIn(0, 1024)]
                 val novoL = (novaBase + (l - base[k])).coerceIn(0f, 1f)
                 val g = novoL / l
+                val r = ((c shr 16 and 255) * g).toInt().coerceIn(0, 255); val gg = ((c shr 8 and 255) * g).toInt().coerceIn(0, 255); val b = ((c and 255) * g).toInt().coerceIn(0, 255)
+                o[k] = (c and (0xFF shl 24)) or (r shl 16) or (gg shl 8) or b
+            }
+            out = o
+        }
+        // 1b) clareza (contraste local em raio grande, só nos meios-tons) e textura (raio pequeno): raios relativos ao
+        //     tamanho da imagem, para a prévia de 1024 px e o arquivo de 4096 px baterem.
+        if (p.clareza != 0f || p.textura != 0f) {
+            val lum = FloatArray(n) { luma(out[it]) }
+            val l2 = lum.copyOf()
+            if (p.clareza != 0f) { val base = caixaF(lum, w, h, max(3, max(w, h) / 16)); val k = p.clareza / 100f * 0.7f
+                for (i in 0 until n) { val t = 2f * lum[i] - 1f; val peso = 1f - t * t; l2[i] += k * peso * (lum[i] - base[i]) } }
+            if (p.textura != 0f) { val base = caixaF(lum, w, h, max(1, max(w, h) / 220)); val k = p.textura / 100f * 0.9f
+                for (i in 0 until n) l2[i] += k * (lum[i] - base[i]) }
+            val o = IntArray(n)
+            for (k in 0 until n) {
+                val c = out[k]; val l = lum[k]
+                if (l <= 0.0005f) { o[k] = c; continue }
+                val g = l2[k].coerceIn(0f, 1f) / l
                 val r = ((c shr 16 and 255) * g).toInt().coerceIn(0, 255); val gg = ((c shr 8 and 255) * g).toInt().coerceIn(0, 255); val b = ((c and 255) * g).toInt().coerceIn(0, 255)
                 o[k] = (c and (0xFF shl 24)) or (r shl 16) or (gg shl 8) or b
             }

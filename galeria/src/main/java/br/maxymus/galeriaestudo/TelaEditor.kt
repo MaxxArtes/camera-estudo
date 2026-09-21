@@ -96,11 +96,11 @@ private typealias Receita = Edicao.Receita
 
 /** Grupos da faixa (Astra 20/09): ordem fixa, nome e ícone sempre visíveis. Marcações e Perspectiva entram quando prontos. */
 private enum class GrupoEditor(val rotulo: String, val icone: ImageVector, val parametros: List<String>) {
-    Luz("Luz", Icons.Filled.WbSunny, listOf("Brilho", "Contraste", "Realces", "Sombras", "Brancos", "Pretos")),
-    Cor("Cor", Icons.Filled.Palette, listOf("Temperatura", "Matiz", "Saturação")),
+    Luz("Luz", Icons.Filled.WbSunny, listOf("Exposição", "Brilho", "Contraste", "Realces", "Sombras", "Brancos", "Pretos")),
+    Cor("Cor", Icons.Filled.Palette, listOf("Temperatura", "Matiz", "Saturação", "Conta-gotas", "HSL")),
     Recortar("Recortar", Icons.Filled.Crop, emptyList()),
     Filtros("Filtros", Icons.Filled.PhotoFilter, emptyList()),
-    Detalhe("Detalhe", Icons.Filled.Details, listOf("Nitidez", "Vinheta", "Granulação")),
+    Detalhe("Detalhe", Icons.Filled.Details, listOf("Nitidez", "Textura", "Clareza", "Vinheta", "Granulação")),
     Fundo("Fundo", Icons.Filled.Portrait, emptyList()),
     Corrigir("Corrigir", Icons.Filled.Healing, listOf("Pele"))
 }
@@ -111,14 +111,16 @@ private const val LADO_TRABALHO = 1024
 private fun valorDe(r: Receita, p: String): Float = when (p) {
     "Brilho" -> r.cor.brilho; "Contraste" -> r.cor.contraste; "Saturação" -> r.cor.saturacao; "Temperatura" -> r.cor.temperatura; "Matiz" -> r.cor.matiz
     "Realces" -> r.tom.realces; "Sombras" -> r.tom.sombras; "Brancos" -> r.tom.brancos; "Pretos" -> r.tom.pretos
-    "Nitidez" -> r.tom.nitidez; "Vinheta" -> r.tom.vinheta; "Granulação" -> r.tom.granulacao; "Pele" -> r.fundo.pele; else -> 0f
+    "Nitidez" -> r.tom.nitidez; "Vinheta" -> r.tom.vinheta; "Granulação" -> r.tom.granulacao; "Pele" -> r.fundo.pele
+    "Exposição" -> r.cor.exposicao; "Textura" -> r.tom.textura; "Clareza" -> r.tom.clareza; else -> 0f
 }
 private fun comValor(r: Receita, p: String, v: Float): Receita = when (p) {
     "Brilho" -> r.copy(cor = r.cor.copy(brilho = v)); "Contraste" -> r.copy(cor = r.cor.copy(contraste = v)); "Saturação" -> r.copy(cor = r.cor.copy(saturacao = v))
     "Temperatura" -> r.copy(cor = r.cor.copy(temperatura = v)); "Matiz" -> r.copy(cor = r.cor.copy(matiz = v))
     "Realces" -> r.copy(tom = r.tom.copy(realces = v)); "Sombras" -> r.copy(tom = r.tom.copy(sombras = v)); "Brancos" -> r.copy(tom = r.tom.copy(brancos = v)); "Pretos" -> r.copy(tom = r.tom.copy(pretos = v))
     "Nitidez" -> r.copy(tom = r.tom.copy(nitidez = v)); "Vinheta" -> r.copy(tom = r.tom.copy(vinheta = v)); "Granulação" -> r.copy(tom = r.tom.copy(granulacao = v))
-    "Pele" -> r.copy(fundo = r.fundo.copy(pele = v)); else -> r
+    "Pele" -> r.copy(fundo = r.fundo.copy(pele = v))
+    "Exposição" -> r.copy(cor = r.cor.copy(exposicao = v)); "Textura" -> r.copy(tom = r.tom.copy(textura = v)); "Clareza" -> r.copy(tom = r.tom.copy(clareza = v)); else -> r
 }
 private fun faixa(p: String): ClosedFloatingPointRange<Float> = when (p) { "Granulação", "Pele" -> 0f..100f; else -> -100f..100f }
 
@@ -153,6 +155,10 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
     var semPessoa by remember { mutableStateOf(false) }
     var autoBase by remember { mutableStateOf<Tom.Auto?>(null) }
     var autoIntensidade by remember { mutableStateOf(100f) }
+    var pegandoBranco by remember { mutableStateOf(false) }
+    var caixaPrevia by remember { mutableStateOf(IntSize.Zero) }
+    var faixaHsl by remember { mutableStateOf(0) }
+    var campoHsl by remember { mutableStateOf("Saturação") }
 
     LaunchedEffect(midia.id) {
         val b = withContext(Dispatchers.IO) { runCatching { Edicao.carregar(ctx, midia.uri, Edicao.LADO_MAX_PREVIA) }.getOrNull() }
@@ -172,9 +178,9 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
         miniatura = withContext(Dispatchers.Default) { val t = trabalho!!; val esc = 160f / maxOf(t.width, t.height); if (esc >= 1f) t else Bitmap.createScaledBitmap(t, (t.width * esc).roundToInt().coerceAtLeast(1), (t.height * esc).roundToInt().coerceAtLeast(1), true) }
     }
     // fundo + tom em CPU, com debounce; máscara sob demanda (uma vez por geometria)
-    LaunchedEffect(trabalho, receita.tom, receita.fundo) {
+    LaunchedEffect(trabalho, receita.tom, receita.fundo, receita.hsl) {
         val t = trabalho ?: return@LaunchedEffect
-        if (receita.tom.neutro && receita.fundo.neutro) { previaCpu = null; return@LaunchedEffect }
+        if (receita.tom.neutro && receita.fundo.neutro && receita.hsl.neutro) { previaCpu = null; return@LaunchedEffect }
         delay(120)
         val precisaMascara = !receita.fundo.neutro
         if (precisaMascara && mascara == null) {
@@ -188,7 +194,9 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
             val comFundo = if (!receita.fundo.neutro && m != null) Fundo.aplicar(t, m, receita.fundo) else t
             val comTom = Tom.aplicar(comFundo, receita.tom)
             if (comTom !== comFundo && comFundo !== t) comFundo.recycle()
-            comTom
+            val comHsl = Hsl.aplicar(comTom, receita.hsl)
+            if (comHsl !== comTom && comTom !== t) comTom.recycle()
+            comHsl
         }
     }
 
@@ -213,6 +221,22 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
         }
     }
 
+    /** Conta-gotas: a área tocada deveria ser cinza/branca; acha temperatura e matiz que a neutralizam (mesma matemática dos sliders). */
+    fun pegaBranco(nx: Float, ny: Float) {
+        val t = trabalho ?: return
+        val cx = (nx * (t.width - 1)).roundToInt().coerceIn(0, t.width - 1); val cy = (ny * (t.height - 1)).roundToInt().coerceIn(0, t.height - 1)
+        var r = 0f; var g = 0f; var b = 0f; var c = 0
+        for (dy in -2..2) for (dx in -2..2) { val x = cx + dx; val y = cy + dy; if (x < 0 || y < 0 || x >= t.width || y >= t.height) continue
+            val p = t.getPixel(x, y); r += (p shr 16 and 255); g += (p shr 8 and 255); b += (p and 255); c++ }
+        if (c == 0 || g <= 0f) return
+        r /= c; g /= c; b /= c
+        val tq = ((b - r) / (0.18f * (r + b).coerceAtLeast(1f)))
+        val rc = r * (1f + 0.18f * tq); val bc = b * (1f - 0.18f * tq); val alvo = (rc + bc) / 2f
+        val mq = (alvo / g - 1f) / 0.12f
+        registra(receita.copy(cor = receita.cor.copy(temperatura = (tq * 100f).coerceIn(-100f, 100f).roundToInt().toFloat(), matiz = (mq * 100f).coerceIn(-100f, 100f).roundToInt().toFloat())))
+        pegandoBranco = false; Telemetria.evento("editor_conta_gotas")
+    }
+
     fun salvar() {
         if (salvando) return
         salvando = true
@@ -224,7 +248,8 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                     val comFundo = if (!receita.fundo.neutro) { val m = Fundo.segmentar(ctx, comGeo); if (m != null && m.cobertura >= 0.02f) Fundo.aplicar(comGeo, m, receita.fundo) else comGeo } else comGeo
                     if (comFundo !== comGeo) comGeo.recycle()
                     val comTom = Tom.aplicar(comFundo, receita.tom); if (comTom !== comFundo) comFundo.recycle()
-                    val pronta = Edicao.aplicaCor(comTom, receita.cor); if (pronta !== comTom) comTom.recycle()
+                    val comHsl = Hsl.aplicar(comTom, receita.hsl); if (comHsl !== comTom) comTom.recycle()
+                    val pronta = Edicao.aplicaCor(comHsl, receita.cor); if (pronta !== comHsl) comHsl.recycle()
                     val png = receita.fundo.modo == Fundo.Modo.Remover
                     val s = Edicao.salvarCopia(ctx, midia, pronta, png); pronta.recycle()
                     val id = s.uri.lastPathSegment?.toLongOrNull() ?: 0L
@@ -271,8 +296,13 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                 else -> {
                     val exibida = if (comparando) previaGeo else (previaCpu ?: previaGeo ?: previa)
                     exibida?.let { b ->
-                        Box(Modifier.fillMaxSize().pointerInput(b) {
-                            awaitEachGesture {   // segurar 350 ms sem mover = comparar com a original
+                        Box(Modifier.fillMaxSize().onSizeChanged { caixaPrevia = it }.pointerInput(b, pegandoBranco) {
+                            if (pegandoBranco) detectTapGestures { pos ->
+                                val cw = caixaPrevia.width.toFloat(); val ch = caixaPrevia.height.toFloat(); if (cw <= 0f || ch <= 0f) return@detectTapGestures
+                                val esc = min(cw / b.width, ch / b.height); val dw = b.width * esc; val dh = b.height * esc
+                                val nx = (pos.x - (cw - dw) / 2f) / dw; val ny = (pos.y - (ch - dh) / 2f) / dh
+                                if (nx in 0f..1f && ny in 0f..1f) pegaBranco(nx, ny)
+                            } else awaitEachGesture {   // segurar 350 ms sem mover = comparar com a original
                                 val baixo = awaitFirstDown(); var moveu = false; val ini = System.currentTimeMillis()
                                 do { val ev = awaitPointerEvent(); if (ev.changes.any { abs(it.position.x - baixo.position.x) > 24f || abs(it.position.y - baixo.position.y) > 24f }) moveu = true
                                     if (!moveu && !comparando && System.currentTimeMillis() - ini >= 350) comparando = true
@@ -283,6 +313,7 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                             if (receita.fundo.modo == Fundo.Modo.Remover && !comparando) Xadrez(Modifier.fillMaxSize())
                             Image(bitmap = b.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, colorFilter = filtroCor, modifier = Modifier.fillMaxSize())
                             if (comparando) Rotulo("Original", Modifier.align(Alignment.TopCenter))
+                            if (pegandoBranco) Rotulo("Toque numa área que deveria ser branca ou cinza", Modifier.align(Alignment.TopCenter))
                             if (segmentando) Row(Modifier.align(Alignment.Center).background(Color(0xCC000000), RoundedCornerShape(10.dp)).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                                 CircularProgressIndicator(Modifier.size(16.dp), color = Tema.Coral, strokeWidth = 2.dp); Text("Separando pessoa…", color = Color.White, fontSize = 13.sp, modifier = Modifier.padding(start = 10.dp))
                             }
@@ -320,6 +351,11 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                         aoRedefinir = { proporcao = 0f; registra(receita.copy(geo = Edicao.Geometria())) })
                     GrupoEditor.Filtros -> PainelFiltros(miniatura, receita.cor, aoFiltro = { f -> registra(receita.copy(cor = receita.cor.copy(filtro = f, intensidade = 100f))) },
                         aoIntensidade = { v -> receita = receita.copy(cor = receita.cor.copy(intensidade = v)) }, aoIntensidadeFim = { registra(receita) })
+                    GrupoEditor.Cor -> PainelCor(receita, parametro, aoParametro = { parametro = it; pegandoBranco = it == "Conta-gotas" },
+                        aoValor = { v -> receita = comValor(receita, parametro, v) }, aoValorFim = { registra(receita) }, aoZerar = { registra(comValor(receita, parametro, 0f)) },
+                        faixaHsl = faixaHsl, campoHsl = campoHsl, aoFaixaHsl = { faixaHsl = it }, aoCampoHsl = { campoHsl = it },
+                        aoHsl = { v -> receita = receita.copy(hsl = receita.hsl.com(faixaHsl, campoHsl, v)) }, aoHslFim = { registra(receita) },
+                        aoZerarHsl = { registra(receita.copy(hsl = Hsl.Parametros())) })
                     GrupoEditor.Fundo -> PainelFundo(receita.fundo, aoModo = { m -> registra(receita.copy(fundo = receita.fundo.copy(modo = m))) },
                         aoIntensidade = { v -> receita = receita.copy(fundo = receita.fundo.copy(intensidade = v)) }, aoIntensidadeFim = { registra(receita) },
                         aoCor = { c -> registra(receita.copy(fundo = receita.fundo.copy(modo = Fundo.Modo.Cor, cor = c))) })
@@ -335,7 +371,7 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
         Row(Modifier.fillMaxWidth().height(72.dp).background(Tema.Fundo).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
             GrupoEditor.values().forEach { g ->
                 val ativo = grupo == g
-                Column(Modifier.width(86.dp).fillMaxSize().clickable { grupo = if (ativo) null else g; if (g.parametros.isNotEmpty() && parametro !in g.parametros) parametro = g.parametros[0] },
+                Column(Modifier.width(86.dp).fillMaxSize().clickable { grupo = if (ativo) null else g; pegandoBranco = false; if (g.parametros.isNotEmpty() && parametro !in g.parametros) parametro = g.parametros[0] },
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     Icon(g.icone, contentDescription = null, tint = if (ativo) Tema.Coral else Tema.Texto, modifier = Modifier.size(24.dp))
                     Text(g.rotulo, color = if (ativo) Tema.Coral else Tema.Texto, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
@@ -400,6 +436,48 @@ private fun PainelSliders(parametros: List<String>, receita: Receita, parametro:
                 modifier = Modifier.weight(1f).pointerInput(parametro) { detectTapGestures(onDoubleTap = { aoZerar() }) },
                 colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
             TextButton(onClick = aoZerar, enabled = v != 0f) { Text("Redefinir", color = if (v != 0f) Tema.Texto2 else Color.Transparent, fontSize = 13.sp) }
+        }
+    }
+}
+
+/** Cor: Temperatura/Matiz/Saturação por slider; Conta-gotas (toque na prévia); HSL com 8 faixas × Matiz/Saturação/Luminância. */
+@Composable
+private fun PainelCor(receita: Receita, parametro: String, aoParametro: (String) -> Unit, aoValor: (Float) -> Unit, aoValorFim: () -> Unit, aoZerar: () -> Unit,
+                      faixaHsl: Int, campoHsl: String, aoFaixaHsl: (Int) -> Unit, aoCampoHsl: (String) -> Unit, aoHsl: (Float) -> Unit, aoHslFim: () -> Unit, aoZerarHsl: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.SpaceBetween) {
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            GrupoEditor.Cor.parametros.forEach { p -> Chip(p, parametro == p, marcado = if (p == "HSL") !receita.hsl.neutro else valorDe(receita, p) != 0f) { aoParametro(p) } }
+        }
+        when (parametro) {
+            "Conta-gotas" -> Text("Toque na foto numa área que deveria ser branca ou cinza neutro. A temperatura e o matiz se ajustam sozinhos.", color = Tema.Texto2, fontSize = 13.sp)
+            "HSL" -> Column {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Hsl.CORES_UI.forEachIndexed { i, c ->
+                        Box(Modifier.size(28.dp).clip(CircleShape).background(Color(c)).border(2.dp, if (faixaHsl == i) Tema.Coral else if (receita.hsl.alterada(i)) Color.White else Color(0x33FFFFFF), CircleShape).clickable { aoFaixaHsl(i) })
+                    }
+                    TextButton(onClick = aoZerarHsl, enabled = !receita.hsl.neutro) { Text("Redefinir", color = if (receita.hsl.neutro) Color.Transparent else Tema.Texto2, fontSize = 12.sp) }
+                }
+                val v = receita.hsl.valor(faixaHsl, campoHsl)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                    listOf("Matiz", "Saturação", "Luminância").forEach { c ->
+                        Text(c.take(3), color = if (campoHsl == c) Tema.Coral else Tema.Texto2, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.clickable { aoCampoHsl(c) }.padding(horizontal = 6.dp, vertical = 4.dp))
+                    }
+                    Text((if (v > 0) "+" else "") + v.roundToInt().toString(), color = Tema.Texto, fontSize = 13.sp, modifier = Modifier.width(36.dp))
+                    Slider(value = v, onValueChange = { aoHsl(it.roundToInt().toFloat()) }, onValueChangeFinished = aoHslFim, valueRange = -100f..100f,
+                        modifier = Modifier.weight(1f).height(28.dp), colors = SliderDefaults.colors(thumbColor = Color(Hsl.CORES_UI[faixaHsl]), activeTrackColor = Color(Hsl.CORES_UI[faixaHsl])))
+                }
+            }
+            else -> {
+                val v = valorDe(receita, parametro)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text((if (v > 0) "+" else "") + v.roundToInt().toString(), color = Tema.Texto, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(44.dp))
+                    Slider(value = v, onValueChange = { aoValor(it.roundToInt().toFloat()) }, onValueChangeFinished = aoValorFim, valueRange = -100f..100f,
+                        modifier = Modifier.weight(1f).pointerInput(parametro) { detectTapGestures(onDoubleTap = { aoZerar() }) },
+                        colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
+                    TextButton(onClick = aoZerar, enabled = v != 0f) { Text("Redefinir", color = if (v != 0f) Tema.Texto2 else Color.Transparent, fontSize = 13.sp) }
+                }
+            }
         }
     }
 }
