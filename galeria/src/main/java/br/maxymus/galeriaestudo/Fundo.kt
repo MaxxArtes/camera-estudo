@@ -15,14 +15,14 @@ import kotlin.math.sqrt
  * exportação batem. Modos: desfocar, preto e branco no fundo, cor sólida, remover (alfa) e embelezar a pele.
  */
 object Fundo {
-    enum class Modo { Nenhum, Desfocar, PretoEBranco, Cor, Remover }
+    enum class Modo { Nenhum, Desfocar, PretoEBranco, Cor, Remover, Imagem }
     /** Motor do recorte (decisão do dono, 20/09, "os dois"): Leve = multiclasse embutido (256², sempre funciona); Padrão = ML Kit
      *  Subject Segmentation (módulo do Play); Alta = ISNet int8 baixado sob demanda (46 MB, classe remove.bg). */
     enum class Motor(val rotulo: String) { Leve("Leve"), Padrao("Padrão"), Alta("Alta") }
     /** Pincelada de correção da máscara: adiciona (vira pessoa, sai do desfoque) ou remove (vira fundo). Normalizada. */
     data class Traco(val pontos: List<Pair<Float, Float>>, val raio: Float, val adiciona: Boolean)
 
-    data class Parametros(val modo: Modo = Modo.Nenhum, val intensidade: Float = 60f, val cor: Int = 0xFFFFFFFF.toInt(), val pele: Float = 0f, val tracos: List<Traco> = emptyList(), val motor: Motor = Motor.Padrao) {
+    data class Parametros(val modo: Modo = Modo.Nenhum, val intensidade: Float = 60f, val cor: Int = 0xFFFFFFFF.toInt(), val pele: Float = 0f, val tracos: List<Traco> = emptyList(), val motor: Motor = Motor.Padrao, val imagem: String = "") {
         val neutro: Boolean get() = modo == Modo.Nenhum && pele == 0f
     }
 
@@ -238,8 +238,18 @@ object Fundo {
         return Bitmap.createBitmap(out, w, h, Bitmap.Config.ARGB_8888)
     }
 
-    /** Aplica o modo escolhido. Devolve bitmap novo (com alfa no modo Remover). */
-    fun aplicar(b: Bitmap, m: Mascara, p: Parametros): Bitmap {
+    /** Escala a imagem de fundo para COBRIR w×h e corta o excesso pelo centro (nunca deforma). */
+    fun prepararFundo(src: Bitmap, w: Int, h: Int): Bitmap {
+        val esc = max(w.toFloat() / src.width, h.toFloat() / src.height)
+        val nw = max(w, (src.width * esc).toInt()); val nh = max(h, (src.height * esc).toInt())
+        val esticado = if (nw != src.width || nh != src.height) Bitmap.createScaledBitmap(src, nw, nh, true) else src
+        val corte = Bitmap.createBitmap(esticado, (nw - w) / 2, (nh - h) / 2, w, h)
+        if (esticado !== src && esticado !== corte) esticado.recycle()   // createBitmap devolve a fonte quando o corte é a imagem toda
+        return corte
+    }
+
+    /** Aplica o modo escolhido. Devolve bitmap novo (com alfa no modo Remover). `fundoBmp` já vem no tamanho de `b`. */
+    fun aplicar(b: Bitmap, m: Mascara, p: Parametros, fundoBmp: Bitmap? = null): Bitmap {
         if (p.neutro) return b
         val w = b.width; val h = b.height; val n = w * h
         var px = IntArray(n).also { b.getPixels(it, 0, w, 0, 0, w, h) }
@@ -258,6 +268,12 @@ object Fundo {
                     (0xFF shl 24) or (r shl 16) or (g shl 8) or bl } }
             Modo.Remover -> IntArray(n) { k -> val a = suave(plena[k], 0.2f, 0.8f)
                 (px[k] and 0x00FFFFFF) or ((a * 255f).toInt().coerceIn(0, 255) shl 24) }
+            Modo.Imagem -> if (fundoBmp == null || fundoBmp.width != w || fundoBmp.height != h) px else {
+                val fp = IntArray(n).also { fundoBmp.getPixels(it, 0, w, 0, 0, w, h) }
+                IntArray(n) { k -> val c = px[k]; val f = fp[k]; val a = suave(plena[k], 0.2f, 0.8f)
+                    val r = ((c shr 16 and 255) * a + (f shr 16 and 255) * (1 - a)).toInt(); val g = ((c shr 8 and 255) * a + (f shr 8 and 255) * (1 - a)).toInt(); val bl = ((c and 255) * a + (f and 255) * (1 - a)).toInt()
+                    (0xFF shl 24) or (r shl 16) or (g shl 8) or bl }
+            }
         }
         return Bitmap.createBitmap(saida, w, h, Bitmap.Config.ARGB_8888)
     }

@@ -61,7 +61,7 @@ object Edicao {
                 put("exp", m.exposicao); put("con", m.contraste); put("sat", m.saturacao); put("tmp", m.temperatura); put("som", m.sombras); put("rea", m.realces)
                 put("ca", m.corA); put("cb", m.corB); put("fc", m.forcaCor) }) } })
             put("cura", org.json.JSONArray().apply { cura.pinceladas.forEach { t -> put(org.json.JSONObject().apply { put("r", t.raio); put("p", org.json.JSONArray(t.pontos.flatMap { listOf(it.first, it.second) })) }) } })
-            put("fundo", org.json.JSONObject().apply { put("modo", fundo.modo.name); put("intensidade", fundo.intensidade); put("cor", fundo.cor); put("pele", fundo.pele); put("motor", fundo.motor.name)
+            put("fundo", org.json.JSONObject().apply { put("modo", fundo.modo.name); put("intensidade", fundo.intensidade); put("cor", fundo.cor); put("pele", fundo.pele); put("motor", fundo.motor.name); put("imagem", fundo.imagem)
                 put("tracos", org.json.JSONArray().apply { fundo.tracos.forEach { t -> put(org.json.JSONObject().apply { put("a", t.adiciona); put("r", t.raio); put("p", org.json.JSONArray(t.pontos.flatMap { listOf(it.first, it.second) })) }) } }) })
         }.toString()
         companion object {
@@ -97,7 +97,7 @@ object Edicao {
                     Geometria(g.getInt("giros"), g.getBoolean("espelhado"), g.getDouble("endireitar").toFloat(), RectF(r.getDouble(0).toFloat(), r.getDouble(1).toFloat(), r.getDouble(2).toFloat(), r.getDouble(3).toFloat())),
                     Tom.Parametros(t.getDouble("realces").toFloat(), t.getDouble("sombras").toFloat(), t.getDouble("brancos").toFloat(), t.getDouble("pretos").toFloat(), t.getDouble("nitidez").toFloat(), t.getDouble("vinheta").toFloat(), t.getDouble("granulacao").toFloat(), t.optDouble("textura", 0.0).toFloat(), t.optDouble("clareza", 0.0).toFloat()),
                     Fundo.Parametros(Fundo.Modo.valueOf(f.getString("modo")), f.getDouble("intensidade").toFloat(), f.getInt("cor"), f.getDouble("pele").toFloat(), tracosDe(f.optJSONArray("tracos")),
-                        runCatching { Fundo.Motor.valueOf(f.optString("motor", "Leve")) }.getOrDefault(Fundo.Motor.Leve)),
+                        runCatching { Fundo.Motor.valueOf(f.optString("motor", "Leve")) }.getOrDefault(Fundo.Motor.Leve), f.optString("imagem", "")),
                     hslDe(o.optJSONObject("hsl")), localDe(o.optJSONArray("local")), curaDe(o.optJSONArray("cura"))
                 )
             }.getOrNull()

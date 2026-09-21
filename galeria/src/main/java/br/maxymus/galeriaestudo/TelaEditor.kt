@@ -6,6 +6,9 @@ import android.net.ConnectivityManager
 import android.graphics.RectF
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -198,6 +201,8 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
     var verMascara by remember { mutableStateOf(false) }
     var escolhendoTipo by remember { mutableStateOf(false) }
     var localVisual by remember { mutableStateOf<Bitmap?>(null) }
+    var fundoBmp by remember { mutableStateOf<Bitmap?>(null) }        // imagem de fundo já no tamanho do trabalho
+    var erroFundoImg by remember { mutableStateOf(false) }
     var escolhendoCor by remember { mutableStateOf<String?>(null) }   // "A", "B" ou "Marcacao"
     var corMarcacao by remember { mutableStateOf(prefs.getInt("cor_marcacao", 0xFFFF575F.toInt())) }
     var curando by remember { mutableStateOf(false) }
@@ -222,7 +227,7 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
         miniatura = withContext(Dispatchers.Default) { val t = trabalho!!; val esc = 160f / maxOf(t.width, t.height); if (esc >= 1f) t else Bitmap.createScaledBitmap(t, (t.width * esc).roundToInt().coerceAtLeast(1), (t.height * esc).roundToInt().coerceAtLeast(1), true) }
     }
     // fundo + tom em CPU, com debounce; máscara sob demanda (uma vez por geometria)
-    LaunchedEffect(trabalho, receita.tom, receita.fundo, receita.hsl, receita.local, receita.cura) {
+    LaunchedEffect(trabalho, receita.tom, receita.fundo, receita.hsl, receita.local, receita.cura, fundoBmp) {
         val t = trabalho ?: return@LaunchedEffect
         val precisaPessoa = !receita.fundo.neutro || receita.local.mascaras.any { it.tipo == Local.Tipo.Pessoa }
         if (receita.tom.neutro && receita.fundo.neutro && receita.hsl.neutro && receita.local.neutro && receita.cura.neutro && !precisaPessoa) { previaCpu = null; return@LaunchedEffect }
@@ -243,7 +248,7 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
         val (resultado, plena) = withContext(Dispatchers.Default) {
             val base = Cura.aplicar(t, receita.cura)
             val pl = if (precisaPessoa && m != null) Fundo.plenaDe(base, m, receita.fundo.tracos) else null
-            val comFundo = if (!receita.fundo.neutro && m != null) Fundo.aplicar(base, m, receita.fundo) else base
+            val comFundo = if (!receita.fundo.neutro && m != null) Fundo.aplicar(base, m, receita.fundo, fundoBmp) else base
             if (comFundo !== base && base !== t) base.recycle()
             val comTom = Tom.aplicar(comFundo, receita.tom); if (comTom !== comFundo && comFundo !== t) comFundo.recycle()
             val comHsl = Hsl.aplicar(comTom, receita.hsl); if (comHsl !== comTom && comTom !== t) comTom.recycle()
@@ -251,6 +256,16 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
             comLocal to pl
         }
         previaCpu = if (resultado === t) null else resultado; plenaTrabalho = plena
+    }
+    LaunchedEffect(receita.fundo.imagem, trabalho) {
+        val t2 = trabalho; val u = receita.fundo.imagem
+        if (t2 == null || u.isBlank()) { fundoBmp = null; erroFundoImg = false; return@LaunchedEffect }
+        val pronto = withContext(Dispatchers.IO) {
+            runCatching { Edicao.carregar(ctx, android.net.Uri.parse(u), maxOf(t2.width, t2.height))?.let { src ->
+                Fundo.prepararFundo(src, t2.width, t2.height).also { if (it !== src) src.recycle() } } }.getOrNull()
+        }
+        fundoBmp = pronto; erroFundoImg = pronto == null
+        if (pronto == null) Telemetria.evento("erro", mapOf("onde" to "fundo_imagem"))
     }
     LaunchedEffect(refinando, trabalho, mascara, receita.fundo.tracos) {
         if (!refinando) { mascaraVisual = null; return@LaunchedEffect }
@@ -292,6 +307,9 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
             return
         }
         aplicaMotor(m)
+    }
+    val escolheImagem = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) { registra(receita.copy(fundo = receita.fundo.copy(modo = Fundo.Modo.Imagem, imagem = uri.toString()))); Telemetria.evento("editor_fundo_imagem") }
     }
     fun sair() { if (mudou()) confirmarSaida = true else fechar() }
     BackHandler { sair() }
@@ -370,7 +388,11 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                     val precisaPessoa = !receita.fundo.neutro || receita.local.mascaras.any { it.tipo == Local.Tipo.Pessoa }
                     val m = if (precisaPessoa) Fundo.segmentar(ctx, base, receita.fundo.motor)?.takeIf { it.cobertura >= 0.02f } else null
                     val pl = if (m != null) Fundo.plenaDe(base, m, receita.fundo.tracos) else null
-                    val comFundo = if (!receita.fundo.neutro && m != null) Fundo.aplicar(base, m, receita.fundo) else base
+                    val fImg = if (receita.fundo.modo == Fundo.Modo.Imagem && receita.fundo.imagem.isNotBlank())
+                        runCatching { Edicao.carregar(ctx, android.net.Uri.parse(receita.fundo.imagem), maxOf(base.width, base.height))?.let { src ->
+                            Fundo.prepararFundo(src, base.width, base.height).also { if (it !== src) src.recycle() } } }.getOrNull() else null
+                    val comFundo = if (!receita.fundo.neutro && m != null) Fundo.aplicar(base, m, receita.fundo, fImg) else base
+                    fImg?.recycle()
                     if (comFundo !== base) base.recycle()
                     val comTom = Tom.aplicar(comFundo, receita.tom); if (comTom !== comFundo) comFundo.recycle()
                     val comHsl = Hsl.aplicar(comTom, receita.hsl); if (comHsl !== comTom) comTom.recycle()
@@ -561,7 +583,12 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                     GrupoEditor.Corrigir -> PainelCorrigir(receita, parametro, curando, curaDp, aoParametro = { parametro = it; curando = it == "Cicatrizar" },
                         aoValor = { v -> receita = comValor(receita, "Pele", v) }, aoValorFim = { registra(receita) }, aoZerar = { registra(comValor(receita, "Pele", 0f)) },
                         aoCuraDp = { curaDp = it }, aoLimparCura = { registra(receita.copy(cura = Cura.Parametros())) })
-                    GrupoEditor.Fundo -> PainelFundo(receita.fundo, aoModo = { m -> refinando = false; registra(receita.copy(fundo = receita.fundo.copy(modo = m))) },
+                    GrupoEditor.Fundo -> PainelFundo(receita.fundo, aoModo = { m ->
+                        refinando = false
+                        if (m == Fundo.Modo.Imagem && receita.fundo.imagem.isBlank()) escolheImagem.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        else registra(receita.copy(fundo = receita.fundo.copy(modo = m)))
+                    },
+                        erroImagem = erroFundoImg, aoTrocarImagem = { escolheImagem.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                         aplicando = segmentando && mascara != null, estadoModelo = estadoModelo, avisoMotor = avisoMotor,
                         aoMotor = { escolheMotor(it) }, aoCancelarBaixa = { IsnetOnnx.cancelar(); baixaJob?.cancel(); baixaJob = null },
                         aoIntensidade = { v -> receita = receita.copy(fundo = receita.fundo.copy(intensidade = v)) }, aoIntensidadeFim = { registra(receita) },
@@ -767,13 +794,14 @@ private fun PainelFiltros(base: Bitmap?, cor: Edicao.Cor, aoFiltro: (String) -> 
  */
 @Composable
 private fun PainelFundo(f: Fundo.Parametros, aoModo: (Fundo.Modo) -> Unit,
+                        erroImagem: Boolean, aoTrocarImagem: () -> Unit,
                         aplicando: Boolean, estadoModelo: IsnetOnnx.Estado, avisoMotor: String?,
                         aoMotor: (Fundo.Motor) -> Unit, aoCancelarBaixa: () -> Unit,
                         aoIntensidade: (Float) -> Unit, aoIntensidadeFim: () -> Unit, aoCor: (Int) -> Unit,
                         refinando: Boolean, pincelAdiciona: Boolean, pincelDp: Float, aoRefinar: (Boolean) -> Unit, aoPincelModo: (Boolean) -> Unit, aoPincelDp: (Float) -> Unit, aoLimparTracos: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
         Row(Modifier.fillMaxWidth().height(48.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            listOf(Fundo.Modo.Nenhum to "Nenhum", Fundo.Modo.Desfocar to "Desfocar", Fundo.Modo.PretoEBranco to "P&B", Fundo.Modo.Cor to "Cor", Fundo.Modo.Remover to "Remover").forEach { (m, r) ->
+            listOf(Fundo.Modo.Nenhum to "Nenhum", Fundo.Modo.Desfocar to "Desfocar", Fundo.Modo.PretoEBranco to "P&B", Fundo.Modo.Cor to "Cor", Fundo.Modo.Imagem to "Imagem", Fundo.Modo.Remover to "Remover").forEach { (m, r) ->
                 Chip(r, f.modo == m && !refinando) { aoModo(m) }
             }
         }
@@ -798,6 +826,12 @@ private fun PainelFundo(f: Fundo.Parametros, aoModo: (Fundo.Modo) -> Unit,
                     Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                         CORES_FUNDO.forEach { c -> Box(Modifier.size(36.dp).clip(CircleShape).background(Color(c)).border(2.dp, if (f.cor == c) Tema.Coral else Color(0x33FFFFFF), CircleShape).clickable { aoCor(c) }) }
                     }
+                    Chip("Refinar", false, marcado = f.tracos.isNotEmpty()) { aoRefinar(true) }
+                }
+                f.modo == Fundo.Modo.Imagem -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (erroImagem) "Não consegui abrir essa imagem." else "A pessoa fica sobre a imagem escolhida.",
+                        color = if (erroImagem) Tema.Coral else Tema.Texto2, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    TextButton(onClick = aoTrocarImagem, modifier = Modifier.height(48.dp)) { Text("Trocar imagem", color = Tema.Coral, fontSize = 12.sp) }
                     Chip("Refinar", false, marcado = f.tracos.isNotEmpty()) { aoRefinar(true) }
                 }
                 f.modo == Fundo.Modo.Remover -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
