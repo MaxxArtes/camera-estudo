@@ -19,7 +19,11 @@ validado (Fundo.Mascara.plena). Editor tem Luz/Cor/Recortar/Filtros/Detalhe/Fund
 /root/.rembg/models/isnet-general-use/isnet-general-use.onnx. venv com onnxruntime/rembg/ai-edge-litert em `/tmp/claude-0/-opt-hs-tactical/b411c8f2-5312-4cb6-a058-243cb5ebe3b7/scratchpad/editor/venv`.
 Pré-processamento ISNet (rembg): resize 1024², /255, mean 0,5 std 1, NCHW; saída [0][0] normalizada min-max, redimensiona.
 
-**Passos que faltam (ordem):**
+**Passo 1 FEITO (20/09 ~13:00 Cuiabá):** quantização dinâmica int8 (ConvInteger) → `/tmp/claude-0/-opt-hs-tactical/b411c8f2-5312-4cb6-a058-243cb5ebe3b7/scratchpad/editor/modelos/isnet-general-use-dyn8.onnx`,
+**46 MB, IoU 0,998 vs fp32** na foto do grupo; sha256 f1b1c6f7656e532627697afc989d953be1e7ef8f55a718f3611e8c9fd50cdef7. fp16 não carrega na ORT (descartado). Estático não é preciso.
+Copiado também para /root/modelos-galeria/isnet-general-use-dyn8.onnx (fora do /tmp).
+
+**Passos que faltam (ordem) — RETOMAR NO 2:**
 1. Ler o resultado da quantização; escolher o menor arquivo com IoU ≥ 0,97 vs fp32 (se dyn8 não quantizar Conv, cair
    para fp16 ~89 MB; estático int8 só se precisar). Reaplicar na foto e olhar o recorte.
 2. Publicar no R2: bucket omnigen-assets, prefixo galeria-estudo/modelos/, via aws CLI com endpoint R2 (credenciais
