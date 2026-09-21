@@ -20,7 +20,12 @@ import java.util.Locale
 import kotlin.math.max
 
 /** Uma foto ou vídeo do aparelho, como vem do MediaStore. */
-data class Midia(val id: Long, val uri: Uri, val ehVideo: Boolean, val quando: Long, val duracaoMs: Long, val pasta: String = "") {
+data class Midia(val id: Long, val uri: Uri, val ehVideo: Boolean, val quando: Long, val duracaoMs: Long, val pasta: String = "",
+                 val nome: String = "", val raw: Uri? = null, val rawId: Long = 0L) {
+    /** Tem um DNG irmão guardado pela câmera (mesmo nome, outra extensão). */
+    val temRaw: Boolean get() = raw != null
+    /** É um DNG solto, sem JPEG irmão: aparece sozinho na grade. */
+    val ehRaw: Boolean get() = nome.endsWith(".dng", true)
     /** Dia local da captura; LocalDate.MIN quando não há data utilizável ("Sem data", no fim). */
     val dia: LocalDate get() = if (quando <= 0L) LocalDate.MIN else Instant.ofEpochMilli(quando).atZone(ZoneId.systemDefault()).toLocalDate()
 }
@@ -126,7 +131,8 @@ object Midias {
         val cId = MediaStore.Files.FileColumns._ID; val cTipo = MediaStore.Files.FileColumns.MEDIA_TYPE
         val cTaken = "datetaken"; val cMod = MediaStore.Files.FileColumns.DATE_MODIFIED; val cAdd = MediaStore.Files.FileColumns.DATE_ADDED; val cDur = "duration"
         val cPasta = if (android.os.Build.VERSION.SDK_INT >= 29) MediaStore.MediaColumns.RELATIVE_PATH else "_data"
-        val proj = arrayOf(cId, cTipo, cTaken, cMod, cAdd, cDur, cPasta)
+        val cNome = MediaStore.MediaColumns.DISPLAY_NAME
+        val proj = arrayOf(cId, cTipo, cTaken, cMod, cAdd, cDur, cPasta, cNome)
         val tImg = MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(); val tVid = MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString()
         val sel = if (soFotos) "$cTipo=?" else "$cTipo IN (?,?)"
         val args = if (soFotos) arrayOf(tImg) else arrayOf(tImg, tVid)
@@ -134,7 +140,7 @@ object Midias {
         runCatching {
             ctx.contentResolver.query(colecao, proj, sel, args, null)?.use { c ->
                 val iId = c.getColumnIndexOrThrow(cId); val iTipo = c.getColumnIndexOrThrow(cTipo)
-                val iTaken = c.getColumnIndex(cTaken); val iMod = c.getColumnIndex(cMod); val iAdd = c.getColumnIndex(cAdd); val iDur = c.getColumnIndex(cDur); val iPasta = c.getColumnIndex(cPasta)
+                val iTaken = c.getColumnIndex(cTaken); val iMod = c.getColumnIndex(cMod); val iAdd = c.getColumnIndex(cAdd); val iDur = c.getColumnIndex(cDur); val iPasta = c.getColumnIndex(cPasta); val iNome = c.getColumnIndex(cNome)
                 while (c.moveToNext()) {
                     val id = c.getLong(iId)
                     val video = c.getInt(iTipo) == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO
@@ -145,10 +151,33 @@ object Midias {
                     val uri = ContentUris.withAppendedId(if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
                     val dur = if (iDur < 0 || c.isNull(iDur)) 0L else c.getLong(iDur)
                     val pasta = if (iPasta < 0 || c.isNull(iPasta)) "" else c.getString(iPasta) ?: ""
-                    saida += Midia(id, uri, video, quando, dur, pasta)
+                    val nome = if (iNome < 0 || c.isNull(iNome)) "" else c.getString(iNome) ?: ""
+                    saida += Midia(id, uri, video, quando, dur, pasta, nome)
                 }
             }
         }
+        saida.sortWith(compareByDescending<Midia> { it.quando }.thenByDescending { it.id })
+        return juntaRaw(saida)
+    }
+
+    /**
+     * Com o RAW ligado, a câmera grava DNG e JPEG com o MESMO nome. Sem isto a grade mostraria cada foto duas vezes.
+     * O DNG some da lista e passa a viajar dentro do JPEG irmão (campo `raw`); DNG sem irmão continua aparecendo
+     * sozinho, senão ele sumiria da galeria e o dono perderia o arquivo de vista.
+     */
+    private fun juntaRaw(lista: List<Midia>): List<Midia> {
+        if (lista.none { it.ehRaw }) return lista
+        fun chave(m: Midia) = m.pasta.lowercase() + "|" + m.nome.substringBeforeLast('.').lowercase()
+        val crus = lista.filter { it.ehRaw }.associateBy { chave(it) }
+        val usados = HashSet<String>()
+        val saida = ArrayList<Midia>(lista.size)
+        for (m in lista) {
+            if (m.ehRaw) continue
+            val c = chave(m); val cru = crus[c]
+            val perto = cru != null && (m.quando <= 0L || cru.quando <= 0L || kotlin.math.abs(m.quando - cru.quando) < 60_000L)
+            if (cru != null && perto) { usados += c; saida += m.copy(raw = cru.uri, rawId = cru.id) } else saida += m
+        }
+        for ((c, cru) in crus) if (c !in usados) saida += cru
         saida.sortWith(compareByDescending<Midia> { it.quando }.thenByDescending { it.id })
         return saida
     }

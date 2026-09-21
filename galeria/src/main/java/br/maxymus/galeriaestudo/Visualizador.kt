@@ -98,6 +98,7 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: L
     var confirmarExcluir by remember { mutableStateOf(false) }
     var confirmarNaoE by remember { mutableStateOf(false) }
     var menuMais by remember { mutableStateOf(false) }
+    var escolhendoRaw by remember { mutableStateOf(false) }
     var mostrarInfo by remember { mutableStateOf(false) }
     var favorito by remember(atual.id) { mutableStateOf(Favoritos.eh(ctx, atual.uri)) }
     val escopo = rememberCoroutineScope()
@@ -111,10 +112,10 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: L
     LaunchedEffect(indice) { escala = 1f; desloc = Offset.Zero }
     LaunchedEffect(controles, indice) { if (controles) { delay(2000); controles = false } }
     val excluirSistema = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
-        if (r.resultCode == Activity.RESULT_OK) { Telemetria.evento("lixeira"); Toast.makeText(ctx, "Movida para a lixeira", Toast.LENGTH_SHORT).show(); aoExcluida(atual) }
+        if (r.resultCode == Activity.RESULT_OK) { Telemetria.evento("lixeira"); Toast.makeText(ctx, if (atual.temRaw) "Foto e RAW na lixeira" else "Movida para a lixeira", Toast.LENGTH_SHORT).show(); aoExcluida(atual) }
     }
     fun excluir() {
-        val pi = Midias.pedidoLixeira(ctx, listOf(atual.uri), true)
+        val pi = Midias.pedidoLixeira(ctx, listOfNotNull(atual.uri, atual.raw), true)   // o par vai junto para a lixeira
         if (pi != null) excluirSistema.launch(IntentSenderRequest.Builder(pi.intentSender).build())
         else confirmarExcluir = true
     }
@@ -202,6 +203,12 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: L
                     Acao(Icons.Filled.MoreVert, "Mais") { menuMais = true }
                     DropdownMenu(expanded = menuMais, onDismissRequest = { menuMais = false }) {
                         if (!atual.ehVideo) DropdownMenuItem(text = { Text("Criar figurinha") }, onClick = { menuMais = false; aoFigurinha(atual) })
+                        if (atual.temRaw) DropdownMenuItem(text = { Text("Editar o RAW") }, onClick = { menuMais = false; escolhendoRaw = true })
+                        if (atual.temRaw) DropdownMenuItem(text = { Text("Compartilhar RAW") }, onClick = {
+                            menuMais = false
+                            val envio = Intent(Intent.ACTION_SEND).apply { type = "image/x-adobe-dng"; putExtra(Intent.EXTRA_STREAM, atual.raw); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+                            ctx.startActivity(Intent.createChooser(envio, "Compartilhar RAW"))
+                        })
                         DropdownMenuItem(text = { Text("Informações") }, onClick = { menuMais = false; mostrarInfo = true })
                         DropdownMenuItem(text = { Text("Editar em outro app") }, onClick = { menuMais = false; editar() })
                         DropdownMenuItem(text = { Text("Adicionar a um álbum") }, onClick = {
@@ -218,9 +225,23 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: L
             }
         }
     }
-    if (confirmarExcluir) AlertDialog(onDismissRequest = { confirmarExcluir = false }, title = { Text("Excluir esta foto?") }, text = { Text("Não dá para desfazer.") },
+    if (escolhendoRaw) AlertDialog(onDismissRequest = { escolhendoRaw = false },
+        title = { Text("Editar o RAW") },
+        text = { Text("Neste app, o RAW é convertido para 8 bits antes da edição. O arquivo original é preservado. Um editor de RAW de verdade aproveita mais os dados do arquivo.") },
+        confirmButton = { TextButton(onClick = {
+            escolhendoRaw = false
+            atual.raw?.let { u -> aoEditar(atual.copy(id = atual.rawId, uri = u, raw = null, rawId = 0L, nome = atual.nome.substringBeforeLast('.') + ".dng")) }
+        }) { Text("Neste app", color = Tema.Coral) } },
+        dismissButton = { TextButton(onClick = {
+            escolhendoRaw = false
+            val u = atual.raw ?: return@TextButton
+            val i = Intent(Intent.ACTION_EDIT).apply { setDataAndType(u, "image/x-adobe-dng"); addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION) }
+            runCatching { ctx.startActivity(Intent.createChooser(i, "Editar o RAW com")) }.onFailure { Toast.makeText(ctx, "Nenhum editor de RAW instalado", Toast.LENGTH_SHORT).show() }
+        }) { Text("Em outro app") } })
+    if (confirmarExcluir) AlertDialog(onDismissRequest = { confirmarExcluir = false }, title = { Text("Excluir esta foto?") }, text = { Text(if (atual.temRaw) "O arquivo RAW vai junto. Não dá para desfazer." else "Não dá para desfazer.") },
         confirmButton = { TextButton(onClick = {
             confirmarExcluir = false
+            atual.raw?.let { runCatching { ctx.contentResolver.delete(it, null, null) } }   // o RAW irmão vai junto
             if (runCatching { ctx.contentResolver.delete(atual.uri, null, null) > 0 }.getOrDefault(false)) aoExcluida(atual) else Toast.makeText(ctx, "Não consegui excluir", Toast.LENGTH_SHORT).show()
         }) { Text("Excluir", color = Tema.Coral) } },
         dismissButton = { TextButton(onClick = { confirmarExcluir = false }) { Text("Cancelar") } })

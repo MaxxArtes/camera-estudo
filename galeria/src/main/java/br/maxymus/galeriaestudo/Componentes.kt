@@ -153,6 +153,10 @@ fun Ladrilho(m: Midia, carregador: ImageLoader, selecionando: Boolean, marcada: 
             Icon(Icons.Filled.PlayArrow, contentDescription = "Vídeo", tint = Color.White, modifier = Modifier.size(14.dp))
             Text(Midias.duracao(m.duracaoMs), color = Color.White, fontSize = 11.sp)
         }
+        if ((m.temRaw || m.ehRaw) && !selecionando) Box(Modifier.align(Alignment.TopEnd).padding(4.dp).height(20.dp)
+            .background(Color(0xB3000000), RoundedCornerShape(4.dp)).padding(horizontal = 5.dp), contentAlignment = Alignment.Center) {
+            Text("RAW", color = Color.White, fontSize = 10.sp)
+        }
         if (selecionando) {
             if (marcada) Box(Modifier.fillMaxSize().background(Color(0x33000000)).border(2.dp, Tema.Coral))
             Icon(if (marcada) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked, contentDescription = null,
