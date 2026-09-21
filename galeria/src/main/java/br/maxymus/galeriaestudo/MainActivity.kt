@@ -167,7 +167,7 @@ private fun App() {
         alb != null -> TelaAlbum(id = alb, porId = porId, versao = versaoAlbuns, voltar = { albumAberto = null },
             aoAdicionar = { seletorAlbum = alb }, aoAbrir = { lista, i -> visual = Visualizacao(lista, i, null, alb) },
             aoMudou = { versaoAlbuns++ }, aoSumiu = { albumAberto = null; versaoAlbuns++ })
-        pasta != null -> TelaPasta(titulo = pasta, midias = remember(midias, pasta) { Midias.doWhatsApp(midias) }, voltar = { pastaAberta = null },
+        pasta != null -> TelaPasta(titulo = pasta, midias = remember(midias, pasta) { Midias.dePasta(midias, pasta) }, voltar = { pastaAberta = null },
             aoAbrir = { lista, i -> visual = Visualizacao(lista, i, null) })
         lixeiraAberta -> TelaLixeira(parcial = acesso == Acesso.Parcial, voltar = { lixeiraAberta = false }, aoMudou = { versaoMidias++; versaoPessoas++; versaoAlbuns++ })
         p != null -> TelaPessoa(id = p, porId = porId, versao = versaoPessoas, voltar = { pessoaAberta = null },

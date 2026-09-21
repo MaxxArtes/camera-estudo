@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.sp
 /** Álbum automático por origem do arquivo (ex.: WhatsApp). Só lista; nada é movido nem copiado. */
 @Composable
 fun TelaPasta(titulo: String, midias: List<Midia>, voltar: () -> Unit, aoAbrir: (List<Midia>, Int) -> Unit) {
+    val legenda = if (titulo == Midias.PASTA_CAPTURAS) "guardados pelo sistema" else "recebidos no aparelho"
     val estado = rememberLazyListState()
     Column(Modifier.fillMaxSize().background(Tema.Fundo)) {
         BarraSuperior(titulo, voltar = voltar) {}
@@ -27,7 +28,7 @@ fun TelaPasta(titulo: String, midias: List<Midia>, voltar: () -> Unit, aoAbrir: 
             }
         } else {
             GradePorDia(midias, estado, cabecalho = {
-                Text("${Midias.numero(midias.size)} ${if (midias.size == 1) "item" else "itens"} · recebidos no aparelho",
+                Text("${Midias.numero(midias.size)} ${if (midias.size == 1) "item" else "itens"} · $legenda",
                     color = Tema.Texto2, fontSize = 13.sp,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp))
             }) { i -> aoAbrir(midias, i) }

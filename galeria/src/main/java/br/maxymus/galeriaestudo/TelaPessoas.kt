@@ -88,6 +88,7 @@ fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, porId
     var albunsManuais by remember { mutableStateOf<List<Indice.AlbumManual>>(emptyList()) }
     var criarAlbum by remember { mutableStateOf(false) }
     val doWhatsApp = remember(porId) { porId.values.filter { Midias.ehWhatsApp(it) }.sortedByDescending { it.quando } }
+    val capturas = remember(porId) { porId.values.filter { Midias.ehCaptura(it) }.sortedByDescending { it.quando } }
     var acaoManual by remember { mutableStateOf<Indice.AlbumManual?>(null) }
     var acaoPessoa by remember { mutableStateOf<Indice.Resumo?>(null) }
     var renomearManual by remember { mutableStateOf<Indice.AlbumManual?>(null) }
@@ -144,9 +145,10 @@ fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, porId
                         item(key = "tit-meus", span = { GridItemSpan(2) }) { SecaoTitulo("Meus álbuns", "Álbuns que você monta") }
                         item(key = "criar") { CardCriar { criarAlbum = true } }
                         items(albunsManuais, key = { "m" + it.id }) { a -> CardAlbumManual(a, aoLongo = { acaoManual = a }) { aoAbrirAlbumManual(a.id) } }
-                        if (doWhatsApp.isNotEmpty()) {
+                        if (doWhatsApp.isNotEmpty() || capturas.isNotEmpty()) {
                             item(key = "tit-aparelho", span = { GridItemSpan(2) }) { SecaoTitulo("Do aparelho", "Reconhecidos pela origem do arquivo") }
-                            item(key = "pasta-whatsapp") { CardPasta("WhatsApp", doWhatsApp.size, doWhatsApp.firstOrNull()?.id) { aoAbrirPasta("WhatsApp") } }
+                            if (doWhatsApp.isNotEmpty()) item(key = "pasta-whatsapp") { CardPasta(Midias.PASTA_WHATSAPP, doWhatsApp.size, doWhatsApp.firstOrNull()?.id) { aoAbrirPasta(Midias.PASTA_WHATSAPP) } }
+                            if (capturas.isNotEmpty()) item(key = "pasta-capturas") { CardPasta(Midias.PASTA_CAPTURAS, capturas.size, capturas.firstOrNull()?.id) { aoAbrirPasta(Midias.PASTA_CAPTURAS) } }
                         }
                         item(key = "tit-pessoas", span = { GridItemSpan(2) }) { SecaoTitulo("Pessoas", "Agrupadas automaticamente neste aparelho") }
                     }

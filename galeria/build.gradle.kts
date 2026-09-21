@@ -14,8 +14,8 @@ android {
         applicationId = "br.maxymus.galeriaestudo"
         minSdk = 26
         targetSdk = 34
-        versionCode = 28
-        versionName = "0.28"
+        versionCode = 29
+        versionName = "0.29"
         ndk { abiFilters += listOf("arm64-v8a") }
         // token da telemetria vem do CI (secret TELEMETRIA_TOKEN); sem ele o app não envia nada
         buildConfigField("String", "TELEMETRIA_TOKEN", "\"" + (System.getenv("TELEMETRIA_TOKEN") ?: "") + "\"")

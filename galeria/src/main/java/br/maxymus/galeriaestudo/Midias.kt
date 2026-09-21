@@ -216,6 +216,26 @@ object Midias {
 
     fun doWhatsApp(midias: List<Midia>): List<Midia> = midias.filter { ehWhatsApp(it) }
 
+    /**
+     * É captura de tela? O sistema guarda em Pictures/Screenshots ou DCIM/Screenshots, e algumas versões em
+     * português usam "Capturas de tela". A pasta é o único sinal confiável: o nome do arquivo varia por versão.
+     */
+    fun ehCaptura(m: Midia): Boolean {
+        val p = m.pasta.lowercase()
+        return p.contains("screenshot") || p.contains("captura")
+    }
+
+    fun capturas(midias: List<Midia>): List<Midia> = midias.filter { ehCaptura(it) }
+
+    const val PASTA_WHATSAPP = "WhatsApp"
+    const val PASTA_CAPTURAS = "Capturas de tela"
+
+    /** Lista de um álbum automático por origem do arquivo. Nada é movido nem copiado. */
+    fun dePasta(midias: List<Midia>, chave: String): List<Midia> = when (chave) {
+        PASTA_CAPTURAS -> capturas(midias)
+        else -> doWhatsApp(midias)
+    }
+
     /** Itens na lixeira do sistema (API 30+), ordenados por vencimento mais próximo. Vazio em versões antigas. */
     fun listarLixeira(ctx: Context): List<ItemLixeira> {
         if (android.os.Build.VERSION.SDK_INT < 30) return emptyList()
