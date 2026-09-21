@@ -20,7 +20,7 @@ import java.util.Locale
 import kotlin.math.max
 
 /** Uma foto ou vídeo do aparelho, como vem do MediaStore. */
-data class Midia(val id: Long, val uri: Uri, val ehVideo: Boolean, val quando: Long, val duracaoMs: Long) {
+data class Midia(val id: Long, val uri: Uri, val ehVideo: Boolean, val quando: Long, val duracaoMs: Long, val pasta: String = "") {
     /** Dia local da captura; LocalDate.MIN quando não há data utilizável ("Sem data", no fim). */
     val dia: LocalDate get() = if (quando <= 0L) LocalDate.MIN else Instant.ofEpochMilli(quando).atZone(ZoneId.systemDefault()).toLocalDate()
 }
@@ -125,7 +125,8 @@ object Midias {
         val colecao = MediaStore.Files.getContentUri("external")
         val cId = MediaStore.Files.FileColumns._ID; val cTipo = MediaStore.Files.FileColumns.MEDIA_TYPE
         val cTaken = "datetaken"; val cMod = MediaStore.Files.FileColumns.DATE_MODIFIED; val cAdd = MediaStore.Files.FileColumns.DATE_ADDED; val cDur = "duration"
-        val proj = arrayOf(cId, cTipo, cTaken, cMod, cAdd, cDur)
+        val cPasta = if (android.os.Build.VERSION.SDK_INT >= 29) MediaStore.MediaColumns.RELATIVE_PATH else "_data"
+        val proj = arrayOf(cId, cTipo, cTaken, cMod, cAdd, cDur, cPasta)
         val tImg = MediaStore.Files.FileColumns.MEDIA_TYPE_IMAGE.toString(); val tVid = MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO.toString()
         val sel = if (soFotos) "$cTipo=?" else "$cTipo IN (?,?)"
         val args = if (soFotos) arrayOf(tImg) else arrayOf(tImg, tVid)
@@ -133,7 +134,7 @@ object Midias {
         runCatching {
             ctx.contentResolver.query(colecao, proj, sel, args, null)?.use { c ->
                 val iId = c.getColumnIndexOrThrow(cId); val iTipo = c.getColumnIndexOrThrow(cTipo)
-                val iTaken = c.getColumnIndex(cTaken); val iMod = c.getColumnIndex(cMod); val iAdd = c.getColumnIndex(cAdd); val iDur = c.getColumnIndex(cDur)
+                val iTaken = c.getColumnIndex(cTaken); val iMod = c.getColumnIndex(cMod); val iAdd = c.getColumnIndex(cAdd); val iDur = c.getColumnIndex(cDur); val iPasta = c.getColumnIndex(cPasta)
                 while (c.moveToNext()) {
                     val id = c.getLong(iId)
                     val video = c.getInt(iTipo) == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO
@@ -143,7 +144,8 @@ object Midias {
                     val quando = when { taken > 0L -> taken; mod > 0L -> mod; else -> add }
                     val uri = ContentUris.withAppendedId(if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
                     val dur = if (iDur < 0 || c.isNull(iDur)) 0L else c.getLong(iDur)
-                    saida += Midia(id, uri, video, quando, dur)
+                    val pasta = if (iPasta < 0 || c.isNull(iPasta)) "" else c.getString(iPasta) ?: ""
+                    saida += Midia(id, uri, video, quando, dur, pasta)
                 }
             }
         }
@@ -176,6 +178,14 @@ object Midias {
         val dias = ((expiraEm * 1000L - System.currentTimeMillis()) / 86_400_000L).toInt()
         return when { dias <= 0 -> "Expira em breve"; dias == 1 -> "≈ 1 dia"; else -> "≈ $dias dias" }
     }
+
+    /** Veio do WhatsApp? A pasta traz o pacote (Android/media/com.whatsapp/...) ou "WhatsApp Images/Video". */
+    fun ehWhatsApp(m: Midia): Boolean {
+        val p = m.pasta.lowercase()
+        return p.contains("com.whatsapp") || p.contains("whatsapp")
+    }
+
+    fun doWhatsApp(midias: List<Midia>): List<Midia> = midias.filter { ehWhatsApp(it) }
 
     /** Itens na lixeira do sistema (API 30+), ordenados por vencimento mais próximo. Vazio em versões antigas. */
     fun listarLixeira(ctx: Context): List<ItemLixeira> {

@@ -70,7 +70,7 @@ import kotlinx.coroutines.withContext
 
 /** Aba Pessoas: grupos de rostos (2 colunas, capas circulares), aparições únicas atrás de uma linha, estado da análise. */
 @Composable
-fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, porId: Map<Long, Midia>, aoAbrirPessoa: (Long) -> Unit, aoAbrirAlbumManual: (Long) -> Unit, aoAbrirSeletor: (Long) -> Unit, aoAbrirLixeira: () -> Unit, aoMudou: () -> Unit) {
+fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, porId: Map<Long, Midia>, aoAbrirPessoa: (Long) -> Unit, aoAbrirAlbumManual: (Long) -> Unit, aoAbrirSeletor: (Long) -> Unit, aoAbrirLixeira: () -> Unit, aoAbrirPasta: (String) -> Unit, aoMudou: () -> Unit) {
     val ctx = LocalContext.current
     val escopo = rememberCoroutineScope()
     val estado by Indexador.estado.collectAsStateWithLifecycle()
@@ -86,6 +86,7 @@ fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, porId
     var mostrarConcluida by remember { mutableStateOf(false) }
     var albunsManuais by remember { mutableStateOf<List<Indice.AlbumManual>>(emptyList()) }
     var criarAlbum by remember { mutableStateOf(false) }
+    val doWhatsApp = remember(porId) { porId.values.filter { Midias.ehWhatsApp(it) }.sortedByDescending { it.quando } }
     var acaoManual by remember { mutableStateOf<Indice.AlbumManual?>(null) }
     var acaoPessoa by remember { mutableStateOf<Indice.Resumo?>(null) }
     var renomearManual by remember { mutableStateOf<Indice.AlbumManual?>(null) }
@@ -142,6 +143,10 @@ fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, porId
                         item(key = "tit-meus", span = { GridItemSpan(2) }) { SecaoTitulo("Meus álbuns", "Álbuns que você monta") }
                         item(key = "criar") { CardCriar { criarAlbum = true } }
                         items(albunsManuais, key = { "m" + it.id }) { a -> CardAlbumManual(a, aoLongo = { acaoManual = a }) { aoAbrirAlbumManual(a.id) } }
+                        if (doWhatsApp.isNotEmpty()) {
+                            item(key = "tit-aparelho", span = { GridItemSpan(2) }) { SecaoTitulo("Do aparelho", "Reconhecidos pela origem do arquivo") }
+                            item(key = "pasta-whatsapp") { CardPasta("WhatsApp", doWhatsApp.size, doWhatsApp.firstOrNull()?.id) { aoAbrirPasta("WhatsApp") } }
+                        }
                         item(key = "tit-pessoas", span = { GridItemSpan(2) }) { SecaoTitulo("Pessoas", "Agrupadas automaticamente neste aparelho") }
                     }
                     if (!subtela && visiveis.isEmpty()) item(key = "so-unicas", span = { GridItemSpan(2) }) {
@@ -290,5 +295,14 @@ fun FolhaAcoesAlbum(titulo: String, capa: Long?, acoes: List<AcaoAlbum>, pessoaI
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CardPasta(nome: String, quantos: Int, capa: Long?, aoTocar: () -> Unit) {
+    Column(Modifier.clickable(onClick = aoTocar)) {
+        CapaAlbumFlex(capa, Modifier.fillMaxWidth().aspectRatio(1f))
+        Text(nome, color = Tema.Texto, fontSize = 16.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
+        Text("${Midias.numero(quantos)} ${if (quantos == 1) "item" else "itens"}", color = Tema.Texto2, fontSize = 13.sp)
     }
 }
