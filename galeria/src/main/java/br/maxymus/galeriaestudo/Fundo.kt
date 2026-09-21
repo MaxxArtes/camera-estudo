@@ -37,15 +37,25 @@ object Fundo {
         val cobertura: Float get() { var c = 0; for (v in bruta) if (v > 0.5f) c++; return c.toFloat() / bruta.size }
 
         /**
-         * Máscara no tamanho da imagem: bilinear do 256², depois FILTRO GUIADO pela luminância da foto (a borda da
-         * máscara passa a seguir as bordas reais: cabelo, braço, perna — dono 20/09, grupo de 12 pessoas com pés
-         * desfocados), depois as pinceladas do usuário. Raio relativo ao tamanho: prévia e arquivo batem.
+         * Máscara no tamanho da imagem, MEDIDA na bancada (galeria/medicao/porte2.py, 20/09): a máscara do modelo
+         * (256², mole, com buracos em calça escura) vira silhueta limpa em 4 passos numa resolução fixa de 512 px —
+         * binariza, fecha frestas, preenche buracos internos (calça, camisa), mantém TODOS os blocos ≥ 0,3% (num grupo,
+         * cada bloco é uma pessoa) — e só então sobe para o tamanho da foto e passa pelo filtro guiado com eps PEQUENO
+         * (0,001): assim ele transfere as bordas reais (cabelo, braço) sem borrar a máscara. Faixa incerta caiu de
+         * 35–50% para 2–5% nas fotos de teste; o "eps 0,02" do 0.16 fazia o contrário. Depois, as pinceladas do usuário.
          */
         fun plena(px: IntArray, w: Int, h: Int, tracos: List<Traco>): FloatArray {
             val n = w * h
-            val m = FloatArray(n) { k -> pessoa((k % w) / (w - 1f), (k / w) / (h - 1f)) }
+            val lw = min(512, w); val lh = max(1, (h.toLong() * lw / w).toInt())
+            var bin = BooleanArray(lw * lh) { k -> pessoa((k % lw) / (lw - 1f), (k / lw) / (lh - 1f)) > 0.5f }
+            val rf = max(2, min(lw, lh) / 60)
+            bin = erodeB(dilataB(bin, lw, lh, rf), lw, lh, rf)
+            preencheBuracos(bin, lw, lh)
+            bin = mantemBlocos(bin, lw, lh, 0.003f)
+            val limpa = FloatArray(lw * lh) { if (bin[it]) 1f else 0f }
+            val m = FloatArray(n) { k -> amostra(limpa, lw, lh, (k % w) / (w - 1f), (k / w) / (h - 1f)) }
             val guia = FloatArray(n) { k -> val c = px[k]; ((c shr 16 and 255) * 0.299f + (c shr 8 and 255) * 0.587f + (c and 255) * 0.114f) / 255f }
-            val r = max(3, min(w, h) / 100); val eps = 0.02f
+            val r = max(3, min(w, h) / 120); val eps = 0.001f
             val mI = caixaF(guia, w, h, r); val mP = caixaF(m, w, h, r)
             val ii = FloatArray(n) { guia[it] * guia[it] }; val ip = FloatArray(n) { guia[it] * m[it] }
             val cI = caixaF(ii, w, h, r); val cIP = caixaF(ip, w, h, r)
@@ -84,24 +94,7 @@ object Fundo {
         val n = 256 * 256
         val pessoa = FloatArray(n) { k -> 1f - mapa.cats[k * 6 + Segmentos.FUNDO] }
         val pele = FloatArray(n) { k -> (mapa.cats[k * 6 + Segmentos.PELE_CORPO] + mapa.cats[k * 6 + Segmentos.PELE_ROSTO]).coerceIn(0f, 1f) }
-        limpaMascara(pessoa, 256, 256)
-        return Mascara(pessoa, pele)
-    }
-
-    /** Só o maior bloco conectado (>0,5) é pessoa; manchas soltas viram fundo (câmera, 17/09). */
-    private fun limpaMascara(m: FloatArray, w: Int, h: Int) {
-        val rotulo = IntArray(w * h); var k = 0; val tamanhos = ArrayList<Int>(); val fila = IntArray(w * h)
-        for (i in 0 until w * h) {
-            if (m[i] <= 0.5f || rotulo[i] != 0) continue
-            k++; var ini = 0; var fim = 0; fila[fim++] = i; rotulo[i] = k; var n = 0
-            while (ini < fim) { val p = fila[ini++]; n++; val x = p % w; val y = p / w
-                for (d in 0 until 4) { val xx = x + (if (d == 0) -1 else if (d == 1) 1 else 0); val yy = y + (if (d == 2) -1 else if (d == 3) 1 else 0)
-                    if (xx in 0 until w && yy in 0 until h) { val q = yy * w + xx; if (m[q] > 0.5f && rotulo[q] == 0) { rotulo[q] = k; fila[fim++] = q } } } }
-            tamanhos += n
-        }
-        if (tamanhos.size <= 1) return
-        val maior = tamanhos.indices.maxByOrNull { tamanhos[it] }!! + 1
-        for (i in 0 until w * h) if (rotulo[i] != 0 && rotulo[i] != maior) m[i] = 0f
+        return Mascara(pessoa, pele)   // limpeza fica em plena(): num grupo, blocos separados são pessoas
     }
 
     /** Média em disco de raio r por prefixos de linha (custo ∝ diâmetro). */
@@ -118,6 +111,51 @@ object Fundo {
             out[y * w + x] = if (cnt > 0) s / cnt else 0f
         }
         return out
+    }
+
+    private fun amostra(a: FloatArray, aw: Int, ah: Int, x: Float, y: Float): Float {
+        val fx = (x * (aw - 1)).coerceIn(0f, aw - 1f); val fy = (y * (ah - 1)).coerceIn(0f, ah - 1f)
+        val x0 = fx.toInt(); val y0 = fy.toInt(); val x1 = min(aw - 1, x0 + 1); val y1 = min(ah - 1, y0 + 1); val tx = fx - x0; val ty = fy - y0
+        return (a[y0 * aw + x0] * (1 - tx) + a[y0 * aw + x1] * tx) * (1 - ty) + (a[y1 * aw + x0] * (1 - tx) + a[y1 * aw + x1] * tx) * ty
+    }
+
+    /** Dilatação em caixa (raio r), separável: linha e depois coluna. */
+    private fun dilataB(b: BooleanArray, w: Int, h: Int, r: Int): BooleanArray {
+        val t = BooleanArray(w * h); val o = BooleanArray(w * h)
+        for (y in 0 until h) { val l = y * w; var c = 0; for (x in 0 until min(w, r)) if (b[l + x]) c++
+            for (x in 0 until w) { if (x + r < w && b[l + x + r]) c++; if (x - r - 1 >= 0 && b[l + x - r - 1]) c--; t[l + x] = c > 0 } }
+        for (x in 0 until w) { var c = 0; for (y in 0 until min(h, r)) if (t[y * w + x]) c++
+            for (y in 0 until h) { if (y + r < h && t[(y + r) * w + x]) c++; if (y - r - 1 >= 0 && t[(y - r - 1) * w + x]) c--; o[y * w + x] = c > 0 } }
+        return o
+    }
+    private fun erodeB(b: BooleanArray, w: Int, h: Int, r: Int): BooleanArray {
+        val inv = BooleanArray(b.size) { !b[it] }; val d = dilataB(inv, w, h, r); return BooleanArray(b.size) { !d[it] }
+    }
+    /** Buraco totalmente cercado por pessoa (calça escura, camisa) vira pessoa: inunda o fundo a partir da borda. */
+    private fun preencheBuracos(b: BooleanArray, w: Int, h: Int) {
+        val fora = BooleanArray(w * h); val fila = IntArray(w * h); var ini = 0; var fim = 0
+        fun semeia(k: Int) { if (!b[k] && !fora[k]) { fora[k] = true; fila[fim++] = k } }
+        for (x in 0 until w) { semeia(x); semeia((h - 1) * w + x) }
+        for (y in 0 until h) { semeia(y * w); semeia(y * w + w - 1) }
+        while (ini < fim) { val p = fila[ini++]; val x = p % w; val y = p / w
+            if (x > 0) semeia(p - 1); if (x < w - 1) semeia(p + 1); if (y > 0) semeia(p - w); if (y < h - 1) semeia(p + w) }
+        for (k in 0 until w * h) if (!b[k] && !fora[k]) b[k] = true
+    }
+    /** Mantém todos os blocos conectados com área ≥ minFrac (não só o maior: num grupo, cada bloco é uma pessoa). */
+    private fun mantemBlocos(b: BooleanArray, w: Int, h: Int, minFrac: Float): BooleanArray {
+        val rotulo = IntArray(w * h); val fila = IntArray(w * h); var k = 0; val tamanhos = ArrayList<Int>()
+        for (i in 0 until w * h) {
+            if (!b[i] || rotulo[i] != 0) continue
+            k++; var ini = 0; var fim = 0; fila[fim++] = i; rotulo[i] = k; var n = 0
+            while (ini < fim) { val p = fila[ini++]; n++; val x = p % w; val y = p / w
+                if (x > 0 && b[p - 1] && rotulo[p - 1] == 0) { rotulo[p - 1] = k; fila[fim++] = p - 1 }
+                if (x < w - 1 && b[p + 1] && rotulo[p + 1] == 0) { rotulo[p + 1] = k; fila[fim++] = p + 1 }
+                if (y > 0 && b[p - w] && rotulo[p - w] == 0) { rotulo[p - w] = k; fila[fim++] = p - w }
+                if (y < h - 1 && b[p + w] && rotulo[p + w] == 0) { rotulo[p + w] = k; fila[fim++] = p + w } }
+            tamanhos += n
+        }
+        val minimo = (minFrac * w * h).toInt()
+        return BooleanArray(w * h) { i -> rotulo[i] != 0 && tamanhos[rotulo[i] - 1] >= minimo }
     }
 
     /** Média em caixa separável (raio r) sobre floats. */
