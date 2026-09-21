@@ -47,14 +47,19 @@ object Edicao {
     }
 
     /** Receita completa e serializável (o histórico e o banco guardam ISSO, nunca bitmaps). */
-    data class Receita(val cor: Cor = Cor(), val geo: Geometria = Geometria(), val tom: Tom.Parametros = Tom.Parametros(), val fundo: Fundo.Parametros = Fundo.Parametros(), val hsl: Hsl.Parametros = Hsl.Parametros()) {
-        val neutra: Boolean get() = cor.neutra && geo.neutra && tom.neutro && fundo.neutro && hsl.neutro
+    data class Receita(val cor: Cor = Cor(), val geo: Geometria = Geometria(), val tom: Tom.Parametros = Tom.Parametros(), val fundo: Fundo.Parametros = Fundo.Parametros(), val hsl: Hsl.Parametros = Hsl.Parametros(),
+                       val local: Local.Parametros = Local.Parametros(), val cura: Cura.Parametros = Cura.Parametros()) {
+        val neutra: Boolean get() = cor.neutra && geo.neutra && tom.neutro && fundo.neutro && hsl.neutro && local.neutro && cura.neutro
         fun toJson(): String = org.json.JSONObject().apply {
             put("v", 1)
             put("cor", org.json.JSONObject().apply { put("brilho", cor.brilho); put("contraste", cor.contraste); put("saturacao", cor.saturacao); put("temperatura", cor.temperatura); put("matiz", cor.matiz); put("filtro", cor.filtro); put("intensidade", cor.intensidade); put("exposicao", cor.exposicao) })
             put("geo", org.json.JSONObject().apply { put("giros", geo.giros); put("espelhado", geo.espelhado); put("endireitar", geo.endireitar); put("recorte", org.json.JSONArray(listOf(geo.recorte.left, geo.recorte.top, geo.recorte.right, geo.recorte.bottom))) })
             put("tom", org.json.JSONObject().apply { put("realces", tom.realces); put("sombras", tom.sombras); put("brancos", tom.brancos); put("pretos", tom.pretos); put("nitidez", tom.nitidez); put("vinheta", tom.vinheta); put("granulacao", tom.granulacao); put("textura", tom.textura); put("clareza", tom.clareza) })
             put("hsl", org.json.JSONObject().apply { put("m", org.json.JSONArray(hsl.matiz)); put("s", org.json.JSONArray(hsl.saturacao)); put("l", org.json.JSONArray(hsl.luminancia)) })
+            put("local", org.json.JSONArray().apply { local.mascaras.forEach { m -> put(org.json.JSONObject().apply {
+                put("tipo", m.tipo.name); put("cx", m.cx); put("cy", m.cy); put("rx", m.rx); put("ry", m.ry); put("suav", m.suavidade); put("x1", m.x1); put("y1", m.y1); put("x2", m.x2); put("y2", m.y2); put("inv", m.invertida)
+                put("exp", m.exposicao); put("con", m.contraste); put("sat", m.saturacao); put("tmp", m.temperatura); put("som", m.sombras); put("rea", m.realces) }) } })
+            put("cura", org.json.JSONArray().apply { cura.pinceladas.forEach { t -> put(org.json.JSONObject().apply { put("r", t.raio); put("p", org.json.JSONArray(t.pontos.flatMap { listOf(it.first, it.second) })) }) } })
             put("fundo", org.json.JSONObject().apply { put("modo", fundo.modo.name); put("intensidade", fundo.intensidade); put("cor", fundo.cor); put("pele", fundo.pele)
                 put("tracos", org.json.JSONArray().apply { fundo.tracos.forEach { t -> put(org.json.JSONObject().apply { put("a", t.adiciona); put("r", t.raio); put("p", org.json.JSONArray(t.pontos.flatMap { listOf(it.first, it.second) })) }) } }) })
         }.toString()
@@ -65,6 +70,18 @@ object Edicao {
                     val o = a.getJSONObject(i); val p = o.getJSONArray("p")
                     Fundo.Traco(List(p.length() / 2) { j -> p.getDouble(2 * j).toFloat() to p.getDouble(2 * j + 1).toFloat() }, o.getDouble("r").toFloat(), o.getBoolean("a"))
                 }
+            }
+            private fun localDe(a: org.json.JSONArray?): Local.Parametros {
+                if (a == null) return Local.Parametros()
+                return Local.Parametros(List(a.length()) { i -> val o = a.getJSONObject(i)
+                    Local.Mascara(Local.Tipo.valueOf(o.getString("tipo")), o.getDouble("cx").toFloat(), o.getDouble("cy").toFloat(), o.getDouble("rx").toFloat(), o.getDouble("ry").toFloat(), o.getDouble("suav").toFloat(),
+                        o.getDouble("x1").toFloat(), o.getDouble("y1").toFloat(), o.getDouble("x2").toFloat(), o.getDouble("y2").toFloat(), o.getBoolean("inv"),
+                        o.getDouble("exp").toFloat(), o.getDouble("con").toFloat(), o.getDouble("sat").toFloat(), o.getDouble("tmp").toFloat(), o.getDouble("som").toFloat(), o.getDouble("rea").toFloat()) })
+            }
+            private fun curaDe(a: org.json.JSONArray?): Cura.Parametros {
+                if (a == null) return Cura.Parametros()
+                return Cura.Parametros(List(a.length()) { i -> val o = a.getJSONObject(i); val p = o.getJSONArray("p")
+                    Cura.Pincelada(List(p.length() / 2) { j -> p.getDouble(2 * j).toFloat() to p.getDouble(2 * j + 1).toFloat() }, o.getDouble("r").toFloat()) })
             }
             private fun hslDe(hj: org.json.JSONObject?): Hsl.Parametros {
                 if (hj == null) return Hsl.Parametros()
@@ -78,7 +95,7 @@ object Edicao {
                     Geometria(g.getInt("giros"), g.getBoolean("espelhado"), g.getDouble("endireitar").toFloat(), RectF(r.getDouble(0).toFloat(), r.getDouble(1).toFloat(), r.getDouble(2).toFloat(), r.getDouble(3).toFloat())),
                     Tom.Parametros(t.getDouble("realces").toFloat(), t.getDouble("sombras").toFloat(), t.getDouble("brancos").toFloat(), t.getDouble("pretos").toFloat(), t.getDouble("nitidez").toFloat(), t.getDouble("vinheta").toFloat(), t.getDouble("granulacao").toFloat(), t.optDouble("textura", 0.0).toFloat(), t.optDouble("clareza", 0.0).toFloat()),
                     Fundo.Parametros(Fundo.Modo.valueOf(f.getString("modo")), f.getDouble("intensidade").toFloat(), f.getInt("cor"), f.getDouble("pele").toFloat(), tracosDe(f.optJSONArray("tracos"))),
-                    hslDe(o.optJSONObject("hsl"))
+                    hslDe(o.optJSONObject("hsl")), localDe(o.optJSONArray("local")), curaDe(o.optJSONArray("cura"))
                 )
             }.getOrNull()
         }

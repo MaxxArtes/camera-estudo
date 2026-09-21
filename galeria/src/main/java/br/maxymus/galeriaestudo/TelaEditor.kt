@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Details
+import androidx.compose.material.icons.filled.FilterTiltShift
 import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.Healing
 import androidx.compose.material.icons.filled.Palette
@@ -76,6 +77,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -102,7 +104,8 @@ private enum class GrupoEditor(val rotulo: String, val icone: ImageVector, val p
     Filtros("Filtros", Icons.Filled.PhotoFilter, emptyList()),
     Detalhe("Detalhe", Icons.Filled.Details, listOf("Nitidez", "Textura", "Clareza", "Vinheta", "Granulação")),
     Fundo("Fundo", Icons.Filled.Portrait, emptyList()),
-    Corrigir("Corrigir", Icons.Filled.Healing, listOf("Pele"))
+    Local("Local", Icons.Filled.FilterTiltShift, emptyList()),
+    Corrigir("Corrigir", Icons.Filled.Healing, listOf("Pele", "Cicatrizar"))
 }
 private val PROPORCOES = listOf("Livre" to 0f, "1:1" to 1f, "4:3" to 4f / 3f, "3:4" to 3f / 4f, "16:9" to 16f / 9f, "9:16" to 9f / 16f)
 private val CORES_FUNDO = listOf(0xFFFFFFFF, 0xFF111114, 0xFF8A8A92, 0xFFFF575F, 0xFF3D6BFF, 0xFF3D8A4A, 0xFFEFBD45).map { it.toInt() }
@@ -163,6 +166,15 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
     var pincelDp by remember { mutableStateOf(24f) }
     var tracoAtual by remember { mutableStateOf<List<Offset>>(emptyList()) }
     var mascaraVisual by remember { mutableStateOf<Bitmap?>(null) }
+    var plenaTrabalho by remember { mutableStateOf<FloatArray?>(null) }   // máscara de pessoa refinada, no tamanho do trabalho
+    var localSel by remember { mutableStateOf(-1) }
+    var localAba by remember { mutableStateOf("Forma") }
+    var localParam by remember { mutableStateOf(Local.SLIDERS[0]) }
+    var verMascara by remember { mutableStateOf(false) }
+    var escolhendoTipo by remember { mutableStateOf(false) }
+    var localVisual by remember { mutableStateOf<Bitmap?>(null) }
+    var curando by remember { mutableStateOf(false) }
+    var curaDp by remember { mutableStateOf(24f) }
     var campoHsl by remember { mutableStateOf("Saturação") }
 
     LaunchedEffect(midia.id) {
@@ -183,33 +195,45 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
         miniatura = withContext(Dispatchers.Default) { val t = trabalho!!; val esc = 160f / maxOf(t.width, t.height); if (esc >= 1f) t else Bitmap.createScaledBitmap(t, (t.width * esc).roundToInt().coerceAtLeast(1), (t.height * esc).roundToInt().coerceAtLeast(1), true) }
     }
     // fundo + tom em CPU, com debounce; máscara sob demanda (uma vez por geometria)
-    LaunchedEffect(trabalho, receita.tom, receita.fundo, receita.hsl) {
+    LaunchedEffect(trabalho, receita.tom, receita.fundo, receita.hsl, receita.local, receita.cura) {
         val t = trabalho ?: return@LaunchedEffect
-        if (receita.tom.neutro && receita.fundo.neutro && receita.hsl.neutro) { previaCpu = null; return@LaunchedEffect }
+        val precisaPessoa = !receita.fundo.neutro || receita.local.mascaras.any { it.tipo == Local.Tipo.Pessoa }
+        if (receita.tom.neutro && receita.fundo.neutro && receita.hsl.neutro && receita.local.neutro && receita.cura.neutro && !precisaPessoa) { previaCpu = null; return@LaunchedEffect }
         delay(120)
-        val precisaMascara = !receita.fundo.neutro
-        if (precisaMascara && mascara == null) {
+        if (precisaPessoa && mascara == null) {
             segmentando = true
             val m = withContext(Dispatchers.Default) { runCatching { Fundo.segmentar(ctx, t) }.getOrNull() }
             segmentando = false
             if (m == null || m.cobertura < 0.02f) { semPessoa = true; Telemetria.evento("editor_fundo", mapOf("pessoa" to false)) } else { semPessoa = false; mascara = m }
         }
         val m = mascara
-        previaCpu = withContext(Dispatchers.Default) {
-            val comFundo = if (!receita.fundo.neutro && m != null) Fundo.aplicar(t, m, receita.fundo) else t
-            val comTom = Tom.aplicar(comFundo, receita.tom)
-            if (comTom !== comFundo && comFundo !== t) comFundo.recycle()
-            val comHsl = Hsl.aplicar(comTom, receita.hsl)
-            if (comHsl !== comTom && comTom !== t) comTom.recycle()
-            comHsl
+        val (resultado, plena) = withContext(Dispatchers.Default) {
+            val base = Cura.aplicar(t, receita.cura)
+            val pl = if (precisaPessoa && m != null) Fundo.plenaDe(base, m, receita.fundo.tracos) else null
+            val comFundo = if (!receita.fundo.neutro && m != null) Fundo.aplicar(base, m, receita.fundo) else base
+            if (comFundo !== base && base !== t) base.recycle()
+            val comTom = Tom.aplicar(comFundo, receita.tom); if (comTom !== comFundo && comFundo !== t) comFundo.recycle()
+            val comHsl = Hsl.aplicar(comTom, receita.hsl); if (comHsl !== comTom && comTom !== t) comTom.recycle()
+            val comLocal = Local.aplicar(comHsl, receita.local, pl); if (comLocal !== comHsl && comHsl !== t) comHsl.recycle()
+            comLocal to pl
         }
+        previaCpu = if (resultado === t) null else resultado; plenaTrabalho = plena
     }
-
     LaunchedEffect(refinando, trabalho, mascara, receita.fundo.tracos) {
         if (!refinando) { mascaraVisual = null; return@LaunchedEffect }
         val t = trabalho; val m = mascara
         if (t == null || m == null) return@LaunchedEffect
         mascaraVisual = withContext(Dispatchers.Default) { Fundo.visual(t, m, receita.fundo.tracos) }
+    }
+    LaunchedEffect(grupo, localAba, verMascara, localSel, receita.local, trabalho, plenaTrabalho) {
+        val t = trabalho; val m = receita.local.mascaras.getOrNull(localSel)
+        if (grupo != GrupoEditor.Local || m == null || t == null || !(localAba == "Forma" || verMascara)) { localVisual = null; return@LaunchedEffect }
+        val pl = plenaTrabalho
+        localVisual = withContext(Dispatchers.Default) {
+            val w = t.width; val h = t.height
+            val pesos = FloatArray(w * h) { k -> Local.peso(m, (k % w) / (w - 1f), (k / w) / (h - 1f), pl, w, h) }
+            Fundo.visualDe(pesos, w, h, 0.35f)
+        }
     }
     fun mudou() = receita != Receita()
     fun registra(nova: Receita) { if (nova == receita) return; val h = historico.value.take(posHist + 1) + nova; historico.value = h; posHist = h.size - 1; receita = nova }
@@ -231,6 +255,24 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
             autoBase = a; autoIntensidade = 100f; registra(aplicaAuto(a, 100f)); Telemetria.evento("editor_auto")
         }
     }
+
+    /** Retângulo onde a imagem b é desenhada (Fit) dentro da caixa da prévia: [ox, oy, dw, dh] em px, ou null. */
+    fun encaixe(b: Bitmap): FloatArray? {
+        val cw = caixaPrevia.width.toFloat(); val ch = caixaPrevia.height.toFloat(); if (cw <= 0f || ch <= 0f) return null
+        val esc = min(cw / b.width, ch / b.height); val dw = b.width * esc; val dh = b.height * esc
+        return floatArrayOf((cw - dw) / 2f, (ch - dh) / 2f, dw, dh)
+    }
+    fun fechaCura(pontos: List<Offset>, b: Bitmap) {
+        val e = encaixe(b) ?: return; if (pontos.isEmpty()) return
+        val raioPx = curaDp * densidade.density / 2f
+        val norm = ArrayList<Pair<Float, Float>>(); var ultimo: Offset? = null
+        for (p in pontos) { if (ultimo != null && (abs(p.x - ultimo.x) + abs(p.y - ultimo.y)) < raioPx * 0.5f) continue; ultimo = p
+            val nx = (p.x - e[0]) / e[2]; val ny = (p.y - e[1]) / e[3]; if (nx in 0f..1f && ny in 0f..1f) norm += nx to ny }
+        if (norm.isEmpty()) return
+        registra(receita.copy(cura = receita.cura.copy(pinceladas = receita.cura.pinceladas + Cura.Pincelada(norm, raioPx / e[2]))))
+        Telemetria.evento("editor_cura", mapOf("pontos" to norm.size))
+    }
+    fun trocaLocal(i: Int, nova: Local.Mascara) { receita = receita.copy(local = receita.local.copy(mascaras = receita.local.mascaras.toMutableList().also { it[i] = nova })) }
 
     /** Fecha uma pincelada do refinamento: pontos de tela → normalizados sobre a imagem exibida (Fit); raio em fração da largura. */
     fun fechaTraco(pontos: List<Offset>, b: Bitmap) {
@@ -270,11 +312,16 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                 runCatching {
                     val cheia = Edicao.carregar(ctx, midia.uri, Edicao.LADO_MAX_COPIA) ?: error("não decodificou")
                     val comGeo = Edicao.aplicaGeometria(cheia, receita.geo); if (comGeo !== cheia) cheia.recycle()
-                    val comFundo = if (!receita.fundo.neutro) { val m = Fundo.segmentar(ctx, comGeo); if (m != null && m.cobertura >= 0.02f) Fundo.aplicar(comGeo, m, receita.fundo) else comGeo } else comGeo
-                    if (comFundo !== comGeo) comGeo.recycle()
+                    val base = Cura.aplicar(comGeo, receita.cura); if (base !== comGeo) comGeo.recycle()
+                    val precisaPessoa = !receita.fundo.neutro || receita.local.mascaras.any { it.tipo == Local.Tipo.Pessoa }
+                    val m = if (precisaPessoa) Fundo.segmentar(ctx, base)?.takeIf { it.cobertura >= 0.02f } else null
+                    val pl = if (m != null) Fundo.plenaDe(base, m, receita.fundo.tracos) else null
+                    val comFundo = if (!receita.fundo.neutro && m != null) Fundo.aplicar(base, m, receita.fundo) else base
+                    if (comFundo !== base) base.recycle()
                     val comTom = Tom.aplicar(comFundo, receita.tom); if (comTom !== comFundo) comFundo.recycle()
                     val comHsl = Hsl.aplicar(comTom, receita.hsl); if (comHsl !== comTom) comTom.recycle()
-                    val pronta = Edicao.aplicaCor(comHsl, receita.cor); if (pronta !== comHsl) comHsl.recycle()
+                    val comLocal = Local.aplicar(comHsl, receita.local, pl); if (comLocal !== comHsl) comHsl.recycle()
+                    val pronta = Edicao.aplicaCor(comLocal, receita.cor); if (pronta !== comLocal) comLocal.recycle()
                     val png = receita.fundo.modo == Fundo.Modo.Remover
                     val s = Edicao.salvarCopia(ctx, midia, pronta, png); pronta.recycle()
                     val id = s.uri.lastPathSegment?.toLongOrNull() ?: 0L
@@ -321,12 +368,42 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                 else -> {
                     val exibida = if (comparando) previaGeo else (previaCpu ?: previaGeo ?: previa)
                     exibida?.let { b ->
-                        Box(Modifier.fillMaxSize().onSizeChanged { caixaPrevia = it }.pointerInput(b, pegandoBranco, refinando, pincelAdiciona, pincelDp) {
+                        Box(Modifier.fillMaxSize().onSizeChanged { caixaPrevia = it }.pointerInput(b, pegandoBranco, refinando, pincelAdiciona, pincelDp, curando, curaDp, grupo, localAba, localSel) {
                             if (pegandoBranco) detectTapGestures { pos ->
                                 val cw = caixaPrevia.width.toFloat(); val ch = caixaPrevia.height.toFloat(); if (cw <= 0f || ch <= 0f) return@detectTapGestures
                                 val esc = min(cw / b.width, ch / b.height); val dw = b.width * esc; val dh = b.height * esc
                                 val nx = (pos.x - (cw - dw) / 2f) / dw; val ny = (pos.y - (ch - dh) / 2f) / dh
                                 if (nx in 0f..1f && ny in 0f..1f) pegaBranco(nx, ny)
+                            } else if (curando) awaitEachGesture {   // cicatrizar: toque = mancha; arraste = pincelada; solta = um passo
+                                val baixo = awaitFirstDown(); var pontos = listOf(baixo.position); tracoAtual = pontos
+                                do { val ev = awaitPointerEvent()
+                                    if (ev.changes.count { it.pressed } >= 2) { pontos = emptyList(); tracoAtual = pontos; break }
+                                    val ch = ev.changes.firstOrNull { it.pressed }; if (ch != null) { pontos = pontos + ch.position; tracoAtual = pontos; ch.consume() }
+                                } while (ev.changes.any { it.pressed })
+                                if (pontos.isNotEmpty()) fechaCura(pontos, b); tracoAtual = emptyList()
+                            } else if (grupo == GrupoEditor.Local && localAba == "Forma" && localSel >= 0) awaitEachGesture {   // alças da máscara
+                                val baixo = awaitFirstDown(); val e = encaixe(b); val m0 = receita.local.mascaras.getOrNull(localSel)
+                                if (e == null || m0 == null || m0.tipo == Local.Tipo.Pessoa) return@awaitEachGesture
+                                val toque = 24f * densidade.density
+                                fun tela(nx: Float, ny: Float) = Offset(e[0] + nx * e[2], e[1] + ny * e[3])
+                                fun perto(o: Offset) = abs(baixo.position.x - o.x) < toque && abs(baixo.position.y - o.y) < toque
+                                val alvo = when (m0.tipo) {
+                                    Local.Tipo.Radial -> if (perto(tela(m0.cx + m0.rx, m0.cy))) "rx" else if (perto(tela(m0.cx, m0.cy + m0.ry))) "ry" else "mover"
+                                    Local.Tipo.Linear -> if (perto(tela(m0.x1, m0.y1))) "p1" else if (perto(tela(m0.x2, m0.y2))) "p2" else "mover"
+                                    else -> "mover"
+                                }
+                                var atual = m0
+                                do { val ev = awaitPointerEvent(); val ch = ev.changes.firstOrNull { it.pressed }
+                                    if (ch != null) { val d = ch.positionChange(); val dx = d.x / e[2]; val dy = d.y / e[3]
+                                        atual = when (alvo) {
+                                            "rx" -> atual.copy(rx = (atual.rx + dx).coerceIn(0.03f, 1f)); "ry" -> atual.copy(ry = (atual.ry + dy).coerceIn(0.03f, 1f))
+                                            "p1" -> atual.copy(x1 = (atual.x1 + dx).coerceIn(0f, 1f), y1 = (atual.y1 + dy).coerceIn(0f, 1f)); "p2" -> atual.copy(x2 = (atual.x2 + dx).coerceIn(0f, 1f), y2 = (atual.y2 + dy).coerceIn(0f, 1f))
+                                            else -> if (atual.tipo == Local.Tipo.Radial) atual.copy(cx = (atual.cx + dx).coerceIn(0f, 1f), cy = (atual.cy + dy).coerceIn(0f, 1f))
+                                                    else atual.copy(x1 = atual.x1 + dx, y1 = atual.y1 + dy, x2 = atual.x2 + dx, y2 = atual.y2 + dy)
+                                        }
+                                        trocaLocal(localSel, atual); ch.consume() }
+                                } while (ev.changes.any { it.pressed })
+                                registra(receita)
                             } else if (refinando) awaitEachGesture {   // um dedo pinta a máscara; solta = um traço (uma entrada de desfazer)
                                 val baixo = awaitFirstDown(); var pontos = listOf(baixo.position); tracoAtual = pontos
                                 do { val ev = awaitPointerEvent()
@@ -348,6 +425,29 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                                 mascaraVisual?.let { mv -> Image(bitmap = mv.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
                                 Canvas(Modifier.fillMaxSize()) { val r = pincelDp * density / 2f; tracoAtual.forEach { drawCircle(if (pincelAdiciona) Color(0x99FF575F) else Color(0x99FFFFFF), r, it) } }
                                 Rotulo(if (pincelAdiciona) "Pinte o que deve ficar NÍTIDO" else "Pinte o que deve ir para o DESFOQUE", Modifier.align(Alignment.TopCenter))
+                            }
+                            if (grupo == GrupoEditor.Local && localSel >= 0 && !comparando) {
+                                localVisual?.let { lv -> Image(bitmap = lv.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize()) }
+                                val mk = receita.local.mascaras.getOrNull(localSel); val e = encaixe(b)
+                                if (mk != null && e != null && localAba == "Forma") Canvas(Modifier.fillMaxSize()) {
+                                    fun tela(nx: Float, ny: Float) = Offset(e[0] + nx * e[2], e[1] + ny * e[3])
+                                    val rA = 12f * density
+                                    when (mk.tipo) {
+                                        Local.Tipo.Radial -> {
+                                            drawOval(Color.White, topLeft = tela(mk.cx - mk.rx, mk.cy - mk.ry), size = Size(2 * mk.rx * e[2], 2 * mk.ry * e[3]), style = Stroke(1.5f * density))
+                                            drawCircle(Tema.Coral, rA, tela(mk.cx + mk.rx, mk.cy)); drawCircle(Tema.Coral, rA, tela(mk.cx, mk.cy + mk.ry)); drawCircle(Color.White, rA * 0.45f, tela(mk.cx, mk.cy))
+                                        }
+                                        Local.Tipo.Linear -> {
+                                            drawLine(Color.White, tela(mk.x1, mk.y1), tela(mk.x2, mk.y2), 1.5f * density)
+                                            drawCircle(Tema.Coral, rA, tela(mk.x1, mk.y1)); drawCircle(Color.White, rA, tela(mk.x2, mk.y2)); drawCircle(Tema.Coral, rA * 0.5f, tela(mk.x2, mk.y2))
+                                        }
+                                        else -> {}
+                                    }
+                                }
+                            }
+                            if (curando && !comparando) {
+                                Canvas(Modifier.fillMaxSize()) { val r = curaDp * density / 2f; tracoAtual.forEach { drawCircle(Color(0x99FF575F), r, it) } }
+                                Rotulo("Toque ou pinte a mancha", Modifier.align(Alignment.TopCenter))
                             }
                             if (comparando) Rotulo("Original", Modifier.align(Alignment.TopCenter))
                             if (pegandoBranco) Rotulo("Toque numa área que deveria ser branca ou cinza", Modifier.align(Alignment.TopCenter))
@@ -393,6 +493,18 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                         faixaHsl = faixaHsl, campoHsl = campoHsl, aoFaixaHsl = { faixaHsl = it }, aoCampoHsl = { campoHsl = it },
                         aoHsl = { v -> receita = receita.copy(hsl = receita.hsl.com(faixaHsl, campoHsl, v)) }, aoHslFim = { registra(receita) },
                         aoZerarHsl = { registra(receita.copy(hsl = Hsl.Parametros())) })
+                    GrupoEditor.Local -> PainelLocal(receita.local, localSel, localAba, localParam, verMascara, escolhendoTipo,
+                        aoSelecionar = { localSel = it; escolhendoTipo = false }, aoAba = { localAba = it }, aoParam = { localParam = it }, aoVerMascara = { verMascara = it }, aoEscolherTipo = { escolhendoTipo = it },
+                        aoNova = { tipo -> val t = trabalho; val prop = if (t != null) t.width.toFloat() / t.height else 1f
+                            if (receita.local.mascaras.size < Local.MAX) { registra(receita.copy(local = receita.local.copy(mascaras = receita.local.mascaras + Local.nova(tipo, prop)))); localSel = receita.local.mascaras.size - 1; localAba = "Forma" }; escolhendoTipo = false },
+                        aoExcluir = { i -> registra(receita.copy(local = receita.local.copy(mascaras = receita.local.mascaras.filterIndexed { j, _ -> j != i }))); localSel = -1 },
+                        aoInverter = { i -> val mk = receita.local.mascaras[i]; registra(receita.copy(local = receita.local.copy(mascaras = receita.local.mascaras.toMutableList().also { it[i] = mk.copy(invertida = !mk.invertida) }))) },
+                        aoSuavidade = { v -> receita.local.mascaras.getOrNull(localSel)?.let { mk -> trocaLocal(localSel, mk.copy(suavidade = v)) } }, aoSuavidadeFim = { registra(receita) },
+                        aoValor = { v -> receita.local.mascaras.getOrNull(localSel)?.let { mk -> trocaLocal(localSel, mk.com(localParam, v)) } }, aoValorFim = { registra(receita) },
+                        aoZerar = { receita.local.mascaras.getOrNull(localSel)?.let { mk -> trocaLocal(localSel, mk.com(localParam, 0f)); registra(receita) } })
+                    GrupoEditor.Corrigir -> PainelCorrigir(receita, parametro, curando, curaDp, aoParametro = { parametro = it; curando = it == "Cicatrizar" },
+                        aoValor = { v -> receita = comValor(receita, "Pele", v) }, aoValorFim = { registra(receita) }, aoZerar = { registra(comValor(receita, "Pele", 0f)) },
+                        aoCuraDp = { curaDp = it }, aoLimparCura = { registra(receita.copy(cura = Cura.Parametros())) })
                     GrupoEditor.Fundo -> PainelFundo(receita.fundo, aoModo = { m -> refinando = false; registra(receita.copy(fundo = receita.fundo.copy(modo = m))) },
                         aoIntensidade = { v -> receita = receita.copy(fundo = receita.fundo.copy(intensidade = v)) }, aoIntensidadeFim = { registra(receita) },
                         aoCor = { c -> registra(receita.copy(fundo = receita.fundo.copy(modo = Fundo.Modo.Cor, cor = c))) },
@@ -411,7 +523,7 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
         Row(Modifier.fillMaxWidth().height(72.dp).background(Tema.Fundo).horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
             GrupoEditor.values().forEach { g ->
                 val ativo = grupo == g
-                Column(Modifier.width(86.dp).fillMaxSize().clickable { grupo = if (ativo) null else g; pegandoBranco = false; refinando = false; if (g.parametros.isNotEmpty() && parametro !in g.parametros) parametro = g.parametros[0] },
+                Column(Modifier.width(86.dp).fillMaxSize().clickable { grupo = if (ativo) null else g; pegandoBranco = false; refinando = false; curando = false; verMascara = false; escolhendoTipo = false; if (g.parametros.isNotEmpty() && parametro !in g.parametros) parametro = g.parametros[0] },
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                     Icon(g.icone, contentDescription = null, tint = if (ativo) Tema.Coral else Tema.Texto, modifier = Modifier.size(24.dp))
                     Text(g.rotulo, color = if (ativo) Tema.Coral else Tema.Texto, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
@@ -595,6 +707,78 @@ private fun PainelFundo(f: Fundo.Parametros, aoModo: (Fundo.Modo) -> Unit, aoInt
             f.modo == Fundo.Modo.Remover -> Text("A cópia sai em PNG com o fundo transparente. Use Refinar se o modelo errar a borda.", color = Tema.Texto2, fontSize = 13.sp)
             f.modo == Fundo.Modo.PretoEBranco -> Text("Só a pessoa fica colorida. Use Refinar se o modelo errar a borda.", color = Tema.Texto2, fontSize = 13.sp)
             else -> Text("Escolha o que fazer com o fundo. A pessoa é separada automaticamente; Refinar corrige com pincel.", color = Tema.Texto2, fontSize = 13.sp)
+        }
+    }
+}
+
+/** Local (Astra): chips Local 1/2/3 + "+", abas Forma/Ajustes, um slider por vez. Pessoa só uma vez. */
+@Composable
+private fun PainelLocal(p: Local.Parametros, sel: Int, aba: String, param: String, verMascara: Boolean, escolhendoTipo: Boolean,
+                        aoSelecionar: (Int) -> Unit, aoAba: (String) -> Unit, aoParam: (String) -> Unit, aoVerMascara: (Boolean) -> Unit, aoEscolherTipo: (Boolean) -> Unit,
+                        aoNova: (Local.Tipo) -> Unit, aoExcluir: (Int) -> Unit, aoInverter: (Int) -> Unit, aoSuavidade: (Float) -> Unit, aoSuavidadeFim: () -> Unit,
+                        aoValor: (Float) -> Unit, aoValorFim: () -> Unit, aoZerar: () -> Unit) {
+    val m = p.mascaras.getOrNull(sel)
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 6.dp), verticalArrangement = Arrangement.SpaceBetween) {
+        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            p.mascaras.forEachIndexed { i, mk -> Chip("Local ${i + 1} · ${when (mk.tipo) { Local.Tipo.Radial -> "Radial"; Local.Tipo.Linear -> "Linear"; else -> "Pessoa" }}", sel == i, marcado = !mk.neutra) { aoSelecionar(i) } }
+            if (p.mascaras.size < Local.MAX) Chip("+", escolhendoTipo) { aoEscolherTipo(!escolhendoTipo) }
+            if (m != null) { TextButton(onClick = { aoExcluir(sel) }) { Text("Excluir", color = Tema.Texto2, fontSize = 12.sp) } }
+        }
+        when {
+            escolhendoTipo || m == null -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Chip("Radial", false) { aoNova(Local.Tipo.Radial) }; Chip("Linear", false) { aoNova(Local.Tipo.Linear) }
+                if (p.mascaras.none { it.tipo == Local.Tipo.Pessoa }) Chip("Pessoa", false) { aoNova(Local.Tipo.Pessoa) }
+                if (m == null) Text("Crie uma máscara e ajuste só aquela área.", color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
+            }
+            else -> {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Chip("Forma", aba == "Forma") { aoAba("Forma") }; Chip("Ajustes", aba == "Ajustes") { aoAba("Ajustes") }
+                    Chip("Inverter", m.invertida) { aoInverter(sel) }
+                    if (aba == "Ajustes") Chip("Ver máscara", verMascara) { aoVerMascara(!verMascara) }
+                }
+                if (aba == "Forma") {
+                    if (m.tipo == Local.Tipo.Radial) Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Suavidade ${m.suavidade.roundToInt()}", color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.width(100.dp))
+                        Slider(value = m.suavidade, onValueChange = { aoSuavidade(it.roundToInt().toFloat()) }, onValueChangeFinished = aoSuavidadeFim, valueRange = 0f..100f, modifier = Modifier.weight(1f).height(28.dp),
+                            colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
+                    } else Text(if (m.tipo == Local.Tipo.Linear) "Arraste as alças: coral = 100% do efeito, branca = 0%. Arraste a linha para mover." else "Máscara da pessoa, separada automaticamente.", color = Tema.Texto2, fontSize = 12.sp)
+                } else {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) { Local.SLIDERS.forEach { s2 -> Chip(s2, param == s2, marcado = m.valor(s2) != 0f) { aoParam(s2) } } }
+                    val v = m.valor(param)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text((if (v > 0) "+" else "") + v.roundToInt().toString(), color = Tema.Texto, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(40.dp))
+                        Slider(value = v, onValueChange = { aoValor(it.roundToInt().toFloat()) }, onValueChangeFinished = aoValorFim, valueRange = -100f..100f, modifier = Modifier.weight(1f).height(28.dp),
+                            colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
+                        TextButton(onClick = aoZerar, enabled = v != 0f) { Text("Redefinir", color = if (v != 0f) Tema.Texto2 else Color.Transparent, fontSize = 12.sp) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Corrigir: Pele (slider) e Cicatrizar (pincel de cura para manchas pequenas). */
+@Composable
+private fun PainelCorrigir(receita: Receita, parametro: String, curando: Boolean, curaDp: Float, aoParametro: (String) -> Unit, aoValor: (Float) -> Unit, aoValorFim: () -> Unit, aoZerar: () -> Unit, aoCuraDp: (Float) -> Unit, aoLimparCura: () -> Unit) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.SpaceBetween) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("Pele", parametro == "Pele", marcado = receita.fundo.pele != 0f) { aoParametro("Pele") }
+            Chip("Cicatrizar", curando, marcado = receita.cura.pinceladas.isNotEmpty()) { aoParametro("Cicatrizar") }
+        }
+        if (curando) Column {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Pincel ${curaDp.roundToInt()}", color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.width(76.dp))
+                Slider(value = curaDp, onValueChange = { aoCuraDp(it.roundToInt().toFloat()) }, valueRange = 8f..60f, modifier = Modifier.weight(1f).height(28.dp), colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
+                TextButton(onClick = aoLimparCura, enabled = receita.cura.pinceladas.isNotEmpty()) { Text("Limpar", color = if (receita.cura.pinceladas.isNotEmpty()) Tema.Texto2 else Color.Transparent, fontSize = 12.sp) }
+            }
+            Text("Para manchas pequenas. Se borrar ou repetir textura, desfaça, amplie e use um pincel menor.", color = Tema.Texto2, fontSize = 12.sp)
+        } else {
+            val v = receita.fundo.pele
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(v.roundToInt().toString(), color = Tema.Texto, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(44.dp))
+                Slider(value = v, onValueChange = { aoValor(it.roundToInt().toFloat()) }, onValueChangeFinished = aoValorFim, valueRange = 0f..100f, modifier = Modifier.weight(1f), colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
+                TextButton(onClick = aoZerar, enabled = v != 0f) { Text("Redefinir", color = if (v != 0f) Tema.Texto2 else Color.Transparent, fontSize = 13.sp) }
+            }
         }
     }
 }

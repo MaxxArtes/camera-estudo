@@ -26,6 +26,11 @@ object Local {
             "Temperatura" -> copy(temperatura = v); "Sombras" -> copy(sombras = v); else -> copy(realces = v)
         }
     }
+    fun nova(tipo: Tipo, proporcao: Float): Mascara = when (tipo) {   // proporcao = largura/altura da imagem
+        Tipo.Radial -> { val r = 0.25f; if (proporcao >= 1f) Mascara(tipo, rx = r / proporcao, ry = r) else Mascara(tipo, rx = r, ry = r * proporcao) }
+        Tipo.Linear -> Mascara(tipo, x1 = 0.5f, y1 = 0.25f, x2 = 0.5f, y2 = 0.6f)
+        Tipo.Pessoa -> Mascara(tipo)
+    }
     val SLIDERS = listOf("Exposição", "Contraste", "Saturação", "Temperatura", "Sombras", "Realces")
 
     data class Parametros(val mascaras: List<Mascara> = emptyList()) {
@@ -36,7 +41,7 @@ object Local {
     private fun suave(t: Float): Float { val x = t.coerceIn(0f, 1f); return x * x * (3f - 2f * x) }
 
     /** Peso 0..1 da máscara no ponto normalizado. `pessoa` só é usada pelo tipo Pessoa. */
-    fun peso(m: Mascara, nx: Float, ny: Float, pessoa: Fundo.Mascara?): Float {
+    fun peso(m: Mascara, nx: Float, ny: Float, pessoa: FloatArray?, pw: Int = 0, ph: Int = 0): Float {
         val w = when (m.tipo) {
             Tipo.Radial -> {
                 val dx = (nx - m.cx) / m.rx.coerceAtLeast(0.01f); val dy = (ny - m.cy) / m.ry.coerceAtLeast(0.01f)
@@ -47,7 +52,7 @@ object Local {
                 val ax = m.x2 - m.x1; val ay = m.y2 - m.y1; val l2 = ax * ax + ay * ay
                 if (l2 < 1e-6f) 1f else { val t = ((nx - m.x1) * ax + (ny - m.y1) * ay) / l2; 1f - suave(t) }
             }
-            Tipo.Pessoa -> if (pessoa == null) 0f else suave((pessoa.pessoa(nx, ny) - 0.2f) / 0.6f)
+            Tipo.Pessoa -> if (pessoa == null || pw <= 0 || ph <= 0) 0f else suave((pessoa[(ny * (ph - 1)).toInt().coerceIn(0, ph - 1) * pw + (nx * (pw - 1)).toInt().coerceIn(0, pw - 1)] - 0.2f) / 0.6f)
         }
         return if (m.invertida) 1f - w else w
     }
@@ -60,7 +65,7 @@ object Local {
         return v.coerceIn(0f, 1f)
     }
 
-    fun aplicar(px: IntArray, w: Int, h: Int, p: Parametros, pessoa: Fundo.Mascara?): IntArray {
+    fun aplicar(px: IntArray, w: Int, h: Int, p: Parametros, pessoa: FloatArray?): IntArray {
         if (p.neutro) return px
         var out = px
         for (m in p.mascaras) {
@@ -72,7 +77,7 @@ object Local {
             for (y in 0 until h) { val ny = y / (h - 1f)
                 for (x in 0 until w) {
                     val k = y * w + x; val c = out[k]
-                    val peso = peso(m, x / (w - 1f), ny, pessoa)
+                    val peso = peso(m, x / (w - 1f), ny, pessoa, w, h)
                     if (peso <= 0.002f) { o[k] = c; continue }
                     var r = (c shr 16 and 255).toFloat(); var g = (c shr 8 and 255).toFloat(); var b = (c and 255).toFloat()
                     // matriz 4x5 (linha-maior, deslocamentos em 0..255)
@@ -89,7 +94,7 @@ object Local {
         return out
     }
 
-    fun aplicar(b: Bitmap, p: Parametros, pessoa: Fundo.Mascara?): Bitmap {
+    fun aplicar(b: Bitmap, p: Parametros, pessoa: FloatArray?): Bitmap {
         if (p.neutro) return b
         val w = b.width; val h = b.height
         val px = IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) }

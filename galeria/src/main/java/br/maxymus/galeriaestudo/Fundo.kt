@@ -177,6 +177,19 @@ object Fundo {
             (s / ((x1 - x0) * (y1 - y0))).toInt() }
     }
 
+    /** Máscara plena (refinada + traços) no tamanho do bitmap: para o Local e para sobreposições. */
+    fun plenaDe(b: Bitmap, m: Mascara, tracos: List<Traco>): FloatArray {
+        val w = b.width; val h = b.height
+        val px = IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) }
+        return m.plena(px, w, h, tracos)
+    }
+
+    /** Sobreposição coral translúcida de uma máscara qualquer (FloatArray w×h). */
+    fun visualDe(plena: FloatArray, w: Int, h: Int, forca: Float = 0.5f): Bitmap {
+        val out = IntArray(w * h) { k -> val a = (plena[k].coerceIn(0f, 1f) * 255f * forca).toInt().coerceIn(0, 255); (a shl 24) or 0x00FF575F }
+        return Bitmap.createBitmap(out, w, h, Bitmap.Config.ARGB_8888)
+    }
+
     /** Sobreposição coral translúcida da área de PESSOA (o que fica fora do desfoque), no tamanho do bitmap dado. */
     fun visual(b: Bitmap, m: Mascara, tracos: List<Traco>): Bitmap {
         val w = b.width; val h = b.height
