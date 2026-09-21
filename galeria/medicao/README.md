@@ -27,3 +27,12 @@ fronteira dos 4 ladrilhos; cada um vê meio rosto e diz fundo). Portão de confi
 faixa inferior (só abaixo de 55% da altura) ainda tiram 11–15% do corpo em selfie e o ganho no grupo cai a 1–3%.
 3x3 é pior (ladrilho só de perna vira chão-pessoa). Conclusão: modelo de busto não generaliza para recortes; o chão
 junto dos pés fica para o pincel Remover do Refinar.
+
+## Modelos de recorte comparados (modelos_cmp.py, 20/09) — o que fecha a distância para o remove.bg
+Na foto do grupo de 12, sobre branco (painel_modelos.jpg): nosso selfie_multiclass 256² deixa chão entre as pernas;
+u2net_human_seg (320², 0,9 s CPU) e silueta (0,4 s) limpam o chão mas deixam franjas cinza à direita;
+**isnet-general-use (DIS, Apache-2.0, entrada 1024², 2,3 s em 2 núcleos, 176 MB fp32)** dá recorte classe
+remove.bg: sem chão, bordas limpas, 12 pessoas inteiras. BiRefNet estourou a RAM da bancada (e não cabe em celular).
+Caminhos para o app: (1) ML Kit Subject Segmentation (play-services-mlkit-subject-segmentation 16.0.0-beta1,
+peso zero no APK, modelo via Play Services; qualidade a medir no aparelho); (2) ISNet no aparelho via ONNX Runtime
+Android, quantizado (~44–88 MB) baixado sob demanda do R2 na 1ª vez; (3) os dois: ML Kit padrão + ISNet "alta".
