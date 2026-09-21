@@ -15,6 +15,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material.icons.filled.LibraryAdd
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.EmojiEmotions
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Share
 import android.content.Intent
@@ -70,7 +71,7 @@ import kotlinx.coroutines.withContext
 
 /** Aba Pessoas: grupos de rostos (2 colunas, capas circulares), aparições únicas atrás de uma linha, estado da análise. */
 @Composable
-fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, porId: Map<Long, Midia>, aoAbrirPessoa: (Long) -> Unit, aoAbrirAlbumManual: (Long) -> Unit, aoAbrirSeletor: (Long) -> Unit, aoAbrirLixeira: () -> Unit, aoAbrirPasta: (String) -> Unit, aoMudou: () -> Unit) {
+fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, porId: Map<Long, Midia>, aoAbrirPessoa: (Long) -> Unit, aoAbrirAlbumManual: (Long) -> Unit, aoAbrirSeletor: (Long) -> Unit, aoAbrirLixeira: () -> Unit, aoAbrirFigurinhas: () -> Unit, aoAbrirPasta: (String) -> Unit, aoMudou: () -> Unit) {
     val ctx = LocalContext.current
     val escopo = rememberCoroutineScope()
     val estado by Indexador.estado.collectAsStateWithLifecycle()
@@ -156,6 +157,13 @@ fun TelaPessoas(estadoGrade: LazyGridState, versao: Int, parcial: Boolean, porId
                     if (!subtela && unicas.isNotEmpty()) item(key = "unicas", span = { GridItemSpan(2) }) {
                         Row(Modifier.fillMaxWidth().clickable { pessoas = emptyList(); mostrandoUnicas = true }.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("Aparições únicas · ${unicas.size}", color = Tema.Texto, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Tema.Texto2)
+                        }
+                    }
+                    if (!subtela) item(key = "figurinhas", span = { GridItemSpan(2) }) {
+                        Row(Modifier.fillMaxWidth().padding(top = 24.dp).clickable(onClick = aoAbrirFigurinhas).padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.EmojiEmotions, contentDescription = null, tint = Tema.Texto2)
+                            Text("Minhas figurinhas", color = Tema.Texto, fontSize = 16.sp, modifier = Modifier.weight(1f).padding(start = 12.dp))
                             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Tema.Texto2)
                         }
                     }

@@ -86,7 +86,7 @@ import kotlin.math.min
  * e Mais (Informações; e "Não é esta pessoa" quando aberto por um álbum). Gestos portados da câmera (validados).
  */
 @Composable
-fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: Long? = null, fechar: () -> Unit, aoExcluida: (Midia) -> Unit, aoNaoEEsta: (Midia) -> Unit, aoRemovidoDoAlbum: (Midia) -> Unit = {}, aoEditar: (Midia) -> Unit = {}) {
+fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: Long? = null, fechar: () -> Unit, aoExcluida: (Midia) -> Unit, aoNaoEEsta: (Midia) -> Unit, aoRemovidoDoAlbum: (Midia) -> Unit = {}, aoEditar: (Midia) -> Unit = {}, aoFigurinha: (Midia) -> Unit = {}) {
     val ctx = LocalContext.current
     if (lista.isEmpty()) { LaunchedEffect(Unit) { fechar() }; return }
     var indice by remember { mutableIntStateOf(inicial.coerceIn(0, lista.size - 1)) }
@@ -201,6 +201,7 @@ fun Visualizador(lista: List<Midia>, inicial: Int, pessoa: Long?, albumManual: L
                 Box {
                     Acao(Icons.Filled.MoreVert, "Mais") { menuMais = true }
                     DropdownMenu(expanded = menuMais, onDismissRequest = { menuMais = false }) {
+                        if (!atual.ehVideo) DropdownMenuItem(text = { Text("Criar figurinha") }, onClick = { menuMais = false; aoFigurinha(atual) })
                         DropdownMenuItem(text = { Text("Informações") }, onClick = { menuMais = false; mostrarInfo = true })
                         DropdownMenuItem(text = { Text("Editar em outro app") }, onClick = { menuMais = false; editar() })
                         DropdownMenuItem(text = { Text("Adicionar a um álbum") }, onClick = {

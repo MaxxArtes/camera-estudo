@@ -674,7 +674,7 @@ private fun Rotulo(texto: String, modifier: Modifier) {
 
 /** Fundo xadrez (transparência) atrás da prévia no modo Remover. */
 @Composable
-private fun Xadrez(modifier: Modifier) {
+fun Xadrez(modifier: Modifier) {
     Canvas(modifier) {
         val lado = 16f * density; var y = 0f; var linha = 0
         while (y < size.height) { var x = 0f; var col = 0

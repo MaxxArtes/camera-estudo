@@ -117,6 +117,8 @@ private fun App() {
     var lixeiraAberta by remember { mutableStateOf(false) }
     var pastaAberta by remember { mutableStateOf<String?>(null) }
     var editando by remember { mutableStateOf<Midia?>(null) }
+    var figurinhaDe by remember { mutableStateOf<Midia?>(null) }
+    var figurinhasAbertas by remember { mutableStateOf(false) }
     val estadoFotos = rememberLazyListState()
     val estadoPessoas = rememberLazyGridState()
 
@@ -138,11 +140,14 @@ private fun App() {
 
     val v = visual
     val p = pessoaAberta
-    val alb = albumAberto; val sel = seletorAlbum; val pasta = pastaAberta; val ed = editando
-    BackHandler(enabled = ed == null && (v != null || sel != null || alb != null || lixeiraAberta || pasta != null || p != null)) { when { v != null -> visual = null; sel != null -> seletorAlbum = null; alb != null -> albumAberto = null; lixeiraAberta -> lixeiraAberta = false; pasta != null -> pastaAberta = null; else -> pessoaAberta = null } }
+    val alb = albumAberto; val sel = seletorAlbum; val pasta = pastaAberta; val ed = editando; val fig = figurinhaDe
+    BackHandler(enabled = ed == null && fig == null && !figurinhasAbertas && (v != null || sel != null || alb != null || lixeiraAberta || pasta != null || p != null)) { when { v != null -> visual = null; sel != null -> seletorAlbum = null; alb != null -> albumAberto = null; lixeiraAberta -> lixeiraAberta = false; pasta != null -> pastaAberta = null; else -> pessoaAberta = null } }
     val porId = remember(midias) { midias.associateBy { it.id } }
 
     when {
+        fig != null -> TelaFigurinha(midia = fig, fechar = { figurinhaDe = null }, aoSalva = { figurinhaDe = null; figurinhasAbertas = true })
+        figurinhasAbertas -> TelaFigurinhas(aoFechar = { figurinhasAbertas = false },
+            aoCriar = { figurinhasAbertas = false; aba = 0 })
         ed != null -> TelaEditor(midia = ed, fechar = { editando = null }, aoSalvo = { copia ->
             editando = null; versaoMidias++; versaoAlbuns++
             visual = Visualizacao(listOf(copia), 0, null)
@@ -157,7 +162,7 @@ private fun App() {
                 }
             },
             aoRemovidoDoAlbum = { visual = null; versaoAlbuns++ },
-            aoEditar = { editando = it })
+            aoEditar = { editando = it }, aoFigurinha = { visual = null; figurinhaDe = it })
         sel != null -> SeletorFotos(album = sel, midias = midias, aoFechar = { seletorAlbum = null }, aoConcluido = { seletorAlbum = null; versaoAlbuns++ })
         alb != null -> TelaAlbum(id = alb, porId = porId, versao = versaoAlbuns, voltar = { albumAberto = null },
             aoAdicionar = { seletorAlbum = alb }, aoAbrir = { lista, i -> visual = Visualizacao(lista, i, null, alb) },
@@ -177,7 +182,7 @@ private fun App() {
             }) { pad ->
                 Box(Modifier.padding(pad).fillMaxSize()) {
                     if (aba == 0) TelaFotos(midias, estadoFotos, acesso == Acesso.Parcial, aoAbrir = { lista, i -> visual = Visualizacao(lista, i, null) }, aoAbrirAlbum = { pessoaAberta = it }, aoAbrirAlbumManual = { albumAberto = it }, aoAbrirLixeira = { lixeiraAberta = true }, aoAlterarSelecao = { pedir.launch(permissoesDeFotos()) })
-                    else TelaPessoas(estadoPessoas, versaoPessoas + versaoAlbuns, acesso == Acesso.Parcial, porId = porId, aoAbrirPessoa = { pessoaAberta = it }, aoAbrirAlbumManual = { albumAberto = it }, aoAbrirSeletor = { seletorAlbum = it }, aoAbrirLixeira = { lixeiraAberta = true }, aoAbrirPasta = { pastaAberta = it }, aoMudou = { versaoPessoas++; versaoAlbuns++ })
+                    else TelaPessoas(estadoPessoas, versaoPessoas + versaoAlbuns, acesso == Acesso.Parcial, porId = porId, aoAbrirPessoa = { pessoaAberta = it }, aoAbrirAlbumManual = { albumAberto = it }, aoAbrirSeletor = { seletorAlbum = it }, aoAbrirLixeira = { lixeiraAberta = true }, aoAbrirFigurinhas = { figurinhasAbertas = true }, aoAbrirPasta = { pastaAberta = it }, aoMudou = { versaoPessoas++; versaoAlbuns++ })
                 }
             }
         }
