@@ -685,7 +685,6 @@ private fun PainelFundo(f: Fundo.Parametros, aoModo: (Fundo.Modo) -> Unit, aoInt
             listOf(Fundo.Modo.Nenhum to "Nenhum", Fundo.Modo.Desfocar to "Desfocar", Fundo.Modo.PretoEBranco to "P&B", Fundo.Modo.Cor to "Cor", Fundo.Modo.Remover to "Remover").forEach { (m, r) ->
                 Chip(r, f.modo == m && !refinando) { aoModo(m) }
             }
-            if (f.modo != Fundo.Modo.Nenhum) Chip("Refinar", refinando, marcado = f.tracos.isNotEmpty()) { aoRefinar(!refinando) }
         }
         when {
             refinando -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -695,17 +694,28 @@ private fun PainelFundo(f: Fundo.Parametros, aoModo: (Fundo.Modo) -> Unit, aoInt
                 Slider(value = pincelDp, onValueChange = { aoPincelDp(it.roundToInt().toFloat()) }, valueRange = 8f..80f, modifier = Modifier.weight(1f).height(28.dp),
                     colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
                 TextButton(onClick = aoLimparTracos, enabled = f.tracos.isNotEmpty()) { Text("Limpar", color = if (f.tracos.isNotEmpty()) Tema.Texto2 else Color.Transparent, fontSize = 12.sp) }
+                Chip("Concluir", true) { aoRefinar(false) }
             }
             f.modo == Fundo.Modo.Desfocar -> Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(f.intensidade.roundToInt().toString(), color = Tema.Texto, fontSize = 14.sp, modifier = Modifier.width(44.dp))
                 Slider(value = f.intensidade, onValueChange = { aoIntensidade(it.roundToInt().toFloat()) }, onValueChangeFinished = aoIntensidadeFim, valueRange = 0f..100f,
                     modifier = Modifier.weight(1f), colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
+                Chip("Refinar", false, marcado = f.tracos.isNotEmpty()) { aoRefinar(true) }
             }
-            f.modo == Fundo.Modo.Cor -> Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                CORES_FUNDO.forEach { c -> Box(Modifier.size(36.dp).clip(CircleShape).background(Color(c)).border(2.dp, if (f.cor == c) Tema.Coral else Color(0x33FFFFFF), CircleShape).clickable { aoCor(c) }) }
+            f.modo == Fundo.Modo.Cor -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CORES_FUNDO.forEach { c -> Box(Modifier.size(36.dp).clip(CircleShape).background(Color(c)).border(2.dp, if (f.cor == c) Tema.Coral else Color(0x33FFFFFF), CircleShape).clickable { aoCor(c) }) }
+                }
+                Chip("Refinar", false, marcado = f.tracos.isNotEmpty()) { aoRefinar(true) }
             }
-            f.modo == Fundo.Modo.Remover -> Text("A cópia sai em PNG com o fundo transparente. Use Refinar se o modelo errar a borda.", color = Tema.Texto2, fontSize = 13.sp)
-            f.modo == Fundo.Modo.PretoEBranco -> Text("Só a pessoa fica colorida. Use Refinar se o modelo errar a borda.", color = Tema.Texto2, fontSize = 13.sp)
+            f.modo == Fundo.Modo.Remover -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("A cópia sai em PNG com o fundo transparente.", color = Tema.Texto2, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Chip("Refinar", false, marcado = f.tracos.isNotEmpty()) { aoRefinar(true) }
+            }
+            f.modo == Fundo.Modo.PretoEBranco -> Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Só a pessoa fica colorida.", color = Tema.Texto2, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                Chip("Refinar", false, marcado = f.tracos.isNotEmpty()) { aoRefinar(true) }
+            }
             else -> Text("Escolha o que fazer com o fundo. A pessoa é separada automaticamente; Refinar corrige com pincel.", color = Tema.Texto2, fontSize = 13.sp)
         }
     }
