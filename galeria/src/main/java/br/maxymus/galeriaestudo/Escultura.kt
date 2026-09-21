@@ -51,6 +51,7 @@ object Escultura {
     /** Marcos de todos os rostos da foto. Lista vazia quando não acha ninguém. Bloqueante: chamar fora da principal. */
     fun marcos(b: Bitmap, ladoMax: Int = 1000): List<Marcos> = runCatching {
         ultimoErro = null
+        val t0 = System.nanoTime()
         val esc = min(1f, ladoMax.toFloat() / max(b.width, b.height))
         val peq = if (esc < 1f) Bitmap.createScaledBitmap(b, max(1, (b.width * esc).toInt()), max(1, (b.height * esc).toInt()), true) else b
         val pw = peq.width.toFloat(); val ph = peq.height.toFloat()
@@ -65,9 +66,19 @@ object Escultura {
                 bochechaE = pt(FaceLandmark.LEFT_CHEEK), bochechaD = pt(FaceLandmark.RIGHT_CHEEK),
                 nariz = pt(FaceLandmark.NOSE_BASE), boca = pt(FaceLandmark.MOUTH_BOTTOM),
                 queixoY = c.bottom / ph)
+        }.also { lista ->
+            // é a única coisa que a bancada não mede: se os marcos caem onde a escultura supõe, e em que rosto falham
+            val p1 = lista.firstOrNull()
+            Telemetria.evento("escultura_marcos", mapOf(
+                "rostos" to lista.size, "ms" to (System.nanoTime() - t0) / 1_000_000,
+                "bochechas" to (p1?.bochechaE != null && p1.bochechaD != null),
+                "olhos" to (p1?.olhoE != null && p1.olhoD != null),
+                "nariz" to (p1?.nariz != null), "boca" to (p1?.boca != null),
+                "larg" to ((p1?.larg ?: 0f) * 100).toInt()))
         }
     }.getOrElse { e ->
         ultimoErro = (e::class.java.simpleName + ": " + (e.message ?: "")).take(200)
+        Telemetria.evento("erro", mapOf("onde" to "escultura_marcos", "msg" to ultimoErro))
         synchronized(this) { runCatching { detector?.close() }; detector = null }
         emptyList()
     }
@@ -115,6 +126,7 @@ object Escultura {
         val w = b.width; val h = b.height
         val todas = rostos.flatMap { ops(it, p, w, h) }
         if (todas.isEmpty()) return b
+        val t0 = System.nanoTime()
         val px = IntArray(w * h).also { b.getPixels(it, 0, w, 0, 0, w, h) }
         val saida = IntArray(w * h)
         for (y in 0 until h) {
@@ -133,6 +145,9 @@ object Escultura {
                 saida[y * w + x] = amostra(px, w, h, sx, sy)
             }
         }
+        Telemetria.evento("escultura", mapOf("ms" to (System.nanoTime() - t0) / 1_000_000, "ops" to todas.size,
+            "lado" to max(w, h), "af" to p.afinar.toInt(), "qx" to p.queixo.toInt(), "ol" to p.olhos.toInt(),
+            "na" to p.nariz.toInt(), "lb" to p.labios.toInt()))
         return Bitmap.createBitmap(saida, w, h, Bitmap.Config.ARGB_8888)
     }
 

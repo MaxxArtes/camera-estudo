@@ -33,6 +33,7 @@ object MlKitAssunto {
         val mapa = FloatArray(n)
         buf.rewind(); buf.get(mapa, 0, min(n, buf.remaining()))
         ultimoMs = (System.nanoTime() - t) / 1_000_000; ultimoErro = null
+        Telemetria.evento("mlkit_assunto", mapOf("ms" to ultimoMs, "larg" to b.width, "alt" to b.height))
         Resultado(mapa, b.width, b.height)
     }.getOrElse { e ->
         val causa = e.cause ?: e

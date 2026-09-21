@@ -101,6 +101,8 @@ fun TelaFigurinha(midia: Midia, fechar: () -> Unit, aoSalva: () -> Unit) {
         ocupado = true
         val m = withContext(Dispatchers.Default) { runCatching { Fundo.segmentar(ctx, b, motor) }.getOrNull() }
         ocupado = false
+        Telemetria.evento("figurinha_recorte", mapOf("pedido" to motor.name, "usado" to (m?.motor?.name ?: "nenhum"),
+            "cobertura" to ((m?.cobertura ?: 0f) * 100).toInt()))
         if (m == null || m.cobertura < 0.01f) { semPessoa = true; mascara = null } else { semPessoa = false; mascara = m; motorUsado = m.motor }
     }
 
@@ -267,6 +269,9 @@ fun TelaFigurinha(midia: Midia, fechar: () -> Unit, aoSalva: () -> Unit) {
                 Figurinha.registrar(ctx, f.name, emoji); f.name
             }
             salvando = false
+            Telemetria.evento("figurinha_salva", mapOf("ok" to (nome != null), "emoji" to emoji, "texto" to !texto.vazio,
+                "contorno" to contorno.roundToInt(), "zoom" to (zoom * 100).roundToInt(), "tracos" to tracos.size,
+                "motor" to (motorUsado?.name ?: "nenhum")))
             if (nome != null) { Toast.makeText(ctx, "Figurinha salva", Toast.LENGTH_SHORT).show(); aoSalva() }
             else Toast.makeText(ctx, "Não consegui gerar a figurinha.", Toast.LENGTH_LONG).show()
         }

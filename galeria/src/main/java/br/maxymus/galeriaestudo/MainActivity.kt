@@ -182,7 +182,7 @@ private fun App() {
             }) { pad ->
                 Box(Modifier.padding(pad).fillMaxSize()) {
                     if (aba == 0) TelaFotos(midias, estadoFotos, acesso == Acesso.Parcial, aoAbrir = { lista, i -> visual = Visualizacao(lista, i, null) }, aoAbrirAlbum = { pessoaAberta = it }, aoAbrirAlbumManual = { albumAberto = it }, aoAbrirLixeira = { lixeiraAberta = true }, aoAlterarSelecao = { pedir.launch(permissoesDeFotos()) })
-                    else TelaPessoas(estadoPessoas, versaoPessoas + versaoAlbuns, acesso == Acesso.Parcial, porId = porId, aoAbrirPessoa = { pessoaAberta = it }, aoAbrirAlbumManual = { albumAberto = it }, aoAbrirSeletor = { seletorAlbum = it }, aoAbrirLixeira = { lixeiraAberta = true }, aoAbrirFigurinhas = { figurinhasAbertas = true }, aoAbrirPasta = { pastaAberta = it }, aoMudou = { versaoPessoas++; versaoAlbuns++ })
+                    else TelaPessoas(estadoPessoas, versaoPessoas + versaoAlbuns, acesso == Acesso.Parcial, porId = porId, aoAbrirPessoa = { pessoaAberta = it }, aoAbrirAlbumManual = { albumAberto = it }, aoAbrirSeletor = { seletorAlbum = it }, aoAbrirLixeira = { lixeiraAberta = true }, aoAbrirFigurinhas = { figurinhasAbertas = true }, aoAbrirPasta = { pastaAberta = it; Telemetria.evento("abriu_pasta", mapOf("pasta" to it)) }, aoMudou = { versaoPessoas++; versaoAlbuns++ })
                 }
             }
         }

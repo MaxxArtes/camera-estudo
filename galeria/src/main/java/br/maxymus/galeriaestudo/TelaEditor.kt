@@ -431,7 +431,8 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
             }
             salvando = false
             r.onSuccess { s ->
-                Telemetria.evento("editor_salvou", mapOf("larg" to s.largura, "alt" to s.altura, "filtro" to receita.cor.filtro, "recorte" to !receita.geo.neutra, "fundo" to receita.fundo.modo.name, "tom" to !receita.tom.neutro, "motor" to receita.fundo.motor.name))
+                Telemetria.evento("editor_salvou", mapOf("larg" to s.largura, "alt" to s.altura, "filtro" to receita.cor.filtro, "recorte" to !receita.geo.neutra, "fundo" to receita.fundo.modo.name, "tom" to !receita.tom.neutro, "motor" to receita.fundo.motor.name,
+                    "escultura" to !receita.escultura.neutro, "cor_local" to receita.local.mascaras.count { it.temCor }, "gradiente" to receita.local.mascaras.count { it.corB != 0 }))
                 Toast.makeText(ctx, "Cópia salva", Toast.LENGTH_SHORT).show()
                 val id = s.uri.lastPathSegment?.toLongOrNull() ?: 0L
                 aoSalvo(Midia(id, s.uri, false, if (midia.quando > 0L) midia.quando else System.currentTimeMillis(), 0L, midia.pasta))
