@@ -1,6 +1,8 @@
 package br.maxymus.galeriaestudo
 
+import android.content.Context
 import android.graphics.Bitmap
+import android.net.ConnectivityManager
 import android.graphics.RectF
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -23,6 +25,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -34,6 +37,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Crop
@@ -50,6 +54,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
@@ -58,6 +64,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -87,6 +94,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -139,8 +147,14 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
     val densidade = LocalDensity.current
     var previa by remember { mutableStateOf<Bitmap?>(null) }
     var erro by remember { mutableStateOf<String?>(null) }
-    var receita by remember { mutableStateOf(Receita()) }
-    val historico = remember { mutableStateOf(listOf(Receita())) }
+    // motor do recorte: preferência global (só muda quando uma escolha DÁ CERTO) e, dentro da foto, campo da receita
+    val prefs = remember { ctx.getSharedPreferences("editor", Context.MODE_PRIVATE) }
+    val receitaBase = remember {
+        val m = runCatching { Fundo.Motor.valueOf(prefs.getString("motor", Fundo.Motor.Padrao.name)!!) }.getOrDefault(Fundo.Motor.Padrao)
+        Receita(fundo = Fundo.Parametros(motor = m))
+    }
+    var receita by remember { mutableStateOf(receitaBase) }
+    val historico = remember { mutableStateOf(listOf(receitaBase)) }
     var posHist by remember { mutableStateOf(0) }
     var grupo by remember { mutableStateOf<GrupoEditor?>(null) }
     var parametro by remember { mutableStateOf("Brilho") }
@@ -156,6 +170,11 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
     var mascara by remember { mutableStateOf<Fundo.Mascara?>(null) }
     var segmentando by remember { mutableStateOf(false) }
     var semPessoa by remember { mutableStateOf(false) }
+    var avisoMotor by remember { mutableStateOf<String?>(null) }
+    var baixaJob by remember { mutableStateOf<Job?>(null) }
+    var confirmarDados by remember { mutableStateOf<Fundo.Motor?>(null) }
+    val estadoModelo by IsnetOnnx.estado.collectAsState()
+    LaunchedEffect(Unit) { IsnetOnnx.conferir(ctx) }
     var autoBase by remember { mutableStateOf<Tom.Auto?>(null) }
     var autoIntensidade by remember { mutableStateOf(100f) }
     var pegandoBranco by remember { mutableStateOf(false) }
@@ -200,11 +219,17 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
         val precisaPessoa = !receita.fundo.neutro || receita.local.mascaras.any { it.tipo == Local.Tipo.Pessoa }
         if (receita.tom.neutro && receita.fundo.neutro && receita.hsl.neutro && receita.local.neutro && receita.cura.neutro && !precisaPessoa) { previaCpu = null; return@LaunchedEffect }
         delay(120)
-        if (precisaPessoa && mascara == null) {
+        if (precisaPessoa && mascara?.pedido != receita.fundo.motor) {
             segmentando = true
-            val m = withContext(Dispatchers.Default) { runCatching { Fundo.segmentar(ctx, t) }.getOrNull() }
+            val alvo = receita.fundo.motor
+            val m = withContext(Dispatchers.Default) { runCatching { Fundo.segmentar(ctx, t, alvo) }.getOrNull() }
             segmentando = false
-            if (m == null || m.cobertura < 0.02f) { semPessoa = true; Telemetria.evento("editor_fundo", mapOf("pessoa" to false)) } else { semPessoa = false; mascara = m }
+            if (m == null || m.cobertura < 0.02f) { semPessoa = true; Telemetria.evento("editor_fundo", mapOf("pessoa" to false)) }
+            else {
+                semPessoa = false; mascara = m
+                avisoMotor = if (m.motor != alvo) "Recorte ${alvo.rotulo} indisponível. Usando ${m.motor.rotulo} nesta foto." else null
+                if (m.motor == alvo) prefs.edit().putString("motor", alvo.name).apply()   // só uma escolha que deu certo vira preferência
+            }
         }
         val m = mascara
         val (resultado, plena) = withContext(Dispatchers.Default) {
@@ -235,10 +260,31 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
             Fundo.visualDe(pesos, w, h, 0.35f)
         }
     }
-    fun mudou() = receita != Receita()
+    fun mudou() = receita != receitaBase
     fun registra(nova: Receita) { if (nova == receita) return; val h = historico.value.take(posHist + 1) + nova; historico.value = h; posHist = h.size - 1; receita = nova }
     fun desfazer() { if (posHist > 0) { posHist--; receita = historico.value[posHist] } }
     fun refazer() { if (posHist < historico.value.size - 1) { posHist++; receita = historico.value[posHist] } }
+    /** Troca o motor do recorte: entra no histórico como uma operação; o Alta baixa o modelo antes (confirma em dados móveis). */
+    fun aplicaMotor(m: Fundo.Motor) {
+        avisoMotor = null
+        registra(receita.copy(fundo = receita.fundo.copy(motor = m)))
+    }
+    fun baixaModelo(m: Fundo.Motor) {
+        baixaJob = escopo.launch {
+            val ok = withContext(Dispatchers.IO) { IsnetOnnx.baixar(ctx) }
+            baixaJob = null
+            if (ok) aplicaMotor(m) else avisoMotor = (IsnetOnnx.estado.value as? IsnetOnnx.Estado.Erro)?.let { "Não consegui baixar o modelo. Mantido: ${receita.fundo.motor.rotulo}." }
+        }
+    }
+    fun escolheMotor(m: Fundo.Motor) {
+        if (m == receita.fundo.motor) { if (avisoMotor == null) return; avisoMotor = null; mascara = null }   // mesmo motor após falha = tentar de novo
+        if (m == Fundo.Motor.Alta && !IsnetOnnx.conferir(ctx)) {
+            val medida = runCatching { (ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).isActiveNetworkMetered }.getOrDefault(true)
+            if (medida) confirmarDados = m else baixaModelo(m)
+            return
+        }
+        aplicaMotor(m)
+    }
     fun sair() { if (mudou()) confirmarSaida = true else fechar() }
     BackHandler { sair() }
 
@@ -314,7 +360,7 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                     val comGeo = Edicao.aplicaGeometria(cheia, receita.geo); if (comGeo !== cheia) cheia.recycle()
                     val base = Cura.aplicar(comGeo, receita.cura); if (base !== comGeo) comGeo.recycle()
                     val precisaPessoa = !receita.fundo.neutro || receita.local.mascaras.any { it.tipo == Local.Tipo.Pessoa }
-                    val m = if (precisaPessoa) Fundo.segmentar(ctx, base)?.takeIf { it.cobertura >= 0.02f } else null
+                    val m = if (precisaPessoa) Fundo.segmentar(ctx, base, receita.fundo.motor)?.takeIf { it.cobertura >= 0.02f } else null
                     val pl = if (m != null) Fundo.plenaDe(base, m, receita.fundo.tracos) else null
                     val comFundo = if (!receita.fundo.neutro && m != null) Fundo.aplicar(base, m, receita.fundo) else base
                     if (comFundo !== base) base.recycle()
@@ -331,7 +377,7 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
             }
             salvando = false
             r.onSuccess { s ->
-                Telemetria.evento("editor_salvou", mapOf("larg" to s.largura, "alt" to s.altura, "filtro" to receita.cor.filtro, "recorte" to !receita.geo.neutra, "fundo" to receita.fundo.modo.name, "tom" to !receita.tom.neutro))
+                Telemetria.evento("editor_salvou", mapOf("larg" to s.largura, "alt" to s.altura, "filtro" to receita.cor.filtro, "recorte" to !receita.geo.neutra, "fundo" to receita.fundo.modo.name, "tom" to !receita.tom.neutro, "motor" to receita.fundo.motor.name))
                 Toast.makeText(ctx, "Cópia salva", Toast.LENGTH_SHORT).show()
                 val id = s.uri.lastPathSegment?.toLongOrNull() ?: 0L
                 aoSalvo(Midia(id, s.uri, false, if (midia.quando > 0L) midia.quando else System.currentTimeMillis(), 0L, midia.pasta))
@@ -451,7 +497,7 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                             }
                             if (comparando) Rotulo("Original", Modifier.align(Alignment.TopCenter))
                             if (pegandoBranco) Rotulo("Toque numa área que deveria ser branca ou cinza", Modifier.align(Alignment.TopCenter))
-                            if (segmentando) Row(Modifier.align(Alignment.Center).background(Color(0xCC000000), RoundedCornerShape(10.dp)).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (segmentando && mascara == null) Row(Modifier.align(Alignment.Center).background(Color(0xCC000000), RoundedCornerShape(10.dp)).padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                                 CircularProgressIndicator(Modifier.size(16.dp), color = Tema.Coral, strokeWidth = 2.dp); Text("Separando pessoa…", color = Color.White, fontSize = 13.sp, modifier = Modifier.padding(start = 10.dp))
                             }
                             if (semPessoa && !receita.fundo.neutro) Rotulo("Não achei pessoa nesta foto", Modifier.align(Alignment.BottomCenter))
@@ -506,6 +552,8 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                         aoValor = { v -> receita = comValor(receita, "Pele", v) }, aoValorFim = { registra(receita) }, aoZerar = { registra(comValor(receita, "Pele", 0f)) },
                         aoCuraDp = { curaDp = it }, aoLimparCura = { registra(receita.copy(cura = Cura.Parametros())) })
                     GrupoEditor.Fundo -> PainelFundo(receita.fundo, aoModo = { m -> refinando = false; registra(receita.copy(fundo = receita.fundo.copy(modo = m))) },
+                        aplicando = segmentando && mascara != null, estadoModelo = estadoModelo, avisoMotor = avisoMotor,
+                        aoMotor = { escolheMotor(it) }, aoCancelarBaixa = { IsnetOnnx.cancelar(); baixaJob?.cancel(); baixaJob = null },
                         aoIntensidade = { v -> receita = receita.copy(fundo = receita.fundo.copy(intensidade = v)) }, aoIntensidadeFim = { registra(receita) },
                         aoCor = { c -> registra(receita.copy(fundo = receita.fundo.copy(modo = Fundo.Modo.Cor, cor = c))) },
                         refinando = refinando, pincelAdiciona = pincelAdiciona, pincelDp = pincelDp,
@@ -536,6 +584,12 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
         text = { Text("A foto original não foi alterada.") },
         confirmButton = { TextButton(onClick = { confirmarSaida = false; fechar() }) { Text("Descartar", color = Tema.Coral) } },
         dismissButton = { TextButton(onClick = { confirmarSaida = false }) { Text("Continuar editando") } })
+    confirmarDados?.let { m ->
+        AlertDialog(onDismissRequest = { confirmarDados = null }, title = { Text("Baixar ${IsnetOnnx.MB} MB usando dados móveis?") },
+            text = { Text("O recorte Alta precisa de um modelo que fica guardado no aparelho. Depois de baixado, funciona sem internet.") },
+            confirmButton = { TextButton(onClick = { confirmarDados = null; baixaModelo(m) }) { Text("Baixar", color = Tema.Coral) } },
+            dismissButton = { TextButton(onClick = { confirmarDados = null }) { Text("Agora não") } })
+    }
 }
 
 @Composable
@@ -676,47 +730,105 @@ private fun PainelFiltros(base: Bitmap?, cor: Edicao.Cor, aoFiltro: (String) -> 
     }
 }
 
-/** Fundo: Nenhum · Desfocar · P&B · Cor · Remover; intensidade no Desfocar; paleta no Cor; Refinar = pincel na máscara. */
+/**
+ * Fundo (desenho do Astra, 21/09): três linhas de 48 dp. 1 = modos Nenhum·Desfocar·P&B·Cor·Remover; 2 = controle do modo
+ * + Refinar (pincel na máscara); 3 = seletor do motor do recorte ("Recorte: Padrão"), que vira download com progresso e
+ * Cancelar quando o Alta ainda não está no aparelho, e vira aviso quando o motor pedido falha.
+ */
 @Composable
-private fun PainelFundo(f: Fundo.Parametros, aoModo: (Fundo.Modo) -> Unit, aoIntensidade: (Float) -> Unit, aoIntensidadeFim: () -> Unit, aoCor: (Int) -> Unit,
+private fun PainelFundo(f: Fundo.Parametros, aoModo: (Fundo.Modo) -> Unit,
+                        aplicando: Boolean, estadoModelo: IsnetOnnx.Estado, avisoMotor: String?,
+                        aoMotor: (Fundo.Motor) -> Unit, aoCancelarBaixa: () -> Unit,
+                        aoIntensidade: (Float) -> Unit, aoIntensidadeFim: () -> Unit, aoCor: (Int) -> Unit,
                         refinando: Boolean, pincelAdiciona: Boolean, pincelDp: Float, aoRefinar: (Boolean) -> Unit, aoPincelModo: (Boolean) -> Unit, aoPincelDp: (Float) -> Unit, aoLimparTracos: () -> Unit) {
-    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.SpaceBetween) {
-        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
+        Row(Modifier.fillMaxWidth().height(48.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             listOf(Fundo.Modo.Nenhum to "Nenhum", Fundo.Modo.Desfocar to "Desfocar", Fundo.Modo.PretoEBranco to "P&B", Fundo.Modo.Cor to "Cor", Fundo.Modo.Remover to "Remover").forEach { (m, r) ->
                 Chip(r, f.modo == m && !refinando) { aoModo(m) }
             }
         }
-        when {
-            refinando -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Chip("Adicionar", pincelAdiciona) { aoPincelModo(true) }
-                Chip("Remover", !pincelAdiciona) { aoPincelModo(false) }
-                Text("${pincelDp.roundToInt()}", color = Tema.Texto, fontSize = 13.sp, modifier = Modifier.width(28.dp))
-                Slider(value = pincelDp, onValueChange = { aoPincelDp(it.roundToInt().toFloat()) }, valueRange = 8f..80f, modifier = Modifier.weight(1f).height(28.dp),
-                    colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
-                TextButton(onClick = aoLimparTracos, enabled = f.tracos.isNotEmpty()) { Text("Limpar", color = if (f.tracos.isNotEmpty()) Tema.Texto2 else Color.Transparent, fontSize = 12.sp) }
-                Chip("Concluir", true) { aoRefinar(false) }
-            }
-            f.modo == Fundo.Modo.Desfocar -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(f.intensidade.roundToInt().toString(), color = Tema.Texto, fontSize = 14.sp, modifier = Modifier.width(44.dp))
-                Slider(value = f.intensidade, onValueChange = { aoIntensidade(it.roundToInt().toFloat()) }, onValueChangeFinished = aoIntensidadeFim, valueRange = 0f..100f,
-                    modifier = Modifier.weight(1f), colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
-                Chip("Refinar", false, marcado = f.tracos.isNotEmpty()) { aoRefinar(true) }
-            }
-            f.modo == Fundo.Modo.Cor -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    CORES_FUNDO.forEach { c -> Box(Modifier.size(36.dp).clip(CircleShape).background(Color(c)).border(2.dp, if (f.cor == c) Tema.Coral else Color(0x33FFFFFF), CircleShape).clickable { aoCor(c) }) }
+        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+            when {
+                refinando -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Chip("Adicionar", pincelAdiciona) { aoPincelModo(true) }
+                    Chip("Remover", !pincelAdiciona) { aoPincelModo(false) }
+                    Text("${pincelDp.roundToInt()}", color = Tema.Texto, fontSize = 13.sp, modifier = Modifier.width(28.dp))
+                    Slider(value = pincelDp, onValueChange = { aoPincelDp(it.roundToInt().toFloat()) }, valueRange = 8f..80f, modifier = Modifier.weight(1f).height(28.dp),
+                        colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
+                    TextButton(onClick = aoLimparTracos, enabled = f.tracos.isNotEmpty()) { Text("Limpar", color = if (f.tracos.isNotEmpty()) Tema.Texto2 else Color.Transparent, fontSize = 12.sp) }
+                    Chip("Concluir", true) { aoRefinar(false) }
                 }
-                Chip("Refinar", false, marcado = f.tracos.isNotEmpty()) { aoRefinar(true) }
+                f.modo == Fundo.Modo.Desfocar -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(f.intensidade.roundToInt().toString(), color = Tema.Texto, fontSize = 14.sp, modifier = Modifier.width(44.dp))
+                    Slider(value = f.intensidade, onValueChange = { aoIntensidade(it.roundToInt().toFloat()) }, onValueChangeFinished = aoIntensidadeFim, valueRange = 0f..100f,
+                        modifier = Modifier.weight(1f), colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
+                    Chip("Refinar", false, marcado = f.tracos.isNotEmpty()) { aoRefinar(true) }
+                }
+                f.modo == Fundo.Modo.Cor -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        CORES_FUNDO.forEach { c -> Box(Modifier.size(36.dp).clip(CircleShape).background(Color(c)).border(2.dp, if (f.cor == c) Tema.Coral else Color(0x33FFFFFF), CircleShape).clickable { aoCor(c) }) }
+                    }
+                    Chip("Refinar", false, marcado = f.tracos.isNotEmpty()) { aoRefinar(true) }
+                }
+                f.modo == Fundo.Modo.Remover -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("A cópia sai em PNG com o fundo transparente.", color = Tema.Texto2, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    Chip("Refinar", false, marcado = f.tracos.isNotEmpty()) { aoRefinar(true) }
+                }
+                f.modo == Fundo.Modo.PretoEBranco -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Só a pessoa fica colorida.", color = Tema.Texto2, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                    Chip("Refinar", false, marcado = f.tracos.isNotEmpty()) { aoRefinar(true) }
+                }
+                else -> Text("Escolha o que fazer com o fundo. A pessoa é separada automaticamente; Refinar corrige com pincel.", color = Tema.Texto2, fontSize = 13.sp)
             }
-            f.modo == Fundo.Modo.Remover -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("A cópia sai em PNG com o fundo transparente.", color = Tema.Texto2, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                Chip("Refinar", false, marcado = f.tracos.isNotEmpty()) { aoRefinar(true) }
+        }
+        LinhaMotor(f.motor, aplicando, estadoModelo, avisoMotor, aoMotor, aoCancelarBaixa)
+    }
+}
+
+/** Terceira linha do Fundo: escolha do motor, progresso do download do modelo Alta ou aviso de fallback. */
+@Composable
+private fun LinhaMotor(motor: Fundo.Motor, aplicando: Boolean, estado: IsnetOnnx.Estado, aviso: String?,
+                       aoMotor: (Fundo.Motor) -> Unit, aoCancelar: () -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    val baixando = estado as? IsnetOnnx.Estado.Baixando
+    Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+        when {
+            baixando != null -> {
+                Text("Baixando ${IsnetOnnx.MB} MB · ${(baixando.fracao * 100).roundToInt()}%", color = Tema.Texto, fontSize = 13.sp, modifier = Modifier.weight(1f))
+                TextButton(onClick = aoCancelar) { Text("Cancelar", color = Tema.Coral, fontSize = 13.sp) }
             }
-            f.modo == Fundo.Modo.PretoEBranco -> Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Só a pessoa fica colorida.", color = Tema.Texto2, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                Chip("Refinar", false, marcado = f.tracos.isNotEmpty()) { aoRefinar(true) }
+            else -> {
+                Box {
+                    TextButton(onClick = { menu = true }, modifier = Modifier.height(48.dp)) {
+                        Text("Recorte: ${motor.rotulo}", color = Tema.Texto, fontSize = 13.sp)
+                        Icon(Icons.Filled.ArrowDropDown, contentDescription = "Escolher o motor do recorte", tint = Tema.Texto2, modifier = Modifier.size(20.dp))
+                    }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, modifier = Modifier.width(280.dp)) {
+                        listOf(
+                            Fundo.Motor.Leve to "Imediato, contorno básico",
+                            Fundo.Motor.Padrao to "Melhor contorno, sem download",
+                            Fundo.Motor.Alta to if (estado is IsnetOnnx.Estado.Pronto) "Mais detalhes, já está no aparelho" else "Mais detalhes, baixa ${IsnetOnnx.MB} MB uma vez"
+                        ).forEach { (m, desc) ->
+                            DropdownMenuItem(
+                                modifier = Modifier.heightIn(min = 64.dp),
+                                text = { Column {
+                                    Text(m.rotulo, color = if (m == motor) Tema.Coral else Tema.Texto, fontSize = 15.sp)
+                                    Text(desc, color = Tema.Texto2, fontSize = 12.sp)
+                                } },
+                                onClick = { menu = false; aoMotor(m) })
+                        }
+                    }
+                }
+                when {
+                    aplicando -> Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                        CircularProgressIndicator(Modifier.size(16.dp), color = Tema.Coral, strokeWidth = 2.dp)
+                        Text("Aplicando recorte ${motor.rotulo}…", color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.padding(start = 8.dp))
+                    }
+                    aviso != null -> Text(aviso, color = Tema.Coral, fontSize = 12.sp, maxLines = 2, modifier = Modifier.weight(1f).padding(start = 4.dp))
+                    estado is IsnetOnnx.Estado.Erro -> Text("Não consegui baixar o modelo.", color = Tema.Coral, fontSize = 12.sp, modifier = Modifier.weight(1f).padding(start = 4.dp))
+                    else -> Spacer(Modifier.weight(1f))
+                }
             }
-            else -> Text("Escolha o que fazer com o fundo. A pessoa é separada automaticamente; Refinar corrige com pincel.", color = Tema.Texto2, fontSize = 13.sp)
         }
     }
 }

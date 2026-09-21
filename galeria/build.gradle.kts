@@ -14,8 +14,8 @@ android {
         applicationId = "br.maxymus.galeriaestudo"
         minSdk = 26
         targetSdk = 34
-        versionCode = 19
-        versionName = "0.19"
+        versionCode = 20
+        versionName = "0.20"
         ndk { abiFilters += listOf("arm64-v8a") }
         // token da telemetria vem do CI (secret TELEMETRIA_TOKEN); sem ele o app não envia nada
         buildConfigField("String", "TELEMETRIA_TOKEN", "\"" + (System.getenv("TELEMETRIA_TOKEN") ?: "") + "\"")
@@ -57,6 +57,8 @@ dependencies {
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("com.google.mlkit:face-detection:16.1.7")     // detecção de rostos no aparelho
     implementation("org.tensorflow:tensorflow-lite:2.16.1")      // embedding facial (MobileFaceNet em assets, BSD-3)
+    implementation("com.google.android.gms:play-services-mlkit-subject-segmentation:16.0.0-beta1")   // recorte Padrão: módulo do Play (meta-data no manifesto)
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.30.0")                          // recorte Alta: ISNet int8 baixado do R2 (IsnetOnnx.kt)
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("io.coil-kt:coil-video:2.7.0")            // miniatura de vídeo na grade
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")

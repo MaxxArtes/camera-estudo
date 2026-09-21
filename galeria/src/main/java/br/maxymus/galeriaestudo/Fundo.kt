@@ -16,53 +16,61 @@ import kotlin.math.sqrt
  */
 object Fundo {
     enum class Modo { Nenhum, Desfocar, PretoEBranco, Cor, Remover }
+    /** Motor do recorte (decisão do dono, 20/09, "os dois"): Leve = multiclasse embutido (256², sempre funciona); Padrão = ML Kit
+     *  Subject Segmentation (módulo do Play); Alta = ISNet int8 baixado sob demanda (46 MB, classe remove.bg). */
+    enum class Motor(val rotulo: String) { Leve("Leve"), Padrao("Padrão"), Alta("Alta") }
     /** Pincelada de correção da máscara: adiciona (vira pessoa, sai do desfoque) ou remove (vira fundo). Normalizada. */
     data class Traco(val pontos: List<Pair<Float, Float>>, val raio: Float, val adiciona: Boolean)
 
-    data class Parametros(val modo: Modo = Modo.Nenhum, val intensidade: Float = 60f, val cor: Int = 0xFFFFFFFF.toInt(), val pele: Float = 0f, val tracos: List<Traco> = emptyList()) {
+    data class Parametros(val modo: Modo = Modo.Nenhum, val intensidade: Float = 60f, val cor: Int = 0xFFFFFFFF.toInt(), val pele: Float = 0f, val tracos: List<Traco> = emptyList(), val motor: Motor = Motor.Padrao) {
         val neutro: Boolean get() = modo == Modo.Nenhum && pele == 0f
     }
 
-    /** Máscara bruta 256x256 (1 = pessoa), já limpa; amostrada bilinear em qualquer tamanho. */
-    class Mascara(val bruta: FloatArray, val peleBruta: FloatArray) {
-        val lado = 256
-        fun pessoa(x: Float, y: Float) = bilinear(bruta, x, y)
-        fun pele(x: Float, y: Float) = bilinear(peleBruta, x, y)
-        private fun bilinear(a: FloatArray, x: Float, y: Float): Float {
-            val fx = (x * (lado - 1)).coerceIn(0f, lado - 1f); val fy = (y * (lado - 1)).coerceIn(0f, lado - 1f)
-            val x0 = fx.toInt(); val y0 = fy.toInt(); val x1 = min(lado - 1, x0 + 1); val y1 = min(lado - 1, y0 + 1); val tx = fx - x0; val ty = fy - y0
-            return (a[y0 * lado + x0] * (1 - tx) + a[y0 * lado + x1] * tx) * (1 - ty) + (a[y1 * lado + x0] * (1 - tx) + a[y1 * lado + x1] * tx) * ty
-        }
+    /**
+     * Máscara de pessoa em qualquer resolução (pw×ph, 1 = pessoa), amostrada bilinear em coordenadas normalizadas, então a
+     * prévia (≤1024) e a exportação (≤4096) batem. `fina` = veio de um motor que já entrega borda precisa (ML Kit, ISNet):
+     * plena() só reamostra e aplica os traços do usuário. `peleBruta` (256², do multiclasse) alimenta Corrigir>Pele.
+     * `pedido` é o motor que a receita pediu; `motor` o que de fato rodou (cai para Leve com `motivo` quando falha).
+     */
+    class Mascara(val pessoaMapa: FloatArray, val pw: Int, val ph: Int, val peleBruta: FloatArray?, val fina: Boolean,
+                  val motor: Motor, val pedido: Motor = motor, val motivo: String? = null) {
+        fun pessoa(x: Float, y: Float) = amostra(pessoaMapa, pw, ph, x, y)
+        fun pele(x: Float, y: Float) = if (peleBruta == null) 0f else amostra(peleBruta, 256, 256, x, y)
         /** fração da imagem coberta pela pessoa, 0..1 */
-        val cobertura: Float get() { var c = 0; for (v in bruta) if (v > 0.5f) c++; return c.toFloat() / bruta.size }
+        val cobertura: Float get() { var c = 0; for (v in pessoaMapa) if (v > 0.5f) c++; return c.toFloat() / pessoaMapa.size }
 
         /**
-         * Máscara no tamanho da imagem, MEDIDA na bancada (galeria/medicao/porte2.py, 20/09): a máscara do modelo
-         * (256², mole, com buracos em calça escura) vira silhueta limpa em 4 passos numa resolução fixa de 512 px —
-         * binariza, fecha frestas, preenche buracos internos (calça, camisa), mantém TODOS os blocos ≥ 0,3% (num grupo,
-         * cada bloco é uma pessoa) — e só então sobe para o tamanho da foto e passa pelo filtro guiado com eps PEQUENO
-         * (0,001): assim ele transfere as bordas reais (cabelo, braço) sem borrar a máscara. Faixa incerta caiu de
-         * 35–50% para 2–5% nas fotos de teste; o "eps 0,02" do 0.16 fazia o contrário. Depois, as pinceladas do usuário.
+         * Máscara no tamanho da imagem. Motor Leve: pós-processamento MEDIDO na bancada (galeria/medicao/porte2.py, 20/09): a
+         * máscara do modelo (256², mole, com buracos em calça escura) vira silhueta limpa em 4 passos numa resolução fixa de
+         * 512 px — binariza, fecha frestas, preenche buracos internos, mantém TODOS os blocos ≥ 0,3% (num grupo, cada bloco é
+         * uma pessoa) — e só então sobe para o tamanho da foto e passa pelo filtro guiado com eps PEQUENO (0,001), que
+         * transfere as bordas reais (cabelo, braço) sem borrar. Motores finos: só reamostra (a borda já vem do modelo; o
+         * pós-processamento do Leve a estragaria). Depois, em ambos, as pinceladas do usuário.
          */
         fun plena(px: IntArray, w: Int, h: Int, tracos: List<Traco>): FloatArray {
             val n = w * h
-            val lw = min(512, w); val lh = max(1, (h.toLong() * lw / w).toInt())
-            var bin = BooleanArray(lw * lh) { k -> pessoa((k % lw) / (lw - 1f), (k / lw) / (lh - 1f)) > 0.5f }
-            val rf = max(2, min(lw, lh) / 60)
-            bin = erodeB(dilataB(bin, lw, lh, rf), lw, lh, rf)
-            preencheBuracos(bin, lw, lh)
-            bin = mantemBlocos(bin, lw, lh, 0.003f)
-            val limpa = FloatArray(lw * lh) { if (bin[it]) 1f else 0f }
-            val m = FloatArray(n) { k -> amostra(limpa, lw, lh, (k % w) / (w - 1f), (k / w) / (h - 1f)) }
-            val guia = FloatArray(n) { k -> val c = px[k]; ((c shr 16 and 255) * 0.299f + (c shr 8 and 255) * 0.587f + (c and 255) * 0.114f) / 255f }
-            val r = max(3, min(w, h) / 120); val eps = 0.001f
-            val mI = caixaF(guia, w, h, r); val mP = caixaF(m, w, h, r)
-            val ii = FloatArray(n) { guia[it] * guia[it] }; val ip = FloatArray(n) { guia[it] * m[it] }
-            val cI = caixaF(ii, w, h, r); val cIP = caixaF(ip, w, h, r)
-            val a = FloatArray(n); val b = FloatArray(n)
-            for (k in 0 until n) { val varI = cI[k] - mI[k] * mI[k]; val cov = cIP[k] - mI[k] * mP[k]; a[k] = cov / (varI + eps); b[k] = mP[k] - a[k] * mI[k] }
-            val mA = caixaF(a, w, h, r); val mB = caixaF(b, w, h, r)
-            for (k in 0 until n) m[k] = (mA[k] * guia[k] + mB[k]).coerceIn(0f, 1f)
+            val m: FloatArray
+            if (fina) {
+                m = FloatArray(n) { k -> amostra(pessoaMapa, pw, ph, (k % w) / (w - 1f), (k / w) / (h - 1f)) }
+            } else {
+                val lw = min(512, w); val lh = max(1, (h.toLong() * lw / w).toInt())
+                var bin = BooleanArray(lw * lh) { k -> pessoa((k % lw) / (lw - 1f), (k / lw) / (lh - 1f)) > 0.5f }
+                val rf = max(2, min(lw, lh) / 60)
+                bin = erodeB(dilataB(bin, lw, lh, rf), lw, lh, rf)
+                preencheBuracos(bin, lw, lh)
+                bin = mantemBlocos(bin, lw, lh, 0.003f)
+                val limpa = FloatArray(lw * lh) { if (bin[it]) 1f else 0f }
+                m = FloatArray(n) { k -> amostra(limpa, lw, lh, (k % w) / (w - 1f), (k / w) / (h - 1f)) }
+                val guia = FloatArray(n) { k -> val c = px[k]; ((c shr 16 and 255) * 0.299f + (c shr 8 and 255) * 0.587f + (c and 255) * 0.114f) / 255f }
+                val r = max(3, min(w, h) / 120); val eps = 0.001f
+                val mI = caixaF(guia, w, h, r); val mP = caixaF(m, w, h, r)
+                val ii = FloatArray(n) { guia[it] * guia[it] }; val ip = FloatArray(n) { guia[it] * m[it] }
+                val cI = caixaF(ii, w, h, r); val cIP = caixaF(ip, w, h, r)
+                val a = FloatArray(n); val b = FloatArray(n)
+                for (k in 0 until n) { val varI = cI[k] - mI[k] * mI[k]; val cov = cIP[k] - mI[k] * mP[k]; a[k] = cov / (varI + eps); b[k] = mP[k] - a[k] * mI[k] }
+                val mA = caixaF(a, w, h, r); val mB = caixaF(b, w, h, r)
+                for (k in 0 until n) m[k] = (mA[k] * guia[k] + mB[k]).coerceIn(0f, 1f)
+            }
             for (t in tracos) {
                 val rp = max(1f, t.raio * w); val alvo = if (t.adiciona) 1f else 0f
                 for ((nx, ny) in t.pontos) {
@@ -85,8 +93,8 @@ object Fundo {
     private fun srgb(l: Float) = paraSrgb[(l.coerceIn(0f, 1f) * 4096f).toInt()]
     private fun suave(v: Float, a: Float, b: Float): Float { val t = ((v - a) / (b - a)).coerceIn(0f, 1f); return t * t * (3 - 2 * t) }
 
-    /** Roda o segmentador (entrada reduzida a ≤512 px: o modelo é 256²) e limpa a máscara. Null se o modelo falhar. */
-    fun segmentar(ctx: Context, b: Bitmap): Mascara? {
+    /** Motor Leve: multiclasse 256² (entrada reduzida a ≤512 px). Null se o modelo falhar. */
+    private fun segmentarLeve(ctx: Context, b: Bitmap): Mascara? {
         val esc = min(1f, 512f / max(b.width, b.height))
         val peq = if (esc < 1f) Bitmap.createScaledBitmap(b, max(1, (b.width * esc).toInt()), max(1, (b.height * esc).toInt()), true) else b
         val mapa = try { Segmentos.segmentar(ctx, peq) } finally { if (peq !== b) peq.recycle() }
@@ -94,7 +102,37 @@ object Fundo {
         val n = 256 * 256
         val pessoa = FloatArray(n) { k -> 1f - mapa.cats[k * 6 + Segmentos.FUNDO] }
         val pele = FloatArray(n) { k -> (mapa.cats[k * 6 + Segmentos.PELE_CORPO] + mapa.cats[k * 6 + Segmentos.PELE_ROSTO]).coerceIn(0f, 1f) }
-        return Mascara(pessoa, pele)   // limpeza fica em plena(): num grupo, blocos separados são pessoas
+        return Mascara(pessoa, 256, 256, pele, false, Motor.Leve)   // limpeza fica em plena(): num grupo, blocos separados são pessoas
+    }
+
+    /**
+     * Roda o motor pedido. O multiclasse roda SEMPRE (dá a pele para Corrigir>Pele e é o plano B); os motores finos recebem
+     * a foto reduzida a ≤1024 px (o ISNet é 1024² fixo; o ML Kit devolve a máscara no tamanho da entrada). Se o motor
+     * pedido falhar (módulo do Play ausente, modelo ainda não baixado), volta a máscara Leve marcada com `motivo`.
+     * Null só se nem o multiclasse rodar.
+     */
+    fun segmentar(ctx: Context, b: Bitmap, motor: Motor = Motor.Leve): Mascara? {
+        val t0 = System.nanoTime()
+        val leve = segmentarLeve(ctx, b)
+        if (motor == Motor.Leve) return leve
+        val esc = min(1f, 1024f / max(b.width, b.height))
+        val peq = if (esc < 1f) Bitmap.createScaledBitmap(b, max(1, (b.width * esc).toInt()), max(1, (b.height * esc).toInt()), true) else b
+        var mapa: FloatArray? = null; var mw = 0; var mh = 0; var motivo: String? = null
+        try {
+            when (motor) {
+                Motor.Padrao -> { val r = MlKitAssunto.segmentar(peq); if (r != null) { mapa = r.mapa; mw = r.w; mh = r.h } else motivo = MlKitAssunto.ultimoErro }
+                Motor.Alta -> { val r = IsnetOnnx.segmentar(ctx, peq); if (r != null) { mapa = r.mapa; mw = r.w; mh = r.h } else motivo = IsnetOnnx.ultimoErro }
+                Motor.Leve -> {}
+            }
+        } finally { if (peq !== b) peq.recycle() }
+        val ms = (System.nanoTime() - t0) / 1_000_000
+        val m = mapa
+        if (m == null) {
+            Telemetria.evento("editor_motor", mapOf("motor" to motor.name, "ok" to false, "ms" to ms, "msg" to (motivo ?: "")))
+            return leve?.let { Mascara(it.pessoaMapa, it.pw, it.ph, it.peleBruta, false, Motor.Leve, motor, motivo ?: "falhou") }
+        }
+        Telemetria.evento("editor_motor", mapOf("motor" to motor.name, "ok" to true, "ms" to ms, "larg" to mw, "alt" to mh))
+        return Mascara(m, mw, mh, leve?.peleBruta, true, motor)
     }
 
     /** Média em disco de raio r por prefixos de linha (custo ∝ diâmetro). */
