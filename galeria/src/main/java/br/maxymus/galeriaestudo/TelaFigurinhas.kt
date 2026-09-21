@@ -23,6 +23,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Text
+import android.widget.Toast
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -86,8 +87,23 @@ fun TelaFigurinhas(aoFechar: () -> Unit, aoCriar: () -> Unit) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp)) {
             if (n in 1..2) Text("Um pacote do WhatsApp precisa de pelo menos 3 figurinhas. Até lá, dá para compartilhar cada uma como imagem.",
                 color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.padding(bottom = 8.dp))
-            Button(onClick = aoCriar, modifier = Modifier.fillMaxWidth().height(48.dp),
+            if (n >= Figurinha.MIN_PACOTE) Button(onClick = {
+                // o pacote precisa da bandeja antes de o WhatsApp ler; o alerta de confirmação é dele, não nosso
+                if (Figurinha.bandeja(ctx) == null) { Toast.makeText(ctx, "Não consegui preparar o ícone do pacote.", Toast.LENGTH_LONG).show(); return@Button }
+                val i = Intent("com.whatsapp.intent.action.ENABLE_STICKER_PACK").apply {
+                    putExtra("sticker_pack_id", Figurinha.PACOTE_ID)
+                    putExtra("sticker_pack_authority", Figurinha.AUTORIDADE)
+                    putExtra("sticker_pack_name", Figurinha.PACOTE_NOME)
+                }
+                try { ctx.startActivity(i); Telemetria.evento("figurinha_pacote", mapOf("n" to n)) }
+                catch (e: Exception) { Toast.makeText(ctx, "WhatsApp não encontrado neste aparelho.", Toast.LENGTH_LONG).show() }
+            }, modifier = Modifier.fillMaxWidth().height(48.dp).padding(bottom = 8.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Tema.Coral, contentColor = Color.White)) {
+                Text("Adicionar ao WhatsApp")
+            }
+            Button(onClick = aoCriar, modifier = Modifier.fillMaxWidth().height(48.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = if (n >= Figurinha.MIN_PACOTE) Tema.Superficie else Tema.Coral,
+                    contentColor = if (n >= Figurinha.MIN_PACOTE) Tema.Texto else Color.White)) {
                 Text(if (n == 0) "Escolher uma foto" else "Criar outra")
             }
         }

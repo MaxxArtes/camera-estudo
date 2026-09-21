@@ -85,6 +85,7 @@ fun TelaFigurinha(midia: Midia, fechar: () -> Unit, aoSalva: () -> Unit) {
     var tracoAtual by remember { mutableStateOf<List<Offset>>(emptyList()) }
     var salvando by remember { mutableStateOf(false) }
     var motorUsado by remember { mutableStateOf<Fundo.Motor?>(null) }
+    var escolhendoEmoji by remember { mutableStateOf(false) }
     BackHandler { fechar() }
 
     suspend fun segmenta(motor: Fundo.Motor) {
@@ -125,20 +126,8 @@ fun TelaFigurinha(midia: Midia, fechar: () -> Unit, aoSalva: () -> Unit) {
         Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = fechar) { Icon(Icons.Filled.Close, contentDescription = "Fechar", tint = Tema.Texto) }
             Text("Criar figurinha", color = Tema.Texto, fontSize = 18.sp, modifier = Modifier.weight(1f))
-            Button(onClick = {
-                val p = montagem?.bitmap ?: return@Button
-                if (salvando) return@Button
-                salvando = true
-                escopo.launch {
-                    val ok = withContext(Dispatchers.IO) {
-                        val bytes = Figurinha.webp(p) ?: return@withContext false
-                        Figurinha.guardar(ctx, bytes); true
-                    }
-                    salvando = false
-                    if (ok) { Toast.makeText(ctx, "Figurinha salva", Toast.LENGTH_SHORT).show(); aoSalva() }
-                    else Toast.makeText(ctx, "Não consegui gerar a figurinha.", Toast.LENGTH_LONG).show()
-                }
-            }, enabled = montagem != null && !salvando, modifier = Modifier.padding(end = 8.dp),
+            Button(onClick = { if (!salvando && montagem != null) escolhendoEmoji = true },
+                enabled = montagem != null && !salvando, modifier = Modifier.padding(end = 8.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Tema.Coral, contentColor = Color.White, disabledContainerColor = Tema.Superficie, disabledContentColor = Tema.Texto2)) {
                 if (salvando) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp) else Text("Salvar", fontSize = 14.sp)
             }
@@ -199,6 +188,41 @@ fun TelaFigurinha(midia: Midia, fechar: () -> Unit, aoSalva: () -> Unit) {
                         Text("Contorno ${contorno.roundToInt()}", color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.width(94.dp))
                         Slider(value = contorno, onValueChange = { contorno = it.roundToInt().toFloat() }, valueRange = 0f..16f, modifier = Modifier.weight(1f).height(28.dp),
                             colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
+                    }
+                }
+            }
+        }
+    }
+    if (escolhendoEmoji) FolhaEmoji(aoFechar = { escolhendoEmoji = false }, aoEscolher = { emoji ->
+        escolhendoEmoji = false
+        val p = montagem?.bitmap ?: return@FolhaEmoji
+        salvando = true
+        escopo.launch {
+            val nome = withContext(Dispatchers.IO) {
+                val bytes = Figurinha.webp(p) ?: return@withContext null
+                val f = Figurinha.guardar(ctx, bytes)
+                Figurinha.registrar(ctx, f.name, emoji); f.name
+            }
+            salvando = false
+            if (nome != null) { Toast.makeText(ctx, "Figurinha salva", Toast.LENGTH_SHORT).show(); aoSalva() }
+            else Toast.makeText(ctx, "Não consegui gerar a figurinha.", Toast.LENGTH_LONG).show()
+        }
+    })
+}
+
+/** O WhatsApp EXIGE de 1 a 3 emoji por figurinha; sem isso o pacote não entra. Um toque resolve e já salva. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun FolhaEmoji(aoFechar: () -> Unit, aoEscolher: (String) -> Unit) {
+    androidx.compose.material3.ModalBottomSheet(onDismissRequest = aoFechar, containerColor = Tema.Superficie,
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState()) {
+        Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
+            Text("Escolha um emoji para a figurinha", color = Tema.Texto, fontSize = 16.sp)
+            Text("O WhatsApp usa o emoji para achar a figurinha na busca dele.", color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.padding(bottom = 8.dp))
+            listOf("😀😂😍😎🥳", "😭🤔👍👏🙏", "❤️🔥✨🎉💪").forEach { linha ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    linha.map { it.toString() }.forEach { e ->
+                        Box(Modifier.size(56.dp).clickable { aoEscolher(e) }, contentAlignment = Alignment.Center) { Text(e, fontSize = 28.sp) }
                     }
                 }
             }

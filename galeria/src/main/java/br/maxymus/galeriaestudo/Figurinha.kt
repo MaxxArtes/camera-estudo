@@ -112,6 +112,65 @@ object Figurinha {
         return File(pasta, nome).also { it.writeBytes(bytes) }
     }
 
+    // ---- pacote do WhatsApp ----
+    // Contrato lido do repositório oficial WhatsApp/stickers (ver galeria/docs/PESQUISA_FIGURINHAS_21-09.md):
+    // pacote de 3 a 30 figurinhas, emoji OBRIGATÓRIO (1 a 3 por figurinha), bandeja PNG 96x96 até 50 KB.
+    const val AUTORIDADE = "br.maxymus.galeriaestudo.figurinhas"
+    const val PACOTE_ID = "galeria-estudo"
+    const val PACOTE_NOME = "Minhas figurinhas"
+    const val MAX_PACOTE = 30
+    const val MIN_PACOTE = 3
+    private const val ARQ_DADOS = "pacote.json"
+    private const val ARQ_BANDEJA = "bandeja.png"
+
+    data class Item(val arquivo: String, val emoji: String)
+
+    private fun pasta(ctx: Context) = File(ctx.filesDir, "figurinhas").apply { mkdirs() }
+
+    /** Itens do pacote, do mais novo para o mais antigo, limitado ao teto do WhatsApp. */
+    fun itens(ctx: Context): List<Item> {
+        val dados = File(pasta(ctx), ARQ_DADOS)
+        val emojis = HashMap<String, String>()
+        if (dados.isFile) runCatching {
+            val o = org.json.JSONObject(dados.readText()).optJSONArray("itens")
+            if (o != null) for (i in 0 until o.length()) { val it2 = o.getJSONObject(i); emojis[it2.getString("arquivo")] = it2.optString("emoji", "😀") }
+        }
+        return acervo(ctx).take(MAX_PACOTE).map { Item(it.name, emojis[it.name] ?: "😀") }
+    }
+
+    /** Guarda o emoji escolhido para uma figurinha e sobe a versão dos dados (o WhatsApp recarrega por ela). */
+    fun registrar(ctx: Context, arquivo: String, emoji: String) {
+        val dados = File(pasta(ctx), ARQ_DADOS)
+        val raiz = runCatching { org.json.JSONObject(dados.readText()) }.getOrElse { org.json.JSONObject() }
+        val lista = raiz.optJSONArray("itens") ?: org.json.JSONArray()
+        var achou = false
+        for (i in 0 until lista.length()) if (lista.getJSONObject(i).optString("arquivo") == arquivo) { lista.getJSONObject(i).put("emoji", emoji); achou = true }
+        if (!achou) lista.put(org.json.JSONObject().put("arquivo", arquivo).put("emoji", emoji))
+        raiz.put("itens", lista).put("versao", raiz.optInt("versao", 0) + 1)
+        dados.writeText(raiz.toString())
+    }
+
+    /** Versão dos dados: muda quando o pacote muda, e é o que faz o WhatsApp reler as figurinhas. */
+    fun versaoDados(ctx: Context): String =
+        runCatching { org.json.JSONObject(File(pasta(ctx), ARQ_DADOS).readText()).optInt("versao", 1) }.getOrDefault(1).toString()
+
+    /** Ícone de bandeja 96x96 PNG (teto de 50 KB), refeito a partir da figurinha mais nova. */
+    fun bandeja(ctx: Context): File? {
+        val nova = acervo(ctx).firstOrNull() ?: return null
+        val destino = File(pasta(ctx), ARQ_BANDEJA)
+        if (destino.isFile && destino.lastModified() >= nova.lastModified()) return destino
+        val b = android.graphics.BitmapFactory.decodeFile(nova.path) ?: return null
+        val peq = Bitmap.createScaledBitmap(b, 96, 96, true)
+        if (peq !== b) b.recycle()
+        val saida = java.io.ByteArrayOutputStream()
+        peq.compress(Bitmap.CompressFormat.PNG, 100, saida); peq.recycle()
+        if (saida.size() > 50 * 1024) return null
+        destino.writeBytes(saida.toByteArray())
+        return destino
+    }
+
+    fun arquivo(ctx: Context, nome: String): File = File(pasta(ctx), nome)
+
     /** Figurinhas já feitas, da mais nova para a mais antiga. */
     fun acervo(ctx: Context): List<File> =
         File(ctx.filesDir, "figurinhas").listFiles { f -> f.isFile && f.name.endsWith(".webp") }?.sortedByDescending { it.lastModified() } ?: emptyList()
