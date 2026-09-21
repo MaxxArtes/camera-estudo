@@ -58,6 +58,11 @@ object Edicao {
             put("fundo", org.json.JSONObject().apply { put("modo", fundo.modo.name); put("intensidade", fundo.intensidade); put("cor", fundo.cor); put("pele", fundo.pele) })
         }.toString()
         companion object {
+            private fun hslDe(hj: org.json.JSONObject?): Hsl.Parametros {
+                if (hj == null) return Hsl.Parametros()
+                fun lista(k: String): List<Float> { val a = hj.getJSONArray(k); return List(8) { i -> a.getDouble(i).toFloat() } }
+                return Hsl.Parametros(lista("m"), lista("s"), lista("l"))
+            }
             fun fromJson(j: String): Receita? = runCatching {
                 val o = org.json.JSONObject(j); val c = o.getJSONObject("cor"); val g = o.getJSONObject("geo"); val t = o.getJSONObject("tom"); val f = o.getJSONObject("fundo"); val r = g.getJSONArray("recorte")
                 Receita(
@@ -65,7 +70,7 @@ object Edicao {
                     Geometria(g.getInt("giros"), g.getBoolean("espelhado"), g.getDouble("endireitar").toFloat(), RectF(r.getDouble(0).toFloat(), r.getDouble(1).toFloat(), r.getDouble(2).toFloat(), r.getDouble(3).toFloat())),
                     Tom.Parametros(t.getDouble("realces").toFloat(), t.getDouble("sombras").toFloat(), t.getDouble("brancos").toFloat(), t.getDouble("pretos").toFloat(), t.getDouble("nitidez").toFloat(), t.getDouble("vinheta").toFloat(), t.getDouble("granulacao").toFloat(), t.optDouble("textura", 0.0).toFloat(), t.optDouble("clareza", 0.0).toFloat()),
                     Fundo.Parametros(Fundo.Modo.valueOf(f.getString("modo")), f.getDouble("intensidade").toFloat(), f.getInt("cor"), f.getDouble("pele").toFloat()),
-                    o.optJSONObject("hsl")?.let { hj -> fun lista(k: String) = hj.getJSONArray(k).let { a -> List(8) { i -> a.getDouble(i).toFloat() } }; Hsl.Parametros(lista("m"), lista("s"), lista("l")) } ?: Hsl.Parametros()
+                    hslDe(o.optJSONObject("hsl"))
                 )
             }.getOrNull()
         }
