@@ -392,7 +392,7 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                                     Local.Tipo.Linear -> if (perto(tela(m0.x1, m0.y1))) "p1" else if (perto(tela(m0.x2, m0.y2))) "p2" else "mover"
                                     else -> "mover"
                                 }
-                                var atual = m0
+                                var atual: Local.Mascara = m0
                                 do { val ev = awaitPointerEvent(); val ch = ev.changes.firstOrNull { it.pressed }
                                     if (ch != null) { val d = ch.positionChange(); val dx = d.x / e[2]; val dy = d.y / e[3]
                                         atual = when (alvo) {
