@@ -30,6 +30,11 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -86,6 +91,9 @@ fun TelaFigurinha(midia: Midia, fechar: () -> Unit, aoSalva: () -> Unit) {
     var salvando by remember { mutableStateOf(false) }
     var motorUsado by remember { mutableStateOf<Fundo.Motor?>(null) }
     var escolhendoEmoji by remember { mutableStateOf(false) }
+    var texto by remember { mutableStateOf(Figurinha.Texto()) }
+    var subTexto by remember { mutableStateOf<String?>(null) }
+    val textoCabe = remember(texto) { Figurinha.linhasDe(texto) != null }
     BackHandler { fechar() }
 
     suspend fun segmenta(motor: Fundo.Motor) {
@@ -103,13 +111,13 @@ fun TelaFigurinha(midia: Midia, fechar: () -> Unit, aoSalva: () -> Unit) {
         segmenta(Fundo.Motor.Padrao)
     }
     // prévia com atraso curto: enquadrar e contorno mexem muito
-    LaunchedEffect(base, mascara, tracos, zoom, dx, dy, contorno) {
+    LaunchedEffect(base, mascara, tracos, zoom, dx, dy, contorno, texto) {
         val b = base; val m = mascara
         if (b == null || m == null) { montagem = null; return@LaunchedEffect }
         delay(90)
         montagem = withContext(Dispatchers.Default) {
             val plena = Fundo.plenaDe(b, m, tracos)
-            Figurinha.montar(b, plena, zoom, dx, dy, contorno.roundToInt())
+            Figurinha.montar(b, plena, zoom, dx, dy, contorno.roundToInt(), texto)
         }
     }
 
@@ -126,8 +134,8 @@ fun TelaFigurinha(midia: Midia, fechar: () -> Unit, aoSalva: () -> Unit) {
         Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = fechar) { Icon(Icons.Filled.Close, contentDescription = "Fechar", tint = Tema.Texto) }
             Text("Criar figurinha", color = Tema.Texto, fontSize = 18.sp, modifier = Modifier.weight(1f))
-            Button(onClick = { if (!salvando && montagem != null) escolhendoEmoji = true },
-                enabled = montagem != null && !salvando, modifier = Modifier.padding(end = 8.dp),
+            Button(onClick = { if (!salvando && montagem != null && textoCabe) escolhendoEmoji = true },
+                enabled = montagem != null && !salvando && textoCabe, modifier = Modifier.padding(end = 8.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Tema.Coral, contentColor = Color.White, disabledContainerColor = Tema.Superficie, disabledContentColor = Tema.Texto2)) {
                 if (salvando) CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp) else Text("Salvar", fontSize = 14.sp)
             }
@@ -139,6 +147,11 @@ fun TelaFigurinha(midia: Midia, fechar: () -> Unit, aoSalva: () -> Unit) {
                         onDragStart = { o -> tracoAtual = listOf(o) },
                         onDragEnd = { fechaTraco(size.width.toFloat()) },
                         onDragCancel = { tracoAtual = emptyList() }) { mudanca, _ -> tracoAtual = tracoAtual + mudanca.position }
+                    else if (aba == "Texto") detectDragGestures { _, arrasto ->
+                        val lado = size.width.toFloat()
+                        val m = Figurinha.TEXTO_MARGEM / Figurinha.LADO
+                        texto = texto.copy(x = (texto.x + arrasto.x / lado).coerceIn(m, 1f - m), y = (texto.y + arrasto.y / lado).coerceIn(m * 2, 1f - m))
+                    }
                     else if (aba == "Enquadrar") detectTransformGestures { _, pan, z, _ ->
                         zoom = (zoom * z).coerceIn(0.5f, 3f)
                         dx = (dx + pan.x / size.width).coerceIn(-0.5f, 0.5f)
@@ -150,6 +163,15 @@ fun TelaFigurinha(midia: Midia, fechar: () -> Unit, aoSalva: () -> Unit) {
                 if (aba == "Refinar" && tracoAtual.isNotEmpty()) Canvas(Modifier.fillMaxSize()) {
                     val r = pincelDp * density / 2f
                     tracoAtual.forEach { drawCircle(if (pincelAdiciona) Color(0x9900E676) else Color(0x99FF5252), r, it) }
+                }
+                // conferência em 96 dp, metade clara e metade escura: é assim que ela vai ser lida na conversa
+                montagem?.bitmap?.let { b ->
+                    Row(Modifier.align(Alignment.TopEnd).padding(8.dp).size(96.dp).clip(RoundedCornerShape(8.dp))) {
+                        Box(Modifier.weight(1f).fillMaxSize().background(Color(0xFFEDE7DC)))
+                        Box(Modifier.weight(1f).fillMaxSize().background(Color(0xFF0B141A)))
+                    }
+                    Image(bitmap = b.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit,
+                        modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).size(96.dp))
                 }
                 if (ocupado) Box(Modifier.fillMaxSize().background(Color(0x66000000)), contentAlignment = Alignment.Center) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -163,14 +185,54 @@ fun TelaFigurinha(midia: Midia, fechar: () -> Unit, aoSalva: () -> Unit) {
                 }
             }
         }
-        Column(Modifier.fillMaxWidth().height(144.dp).background(Tema.Fundo).padding(horizontal = 12.dp), verticalArrangement = Arrangement.SpaceBetween) {
-            Row(Modifier.height(48.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                listOf("Enquadrar", "Refinar", "Contorno").forEach { a -> ChipFig(a, aba == a) { aba = a; tracoAtual = emptyList() } }
+        Column(Modifier.fillMaxWidth().height(144.dp).background(Tema.Fundo).padding(horizontal = 12.dp)) {
+            Row(Modifier.height(48.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                listOf("Enquadrar", "Refinar", "Texto", "Contorno").forEach { a -> ChipFig(a, aba == a) { aba = a; tracoAtual = emptyList(); subTexto = null } }
                 if (motorUsado != null && motorUsado != Fundo.Motor.Alta) TextButton(onClick = { escopo.launch { segmenta(Fundo.Motor.Alta) } }, enabled = !ocupado) {
                     Text("Melhorar recorte", color = Tema.Texto2, fontSize = 12.sp)
                 }
             }
-            Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (aba == "Texto") {
+                Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(value = texto.conteudo, onValueChange = { texto = texto.copy(conteudo = it.take(60)) },
+                        placeholder = { Text("Adicionar texto…", color = Tema.Texto2, fontSize = 13.sp) }, singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp),
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Tema.Texto, unfocusedTextColor = Tema.Texto,
+                            focusedBorderColor = Tema.Coral, unfocusedBorderColor = Tema.Superficie, cursorColor = Tema.Coral))
+                }
+                Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+                    when (subTexto) {
+                        "tamanho" -> {
+                            Text("Aa ${texto.tamanho.roundToInt()}", color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.width(62.dp))
+                            Slider(value = texto.tamanho, onValueChange = { texto = texto.copy(tamanho = it.roundToInt().toFloat()) },
+                                valueRange = Figurinha.TEXTO_MIN..Figurinha.TEXTO_MAX, modifier = Modifier.weight(1f).height(28.dp),
+                                colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
+                            TextButton(onClick = { subTexto = null }) { Text("Pronto", color = Tema.Coral, fontSize = 12.sp) }
+                        }
+                        "cor" -> {
+                            Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Figurinha.CORES_TEXTO.forEach { c ->
+                                    Box(Modifier.size(28.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(c))
+                                        .border(if (c == texto.cor) 3.dp else 1.dp, if (c == texto.cor) Tema.Coral else Color(0x55FFFFFF), androidx.compose.foundation.shape.CircleShape)
+                                        .clickable { texto = texto.copy(cor = c) })
+                                }
+                            }
+                            TextButton(onClick = { subTexto = null }) { Text("Pronto", color = Tema.Coral, fontSize = 12.sp) }
+                        }
+                        else -> {
+                            TextButton(onClick = { subTexto = "tamanho" }) { Text("Aa ${texto.tamanho.roundToInt()}", color = Tema.Texto, fontSize = 13.sp) }
+                            Box(Modifier.size(28.dp).clip(androidx.compose.foundation.shape.CircleShape).background(Color(texto.cor))
+                                .border(1.dp, Color(0x55FFFFFF), androidx.compose.foundation.shape.CircleShape).clickable { subTexto = "cor" })
+                            ChipFig(if (texto.tarja) "Tarja" else "Contorno", false) { texto = texto.copy(tarja = !texto.tarja) }
+                            TextButton(onClick = {
+                                texto = texto.copy(y = when { texto.y > 0.6f -> 0.14f; texto.y < 0.4f -> 0.5f; else -> 0.86f }, x = 0.5f)
+                            }) { Text("Posição", color = Tema.Texto2, fontSize = 12.sp) }
+                            if (!textoCabe) Text("Encurte o texto", color = Tema.Coral, fontSize = 12.sp, modifier = Modifier.padding(start = 6.dp))
+                        }
+                    }
+                }
+            } else Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = Alignment.CenterVertically) {
                 when (aba) {
                     "Enquadrar" -> {
                         Text("Arraste e use dois dedos para ampliar.", color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.weight(1f))
@@ -184,11 +246,12 @@ fun TelaFigurinha(midia: Midia, fechar: () -> Unit, aoSalva: () -> Unit) {
                             colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
                         TextButton(onClick = { tracos = emptyList() }, enabled = tracos.isNotEmpty()) { Text("Limpar", color = if (tracos.isNotEmpty()) Tema.Texto2 else Color.Transparent, fontSize = 12.sp) }
                     }
-                    else -> {
+                    "Contorno" -> {
                         Text("Contorno ${contorno.roundToInt()}", color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.width(94.dp))
                         Slider(value = contorno, onValueChange = { contorno = it.roundToInt().toFloat() }, valueRange = 0f..16f, modifier = Modifier.weight(1f).height(28.dp),
                             colors = SliderDefaults.colors(thumbColor = Tema.Coral, activeTrackColor = Tema.Coral))
                     }
+                    else -> {}
                 }
             }
         }

@@ -36,7 +36,7 @@ object Figurinha {
         fun raioParaFoto(r: Float): Float = (r * LADO / esc) / fw
     }
 
-    fun montar(base: Bitmap, plena: FloatArray, zoom: Float = 1f, dx: Float = 0f, dy: Float = 0f, contorno: Int = 8): Montagem? {
+    fun montar(base: Bitmap, plena: FloatArray, zoom: Float = 1f, dx: Float = 0f, dy: Float = 0f, contorno: Int = 8, texto: Texto? = null): Montagem? {
         val w = base.width; val h = base.height
         if (plena.size != w * h) return null
         val px = IntArray(w * h).also { base.getPixels(it, 0, w, 0, 0, w, h) }
@@ -67,7 +67,65 @@ object Figurinha {
         }
         tela.drawBitmap(menor, ex, ey, null)
         menor.recycle()
+        if (texto != null && !texto.vazio) desenhaTexto(tela, texto)
         return Montagem(saida, x0, y0, esc, ex, ey, w, h)
+    }
+
+    /**
+     * Quebra o texto na largura útil. Devolve null quando não cabe em 2 linhas — nesse caso a tela pede para
+     * encurtar em vez de diminuir a letra sozinha ou cortar calado (decisão do Astra).
+     */
+    fun linhasDe(t: Texto): List<String>? {
+        if (t.vazio) return emptyList()
+        val tinta = tinta(t)
+        val util = LADO - 2f * TEXTO_MARGEM - (if (t.tarja) 24f else 0f)
+        val saida = ArrayList<String>(); var atual = StringBuilder()
+        for (palavra in t.conteudo.trim().split(" ").filter { it.isNotBlank() }) {
+            val teste = if (atual.isEmpty()) palavra else "$atual $palavra"
+            if (tinta.measureText(teste) <= util || atual.isEmpty()) atual = StringBuilder(teste)
+            else { saida += atual.toString(); atual = StringBuilder(palavra); if (saida.size > MAX_LINHAS) return null }
+        }
+        if (atual.isNotEmpty()) saida += atual.toString()
+        if (saida.size > MAX_LINHAS) return null
+        if (saida.any { tinta.measureText(it) > util }) return null   // palavra única maior que a linha
+        return saida
+    }
+
+    private fun tinta(t: Texto) = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+        textSize = t.tamanho.coerceIn(TEXTO_MIN, TEXTO_MAX)
+        typeface = android.graphics.Typeface.DEFAULT_BOLD
+        textAlign = android.graphics.Paint.Align.CENTER
+        strokeJoin = android.graphics.Paint.Join.ROUND; strokeCap = android.graphics.Paint.Cap.ROUND
+    }
+
+    /**
+     * Escreve o texto: tarja preta opaca OU contorno preto. O traço vai a 8 px porque ele é centrado na letra,
+     * então sobram os 4 px visíveis que o Astra pediu para a saída de 512.
+     */
+    private fun desenhaTexto(tela: android.graphics.Canvas, t: Texto) {
+        val linhas = linhasDe(t) ?: return
+        if (linhas.isEmpty()) return
+        val tinta = tinta(t)
+        val tam = tinta.textSize
+        val alturaLinha = tam * 1.12f
+        val cx = t.x * LADO
+        var y = t.y * LADO - (linhas.size - 1) * alturaLinha / 2f
+        if (t.tarja) {
+            val larg = linhas.maxOf { tinta.measureText(it) } + 24f
+            val alt = linhas.size * alturaLinha + 16f
+            val topo = y - tam * 0.82f - 8f
+            val r = android.graphics.RectF(cx - larg / 2f, topo, cx + larg / 2f, topo + alt)
+            tela.drawRoundRect(r, 14f, 14f, android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF000000.toInt() })
+        }
+        for (l in linhas) {
+            if (!t.tarja) {
+                tinta.style = android.graphics.Paint.Style.STROKE; tinta.strokeWidth = 8f; tinta.color = 0xFF000000.toInt()
+                tela.drawText(l, cx, y, tinta)
+            }
+            tinta.style = android.graphics.Paint.Style.FILL; tinta.color = t.cor
+            tela.drawText(l, cx, y, tinta)
+            y += alturaLinha
+        }
     }
 
     /** Silhueta branca do assunto, engordada `contorno` px em volta (dilatação em caixa separável sobre o alfa). */
@@ -124,6 +182,21 @@ object Figurinha {
     private const val ARQ_BANDEJA = "bandeja.png"
 
     data class Item(val arquivo: String, val emoji: String)
+
+    /**
+     * Texto escrito sobre a figurinha. Posição e tamanho em fração do lado de 512, então a conta não muda se o
+     * lado mudar. O contorno existe porque a figurinha é transparente e cai sobre conversa clara ou escura.
+     */
+    data class Texto(val conteudo: String = "", val x: Float = 0.5f, val y: Float = 0.86f,
+                     val tamanho: Float = 56f, val cor: Int = 0xFFFFFFFF.toInt(), val tarja: Boolean = false) {
+        val vazio: Boolean get() = conteudo.isBlank()
+    }
+    /** Cores do texto (Astra, 21/09). O contorno e a tarja são sempre pretos: é o que se lê em conversa clara e escura. */
+    val CORES_TEXTO = listOf(0xFFFFFFFF, 0xFFFFEB3B, 0xFFFF80AB, 0xFF80D8FF, 0xFFB9F6CA, 0xFFFFAB40).map { it.toInt() }
+    const val TEXTO_MIN = 40f
+    const val TEXTO_MAX = 88f
+    const val TEXTO_MARGEM = 24f
+    const val MAX_LINHAS = 2
 
     private fun pasta(ctx: Context) = File(ctx.filesDir, "figurinhas").apply { mkdirs() }
 
