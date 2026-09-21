@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "br.maxymus.cameraestudo"
-    compileSdk = 34
+    compileSdk = 35   // exigido pelo CameraX 1.5
     defaultConfig {
         applicationId = "br.maxymus.cameraestudo"
         minSdk = 26
