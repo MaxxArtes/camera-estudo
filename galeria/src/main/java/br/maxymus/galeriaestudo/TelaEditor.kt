@@ -202,6 +202,9 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
     var escolhendoTipo by remember { mutableStateOf(false) }
     var localVisual by remember { mutableStateOf<Bitmap?>(null) }
     var fundoBmp by remember { mutableStateOf<Bitmap?>(null) }        // imagem de fundo já no tamanho do trabalho
+    var fonteFundo by remember { mutableStateOf(false) }              // folha "de onde vem o fundo"
+    var buscandoFundo by remember { mutableStateOf(false) }           // tela de busca na internet
+    var vendoCredito by remember { mutableStateOf(false) }
     var erroFundoImg by remember { mutableStateOf(false) }
     var escolhendoCor by remember { mutableStateOf<String?>(null) }   // "A", "B" ou "Marcacao"
     var corMarcacao by remember { mutableStateOf(prefs.getInt("cor_marcacao", 0xFFFF575F.toInt())) }
@@ -309,7 +312,7 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
         aplicaMotor(m)
     }
     val escolheImagem = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri != null) { registra(receita.copy(fundo = receita.fundo.copy(modo = Fundo.Modo.Imagem, imagem = uri.toString()))); Telemetria.evento("editor_fundo_imagem") }
+        if (uri != null) { registra(receita.copy(fundo = receita.fundo.copy(modo = Fundo.Modo.Imagem, imagem = uri.toString(), credito = ""))); Telemetria.evento("editor_fundo_imagem", mapOf("fonte" to "celular")) }
     }
     fun sair() { if (mudou()) confirmarSaida = true else fechar() }
     BackHandler { sair() }
@@ -399,7 +402,7 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                     val comLocal = Local.aplicar(comHsl, receita.local, pl); if (comLocal !== comHsl) comHsl.recycle()
                     val pronta = Edicao.aplicaCor(comLocal, receita.cor); if (pronta !== comLocal) comLocal.recycle()
                     val png = receita.fundo.modo == Fundo.Modo.Remover
-                    val s = Edicao.salvarCopia(ctx, midia, pronta, png); pronta.recycle()
+                    val s = Edicao.salvarCopia(ctx, midia, pronta, png, receita.fundo.credito); pronta.recycle()
                     val id = s.uri.lastPathSegment?.toLongOrNull() ?: 0L
                     if (id > 0L) runCatching { Indice.get(ctx).guardaEdicao(id, midia.id, receita.toJson()) }
                     s
@@ -418,6 +421,14 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
         }
     }
 
+    if (buscandoFundo) {
+        TelaBuscaFundo(aoFechar = { buscandoFundo = false }, aoEscolher = { a, u ->
+            buscandoFundo = false
+            registra(receita.copy(fundo = receita.fundo.copy(modo = Fundo.Modo.Imagem, imagem = u.toString(), credito = a.credito)))
+            Telemetria.evento("editor_fundo_imagem", mapOf("fonte" to "commons", "licenca" to a.licenca))
+        })
+        return
+    }
     val filtroCor = remember(receita.cor, comparando) { if (comparando) null else ColorFilter.colorMatrix(androidx.compose.ui.graphics.ColorMatrix(Edicao.matriz(receita.cor).array)) }
     val ocupado = segmentando || salvando
 
@@ -585,10 +596,10 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                         aoCuraDp = { curaDp = it }, aoLimparCura = { registra(receita.copy(cura = Cura.Parametros())) })
                     GrupoEditor.Fundo -> PainelFundo(receita.fundo, aoModo = { m ->
                         refinando = false
-                        if (m == Fundo.Modo.Imagem && receita.fundo.imagem.isBlank()) escolheImagem.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                        if (m == Fundo.Modo.Imagem && receita.fundo.imagem.isBlank()) fonteFundo = true
                         else registra(receita.copy(fundo = receita.fundo.copy(modo = m)))
                     },
-                        erroImagem = erroFundoImg, aoTrocarImagem = { escolheImagem.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                        erroImagem = erroFundoImg, aoTrocarImagem = { fonteFundo = true }, credito = receita.fundo.credito, aoCredito = { vendoCredito = true },
                         aplicando = segmentando && mascara != null, estadoModelo = estadoModelo, avisoMotor = avisoMotor,
                         aoMotor = { escolheMotor(it) }, aoCancelarBaixa = { IsnetOnnx.cancelar(); baixaJob?.cancel(); baixaJob = null },
                         aoIntensidade = { v -> receita = receita.copy(fundo = receita.fundo.copy(intensidade = v)) }, aoIntensidadeFim = { registra(receita) },
@@ -617,6 +628,13 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
         }
     }
 
+    if (fonteFundo) FolhaFonteFundo(
+        aoFechar = { fonteFundo = false },
+        aoCelular = { fonteFundo = false; escolheImagem.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+        aoBuscar = { fonteFundo = false; buscandoFundo = true })
+    if (vendoCredito) AlertDialog(onDismissRequest = { vendoCredito = false }, title = { Text("Crédito do fundo") },
+        text = { Text(receita.fundo.credito.ifBlank { "Esta imagem é sua, não precisa de crédito." } + "\n\nO crédito fica gravado na cópia. Ao publicar a foto, inclua essa linha.") },
+        confirmButton = { TextButton(onClick = { vendoCredito = false }) { Text("Entendi", color = Tema.Coral) } })
     escolhendoCor?.let { alvo ->
         val mk = receita.local.mascaras.getOrNull(localSel)
         FolhaCor(
@@ -794,7 +812,7 @@ private fun PainelFiltros(base: Bitmap?, cor: Edicao.Cor, aoFiltro: (String) -> 
  */
 @Composable
 private fun PainelFundo(f: Fundo.Parametros, aoModo: (Fundo.Modo) -> Unit,
-                        erroImagem: Boolean, aoTrocarImagem: () -> Unit,
+                        erroImagem: Boolean, aoTrocarImagem: () -> Unit, credito: String, aoCredito: () -> Unit,
                         aplicando: Boolean, estadoModelo: IsnetOnnx.Estado, avisoMotor: String?,
                         aoMotor: (Fundo.Motor) -> Unit, aoCancelarBaixa: () -> Unit,
                         aoIntensidade: (Float) -> Unit, aoIntensidadeFim: () -> Unit, aoCor: (Int) -> Unit,
@@ -831,7 +849,8 @@ private fun PainelFundo(f: Fundo.Parametros, aoModo: (Fundo.Modo) -> Unit,
                 f.modo == Fundo.Modo.Imagem -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(if (erroImagem) "Não consegui abrir essa imagem." else "A pessoa fica sobre a imagem escolhida.",
                         color = if (erroImagem) Tema.Coral else Tema.Texto2, fontSize = 13.sp, modifier = Modifier.weight(1f))
-                    TextButton(onClick = aoTrocarImagem, modifier = Modifier.height(48.dp)) { Text("Trocar imagem", color = Tema.Coral, fontSize = 12.sp) }
+                    if (credito.isNotBlank()) TextButton(onClick = aoCredito, modifier = Modifier.height(48.dp)) { Text("Créditos", color = Tema.Texto2, fontSize = 12.sp) }
+                    TextButton(onClick = aoTrocarImagem, modifier = Modifier.height(48.dp)) { Text("Trocar", color = Tema.Coral, fontSize = 12.sp) }
                     Chip("Refinar", false, marcado = f.tracos.isNotEmpty()) { aoRefinar(true) }
                 }
                 f.modo == Fundo.Modo.Remover -> Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -967,6 +986,26 @@ private fun PainelLocal(p: Local.Parametros, sel: Int, aba: String, param: Strin
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * De onde vem o fundo (desenho do Astra, 21/09): duas opções de 56 dp. "Criar com IA" fica ESCONDIDO enquanto não
+ * existe serviço autorizado — promessa desabilitada na tela é pior que ausência.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FolhaFonteFundo(aoFechar: () -> Unit, aoCelular: () -> Unit, aoBuscar: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = aoFechar, containerColor = Tema.Superficie, sheetState = rememberModalBottomSheetState()) {
+        Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 24.dp)) {
+            Text("Imagem de fundo", color = Tema.Texto, fontSize = 16.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(bottom = 8.dp))
+            listOf("Do celular" to aoCelular, "Buscar na internet" to aoBuscar).forEach { (rotulo, acao) ->
+                Row(Modifier.fillMaxWidth().height(56.dp).clickable(onClick = acao), verticalAlignment = Alignment.CenterVertically) {
+                    Text(rotulo, color = Tema.Texto, fontSize = 15.sp)
+                }
+            }
+            Text("A busca manda só o que você digitar. A sua foto não sai do aparelho.", color = Tema.Texto2, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
         }
     }
 }

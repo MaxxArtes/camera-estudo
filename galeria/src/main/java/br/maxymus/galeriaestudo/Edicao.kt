@@ -61,7 +61,7 @@ object Edicao {
                 put("exp", m.exposicao); put("con", m.contraste); put("sat", m.saturacao); put("tmp", m.temperatura); put("som", m.sombras); put("rea", m.realces)
                 put("ca", m.corA); put("cb", m.corB); put("fc", m.forcaCor) }) } })
             put("cura", org.json.JSONArray().apply { cura.pinceladas.forEach { t -> put(org.json.JSONObject().apply { put("r", t.raio); put("p", org.json.JSONArray(t.pontos.flatMap { listOf(it.first, it.second) })) }) } })
-            put("fundo", org.json.JSONObject().apply { put("modo", fundo.modo.name); put("intensidade", fundo.intensidade); put("cor", fundo.cor); put("pele", fundo.pele); put("motor", fundo.motor.name); put("imagem", fundo.imagem)
+            put("fundo", org.json.JSONObject().apply { put("modo", fundo.modo.name); put("intensidade", fundo.intensidade); put("cor", fundo.cor); put("pele", fundo.pele); put("motor", fundo.motor.name); put("imagem", fundo.imagem); put("credito", fundo.credito)
                 put("tracos", org.json.JSONArray().apply { fundo.tracos.forEach { t -> put(org.json.JSONObject().apply { put("a", t.adiciona); put("r", t.raio); put("p", org.json.JSONArray(t.pontos.flatMap { listOf(it.first, it.second) })) }) } }) })
         }.toString()
         companion object {
@@ -97,7 +97,7 @@ object Edicao {
                     Geometria(g.getInt("giros"), g.getBoolean("espelhado"), g.getDouble("endireitar").toFloat(), RectF(r.getDouble(0).toFloat(), r.getDouble(1).toFloat(), r.getDouble(2).toFloat(), r.getDouble(3).toFloat())),
                     Tom.Parametros(t.getDouble("realces").toFloat(), t.getDouble("sombras").toFloat(), t.getDouble("brancos").toFloat(), t.getDouble("pretos").toFloat(), t.getDouble("nitidez").toFloat(), t.getDouble("vinheta").toFloat(), t.getDouble("granulacao").toFloat(), t.optDouble("textura", 0.0).toFloat(), t.optDouble("clareza", 0.0).toFloat()),
                     Fundo.Parametros(Fundo.Modo.valueOf(f.getString("modo")), f.getDouble("intensidade").toFloat(), f.getInt("cor"), f.getDouble("pele").toFloat(), tracosDe(f.optJSONArray("tracos")),
-                        runCatching { Fundo.Motor.valueOf(f.optString("motor", "Leve")) }.getOrDefault(Fundo.Motor.Leve), f.optString("imagem", "")),
+                        runCatching { Fundo.Motor.valueOf(f.optString("motor", "Leve")) }.getOrDefault(Fundo.Motor.Leve), f.optString("imagem", ""), f.optString("credito", "")),
                     hslDe(o.optJSONObject("hsl")), localDe(o.optJSONArray("local")), curaDe(o.optJSONArray("cura"))
                 )
             }.getOrNull()
@@ -224,7 +224,7 @@ object Edicao {
      * Grava a cópia na mesma pasta da original (ou Pictures/Galeria Estudo), JPEG 95, com data/hora do EXIF copiadas.
      * Exige Android 10+ (MediaStore com RELATIVE_PATH e IS_PENDING; sem permissão de escrita legada).
      */
-    fun salvarCopia(ctx: Context, original: Midia, pronta: Bitmap, png: Boolean = false): Salva {
+    fun salvarCopia(ctx: Context, original: Midia, pronta: Bitmap, png: Boolean = false, credito: String = ""): Salva {
         require(Build.VERSION.SDK_INT >= 29) { "Salvar cópia exige Android 10 ou mais novo" }
         val cr = ctx.contentResolver
         val nomeOrig = runCatching {
@@ -252,6 +252,9 @@ object Edicao {
                     val ex = ExifInterface(pfd.fileDescriptor)
                     if (dataOrig != null) { ex.setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, dataOrig); ex.setAttribute(ExifInterface.TAG_DATETIME, dataOrig) }
                     ex.setAttribute(ExifInterface.TAG_SOFTWARE, "Galeria Estudo (editada)")
+                    // crédito do fundo de terceiro: fica no arquivo, mas o app também guarda e mostra, porque
+                    // metadado se perde ao compartilhar (orientação do Astra, 21/09)
+                    if (credito.isNotBlank()) ex.setAttribute(ExifInterface.TAG_COPYRIGHT, "Fundo: $credito")
                     ex.saveAttributes()
                 }
             }

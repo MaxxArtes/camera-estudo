@@ -22,7 +22,7 @@ object Fundo {
     /** Pincelada de correção da máscara: adiciona (vira pessoa, sai do desfoque) ou remove (vira fundo). Normalizada. */
     data class Traco(val pontos: List<Pair<Float, Float>>, val raio: Float, val adiciona: Boolean)
 
-    data class Parametros(val modo: Modo = Modo.Nenhum, val intensidade: Float = 60f, val cor: Int = 0xFFFFFFFF.toInt(), val pele: Float = 0f, val tracos: List<Traco> = emptyList(), val motor: Motor = Motor.Padrao, val imagem: String = "") {
+    data class Parametros(val modo: Modo = Modo.Nenhum, val intensidade: Float = 60f, val cor: Int = 0xFFFFFFFF.toInt(), val pele: Float = 0f, val tracos: List<Traco> = emptyList(), val motor: Motor = Motor.Padrao, val imagem: String = "", val credito: String = "") {
         val neutro: Boolean get() = modo == Modo.Nenhum && pele == 0f
     }
 
