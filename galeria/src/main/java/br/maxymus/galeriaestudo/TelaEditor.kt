@@ -43,16 +43,8 @@ import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Crop
-import androidx.compose.material.icons.filled.Details
-import androidx.compose.material.icons.filled.FilterTiltShift
 import androidx.compose.material.icons.filled.Flip
-import androidx.compose.material.icons.filled.Healing
-import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.PhotoFilter
-import androidx.compose.material.icons.filled.Portrait
 import androidx.compose.material.icons.filled.Rotate90DegreesCw
-import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -112,14 +104,14 @@ private typealias Receita = Edicao.Receita
 
 /** Grupos da faixa (Astra 20/09): ordem fixa, nome e ícone sempre visíveis. Marcações e Perspectiva entram quando prontos. */
 private enum class GrupoEditor(val rotulo: String, val icone: ImageVector, val parametros: List<String>) {
-    Luz("Luz", Icons.Filled.WbSunny, listOf("Exposição", "Brilho", "Contraste", "Realces", "Sombras", "Brancos", "Pretos")),
-    Cor("Cor", Icons.Filled.Palette, listOf("Temperatura", "Matiz", "Saturação", "Conta-gotas", "HSL")),
-    Recortar("Recortar", Icons.Filled.Crop, emptyList()),
-    Filtros("Filtros", Icons.Filled.PhotoFilter, emptyList()),
-    Detalhe("Detalhe", Icons.Filled.Details, listOf("Nitidez", "Textura", "Clareza", "Vinheta", "Granulação")),
-    Fundo("Fundo", Icons.Filled.Portrait, emptyList()),
-    Local("Local", Icons.Filled.FilterTiltShift, emptyList()),
-    Corrigir("Corrigir", Icons.Filled.Healing, listOf("Pele", "Cicatrizar"))
+    Luz("Luz", Icones.Luz, listOf("Exposição", "Brilho", "Contraste", "Realces", "Sombras", "Brancos", "Pretos")),
+    Cor("Cor", Icones.Cor, listOf("Temperatura", "Matiz", "Saturação", "Conta-gotas", "HSL")),
+    Recortar("Recortar", Icones.Recortar, emptyList()),
+    Filtros("Filtros", Icones.Filtros, emptyList()),
+    Detalhe("Detalhe", Icones.Detalhe, listOf("Nitidez", "Textura", "Clareza", "Vinheta", "Granulação")),
+    Fundo("Fundo", Icones.Fundo, emptyList()),
+    Local("Local", Icones.Local, emptyList()),
+    Corrigir("Corrigir", Icones.Corrigir, listOf("Pele", "Cicatrizar"))
 }
 private val PROPORCOES = listOf("Livre" to 0f, "1:1" to 1f, "4:3" to 4f / 3f, "3:4" to 3f / 4f, "16:9" to 16f / 9f, "9:16" to 9f / 16f)
 /** Paleta fotográfica do Astra (21/09): âmbar, laranja, coral, rosa, magenta, violeta, azul, ciano, teal, verde. */
@@ -647,8 +639,11 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
                 val ativo = grupo == g
                 Column(Modifier.width(86.dp).fillMaxSize().clickable { grupo = if (ativo) null else g; pegandoBranco = false; refinando = false; curando = false; verMascara = false; escolhendoTipo = false; if (g.parametros.isNotEmpty() && parametro !in g.parametros) parametro = g.parametros[0] },
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                    Icon(g.icone, contentDescription = null, tint = if (ativo) Tema.Coral else Tema.Texto, modifier = Modifier.size(24.dp))
-                    Text(g.rotulo, color = if (ativo) Tema.Coral else Tema.Texto, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp))
+                    Box(Modifier.size(40.dp).clip(RoundedCornerShape(12.dp)).background(if (ativo) Tema.Coral else Color.Transparent), contentAlignment = Alignment.Center) {
+                        Icon(g.icone, contentDescription = null, tint = if (ativo) Tema.Fundo else Tema.Texto2, modifier = Modifier.size(24.dp))
+                    }
+                    Text(g.rotulo, color = if (ativo) Tema.Texto else Tema.Texto2, fontSize = 12.sp,
+                        fontWeight = if (ativo) FontWeight.SemiBold else FontWeight.Normal, modifier = Modifier.padding(top = 4.dp))
                 }
             }
         }
@@ -690,6 +685,17 @@ fun TelaEditor(midia: Midia, fechar: () -> Unit, aoSalvo: (Midia) -> Unit) {
             text = { Text("O recorte Alta precisa de um modelo que fica guardado no aparelho. Depois de baixado, funciona sem internet.") },
             confirmButton = { TextButton(onClick = { confirmarDados = null; baixaModelo(m) }) { Text("Baixar", color = Tema.Coral) } },
             dismissButton = { TextButton(onClick = { confirmarDados = null }) { Text("Agora não") } })
+    }
+}
+
+/** Chip com ícone anatômico e o nome ao lado; selecionado vira bloco coral com conteúdo escuro. */
+@Composable
+private fun ChipIcone(rotulo: String, icone: ImageVector, ativo: Boolean, marcado: Boolean, aoTocar: () -> Unit) {
+    Row(Modifier.height(36.dp).clip(RoundedCornerShape(18.dp)).background(if (ativo) Tema.Coral else Tema.Superficie)
+        .clickable(onClick = aoTocar).padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(icone, contentDescription = null, tint = if (ativo) Tema.Fundo else Tema.Texto2, modifier = Modifier.size(20.dp))
+        Text(rotulo, color = if (ativo) Tema.Fundo else Tema.Texto, fontSize = 13.sp, modifier = Modifier.padding(start = 6.dp))
+        if (marcado && !ativo) Box(Modifier.padding(start = 5.dp).size(5.dp).clip(CircleShape).background(Tema.Coral))
     }
 }
 
@@ -1117,7 +1123,7 @@ private fun PainelCorrigir(receita: Receita, parametro: String, curando: Boolean
             }
             esculpindo -> Column {
                 Row(Modifier.height(40.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Escultura.SLIDERS.forEach { s2 -> Chip(s2, parametro == s2, marcado = receita.escultura.valor(s2) != 0f) { aoParametro(s2) } }
+                    Escultura.SLIDERS.forEach { s2 -> ChipIcone(s2, Icones.deEscultura(s2), parametro == s2, receita.escultura.valor(s2) != 0f) { aoParametro(s2) } }
                 }
                 val v = receita.escultura.valor(parametro)
                 Row(Modifier.height(48.dp), verticalAlignment = Alignment.CenterVertically) {
