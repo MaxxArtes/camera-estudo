@@ -1,4 +1,4 @@
-package br.maxymus.galeriaestudo
+package br.maxymus.cameraestudo
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor

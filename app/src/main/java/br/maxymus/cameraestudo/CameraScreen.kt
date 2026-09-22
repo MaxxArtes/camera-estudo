@@ -87,8 +87,6 @@ import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.SlowMotionVideo
 import androidx.compose.material.icons.filled.Monitor
 import androidx.compose.material.icons.filled.Cameraswitch
-import androidx.compose.material.icons.filled.Crop
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.FlashAuto
 import androidx.compose.material.icons.filled.FlashOff
 import androidx.compose.material.icons.filled.FlashOn
@@ -102,8 +100,6 @@ import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Straighten
 import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.Timeline
-import androidx.compose.material.icons.filled.Tonality
-import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.HdrOn
 import androidx.compose.material.icons.filled.RawOn
@@ -1043,13 +1039,13 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 LazyVerticalGrid(columns = GridCells.Fixed(4), modifier = Modifier.fillMaxWidth().padding(bottom = 32.dp), horizontalArrangement = Arrangement.Center) {
                     item { Ajuste(iconeFlash(flash), "Flash", rotuloFlash(flash), flash != ImageCapture.FLASH_MODE_OFF) { flash = proximoFlash(flash) } }
                     item { Ajuste(Icons.Filled.Timer, "Timer", if (timer == 0) "Desativado" else "${timer} s", timer > 0) { timer = when (timer) { 0 -> 3; 3 -> 10; else -> 0 } } }
-                    item { Ajuste(Icons.Filled.Crop, "Recorte", if (conferir) "Conferir cantos" else "Automático", conferir) { conferir = !conferir } }
+                    item { Ajuste(Icones.Recortar, "Recorte", if (conferir) "Conferir cantos" else "Automático", conferir) { conferir = !conferir } }
                     item { var tel by remember { mutableStateOf(Telemetria.ligada) }; Ajuste(Icons.Filled.Timeline, "Telemetria", if (tel) "Enviando" else "Desligada", tel) { tel = Telemetria.alternar() } }
                     item { Ajuste(Icons.Filled.Face, "Pessoas", if (Pessoas.ligado) "Reconhecendo" else "Desligado", Pessoas.ligado) { telaPessoas = true; gaveta = false } }
-                    item { var am by remember { mutableStateOf(Acabamento.autoMascaras) }; Ajuste(Icons.Filled.AutoAwesome, "Auto-máscaras", if (am) "Céu, fundo, rosto, olhos" else "Desligadas", am) { am = !am; Acabamento.autoMascaras = am } }
-                    item { Ajuste(Icons.Filled.Share, "Registro", "Scanner: ${RegistroScanner.linhas(contexto)}", false) { if (!RegistroScanner.compartilhar(contexto)) Toast.makeText(contexto, "Nenhuma digitalização registrada ainda.", Toast.LENGTH_SHORT).show(); gaveta = false } }
+                    item { var am by remember { mutableStateOf(Acabamento.autoMascaras) }; Ajuste(Icones.AutoMascaras, "Auto-máscaras", if (am) "Céu, fundo, rosto, olhos" else "Desligadas", am) { am = !am; Acabamento.autoMascaras = am } }
+                    item { Ajuste(Icones.Registro, "Registro", "Scanner: ${RegistroScanner.linhas(contexto)}", false) { if (!RegistroScanner.compartilhar(contexto)) Toast.makeText(contexto, "Nenhuma digitalização registrada ainda.", Toast.LENGTH_SHORT).show(); gaveta = false } }
                     item { Ajuste(Icons.Filled.AspectRatio, "Proporção", if (proporcao == AspectRatio.RATIO_16_9) "16:9" else "4:3", true) { proporcao = if (proporcao == AspectRatio.RATIO_16_9) AspectRatio.RATIO_4_3 else AspectRatio.RATIO_16_9 } }
-                    item { Ajuste(Icons.Filled.AutoAwesome, "Aparelho", if (extensoesDisponiveis.size == 1) "Sem extensão" else nomeExtensao(extensao), extensao != ExtensionMode.NONE) {
+                    item { Ajuste(Icones.Aparelho, "Aparelho", if (extensoesDisponiveis.size == 1) "Sem extensão" else nomeExtensao(extensao), extensao != ExtensionMode.NONE) {
                         val i = extensoesDisponiveis.indexOf(extensao); extensao = extensoesDisponiveis[(i + 1) % extensoesDisponiveis.size]
                         if (extensoesDisponiveis.size == 1) Toast.makeText(contexto, "Este aparelho não expõe HDR/Noite pelo CameraX Extensions.", Toast.LENGTH_SHORT).show()
                     } }
@@ -1062,7 +1058,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     item { Ajuste(Icons.Filled.BurstMode, "Rajada", if (rajada) "4 quadros" else "Desligada", rajada) { rajada = !rajada } }
                     item { Ajuste(Icons.Filled.Grid3x3, "Grade", if (grade) "Ativado" else "Desativado", grade) { grade = !grade } }
                     item { Ajuste(Icons.Filled.Straighten, "Nível", if (nivel) "Ativado" else "Desativado", nivel) { nivel = !nivel } }
-                    item { Ajuste(Icons.Filled.Tonality, "Filtro", filtro, filtro != "Original") { painelAcabamento = true; abaAcabamento = 1; gaveta = false } }
+                    item { Ajuste(Icones.Filtros, "Filtro", filtro, filtro != "Original") { painelAcabamento = true; abaAcabamento = 1; gaveta = false } }
                     item {
                         val nv = novaVersao
                         Ajuste(Icons.Filled.SystemUpdate, "Atualizar", if (nv != null) "Nova ${nv.nome}" else "Atual ${instalada.first}", nv != null) {
