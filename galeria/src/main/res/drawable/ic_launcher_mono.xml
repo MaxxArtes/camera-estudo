@@ -1,0 +1,9 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Camada monocromática (ícone temático do Android): só o símbolo, sem disco nem fundo. -->
+    <path android:strokeColor="#FF000000" android:strokeWidth="3.4" android:fillColor="#00000000"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M36,38h36a4,4 0 0 1 4,4v24a4,4 0 0 1 -4,4H36a4,4 0 0 1 -4,-4V42a4,4 0 0 1 4,-4z"/>
+    <path android:fillColor="#FF000000" android:pathData="M35,66l10,-13l7.5,9l5.5,-5.5l11,9.5z"/>
+    <path android:fillColor="#FF000000" android:pathData="M63,45.5a3.4,3.4 0 1 0 0.01,0z"/>
+</vector>
