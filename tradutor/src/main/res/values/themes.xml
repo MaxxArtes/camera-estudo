@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.Tradutor" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#111114</item>
+        <item name="android:navigationBarColor">#111114</item>
+        <item name="android:windowBackground">#111114</item>
+    </style>
+</resources>

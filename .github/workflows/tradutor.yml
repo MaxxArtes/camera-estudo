@@ -1,0 +1,59 @@
+name: tradutor
+on:
+  push:
+    branches: [main]
+    paths: ['tradutor/**', 'settings.gradle.kts', '.github/workflows/tradutor.yml']
+  workflow_dispatch:
+jobs:
+  apk:
+    name: Tradutor (APK assinado)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+      - uses: gradle/actions/setup-gradle@v4
+        with: { gradle-version: "8.9" }
+      - name: Restaura keystore (mesma chave da câmera)
+        run: |
+          echo "${{ secrets.SIGNING_KEY_BASE64 }}" | base64 -d > "$RUNNER_TEMP/camera.jks"
+          echo "CAMERA_KEYSTORE=$RUNNER_TEMP/camera.jks" >> "$GITHUB_ENV"
+          echo "CAMERA_KEYSTORE_SENHA=${{ secrets.SIGNING_KEY_PASSWORD }}" >> "$GITHUB_ENV"
+          echo "TELEMETRIA_TOKEN=${{ secrets.TELEMETRIA_TOKEN }}" >> "$GITHUB_ENV"
+      - name: Build (release assinado, R8)
+        run: gradle :tradutor:assembleRelease --no-daemon
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with: { name: tradutor-apk, path: tradutor/build/outputs/apk/release/tradutor-release.apk }
+      # Só R2: sem release no GitHub (o Obtainium do app da câmera acompanha as releases deste repo e se confundiria)
+      # e sem commit de volta (evita corrida de push com o workflow da câmera). O app lê o releases.json do R2.
+      - name: Publica no R2 e atualiza releases.json
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+          R2_ENDPOINT: https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_PUBLICO: https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev
+        run: |
+          VERSAO=$(grep -oP 'versionName = "\K[^"]+' tradutor/build.gradle.kts)
+          CODIGO=$(grep -oP 'versionCode = \K[0-9]+' tradutor/build.gradle.kts)
+          TAG="tradutor-v${VERSAO}-build${GITHUB_RUN_NUMBER}"
+          APK=tradutor/build/outputs/apk/release/tradutor-release.apk
+          aws s3 cp "$APK" "s3://omnigen-assets/tradutor/tradutor-${TAG}.apk" --endpoint-url "$R2_ENDPOINT" --content-type application/vnd.android.package-archive
+          aws s3 cp "$APK" "s3://omnigen-assets/tradutor/tradutor.apk" --endpoint-url "$R2_ENDPOINT" --content-type application/vnd.android.package-archive --cache-control "no-cache"
+          aws s3 cp "s3://omnigen-assets/tradutor/releases.json" releases-tradutor.json --endpoint-url "$R2_ENDPOINT" || echo '{"releases": []}' > releases-tradutor.json
+          python3 - "$VERSAO" "$CODIGO" "$TAG" "$R2_PUBLICO" <<'PYEOF'
+          import json, os, sys, subprocess, datetime
+          versao, codigo, tag, pub = sys.argv[1:5]
+          p = "releases-tradutor.json"
+          try: m = json.load(open(p))
+          except Exception: m = {"releases": []}
+          msg = subprocess.run(["git", "log", "-1", "--pretty=%s"], capture_output=True, text=True).stdout.strip()
+          m.update({"versionName": versao, "versionCode": int(codigo), "build": int(os.environ["GITHUB_RUN_NUMBER"]),
+                    "apk": f"{pub}/tradutor/tradutor.apk",
+                    "apkVersao": f"{pub}/tradutor/tradutor-{tag}.apk",
+                    "publicadoEm": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")})
+          m["releases"] = [{"versao": versao, "build": int(os.environ["GITHUB_RUN_NUMBER"]), "tag": tag, "apk": m["apkVersao"], "mudou": [msg]}] + [r for r in m.get("releases", []) if r.get("tag") != tag]
+          json.dump(m, open(p, "w"), ensure_ascii=False, indent=2); open(p, "a").write("\n")
+          PYEOF
+          aws s3 cp releases-tradutor.json "s3://omnigen-assets/tradutor/releases.json" --endpoint-url "$R2_ENDPOINT" --content-type application/json --cache-control "no-cache"

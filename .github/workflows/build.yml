@@ -2,7 +2,7 @@ name: build
 on:
   push:
     branches: [main]
-    paths-ignore: ['galeria/**', '.github/workflows/galeria.yml']
+    paths-ignore: ['galeria/**', 'tradutor/**', '.github/workflows/galeria.yml', '.github/workflows/tradutor.yml']
   workflow_dispatch:
 jobs:
   apk:

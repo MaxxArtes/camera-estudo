@@ -1,0 +1,15 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Mesma construcao da familia (Astra): fundo escuro, disco de 64 centrado, simbolo branco de traco 2,6.
+         Disco roxo para separar das irmas coral; simbolo = balao de fala com duas setas de troca. -->
+    <path android:fillColor="#FF7C6BFF" android:pathData="M54,22a32,32 0 1 0 0.01,0z"/>
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:fillColor="#00000000"
+        android:strokeLineCap="round" android:strokeLineJoin="round"
+        android:pathData="M42,40h24a4,4 0 0 1 4,4v14a4,4 0 0 1 -4,4H52l-8,7v-7h-2a4,4 0 0 1 -4,-4V44a4,4 0 0 1 4,-4z"/>
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:fillColor="#00000000"
+        android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M47,49h14"/>
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:fillColor="#00000000"
+        android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M57,45l4,4l-4,4"/>
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:fillColor="#00000000"
+        android:strokeLineCap="round" android:strokeLineJoin="round" android:pathData="M51,55h10"/>
+</vector>
