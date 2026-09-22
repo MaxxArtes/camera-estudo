@@ -1,9 +1,9 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
     <!-- Construção do Astra (22/09), a mesma da Galeria: disco de 64 centrado em (54,54) e símbolo branco de
-         no máximo 32, traço 2,6, sem degradê nem reflexo. O verde-petróleo separa a Câmera da Galeria coral,
-         que ficam lado a lado na tela inicial. -->
-    <path android:fillColor="#FF26A69A" android:pathData="M54,22a32,32 0 1 0 0.01,0z"/>
+         no máximo 32, traço 2,6, sem degradê nem reflexo. O coral é a identidade da Câmera e foi escolha do dono
+         (22/09): ele prefere a família coral, e quem separa da Galeria é o desenho — máquina contra moldura. -->
+    <path android:fillColor="#FFFF575F" android:pathData="M54,22a32,32 0 1 0 0.01,0z"/>
     <path android:strokeColor="#FFFFFFFF" android:strokeWidth="2.6" android:fillColor="#00000000"
         android:strokeLineCap="round" android:strokeLineJoin="round"
         android:pathData="M41.5,43h25a3.5,3.5 0 0 1 3.5,3.5v15a3.5,3.5 0 0 1 -3.5,3.5h-25a3.5,3.5 0 0 1 -3.5,-3.5v-15a3.5,3.5 0 0 1 3.5,-3.5z"/>
