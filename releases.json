@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.76",
+      "build": 86,
+      "tag": "v0.76-build86",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.76-build86.apk",
+      "mudou": [
+        "Camera 0.76: icone volta ao coral, por decisao do dono"
+      ]
+    },
+    {
       "versao": "0.75",
       "build": 85,
       "tag": "v0.75-build85",
@@ -694,11 +703,11 @@
       ]
     }
   ],
-  "versionName": "0.75",
-  "versionCode": 75,
-  "build": 85,
+  "versionName": "0.76",
+  "versionCode": 76,
+  "build": 86,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.75-build85.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.76-build86.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-22T19:18:35Z"
+  "publicadoEm": "2026-09-22T19:32:06Z"
 }
