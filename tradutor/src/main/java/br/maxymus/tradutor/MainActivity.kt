@@ -73,7 +73,7 @@ private fun Preparacao() {
         val v = Atualizador.consultar(); val inst = Atualizador.versaoInstalada(ctx)
         if (v != null && v.codigo > inst.second) nova = v
     }
-    var pacote by remember { mutableStateOf(if (Traducao.pacotePronto) "Pronto" else "Baixar pacote") }
+    var pacote by remember { mutableStateOf("Baixar pacote") }
     val escopo = androidx.compose.runtime.rememberCoroutineScope()
 
     fun confere() {
@@ -86,7 +86,10 @@ private fun Preparacao() {
         val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) confere() }
         dono.lifecycle.addObserver(obs); onDispose { dono.lifecycle.removeObserver(obs) }
     }
-    LaunchedEffect(Unit) { confere() }
+    LaunchedEffect(Unit) {
+        confere()
+        if (withContext(Dispatchers.IO) { Traducao.pacotePronto() }) pacote = "Pronto"
+    }
 
     Column(Modifier.fillMaxSize().background(Fundo).verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -101,7 +104,7 @@ private fun Preparacao() {
                     colors = ButtonDefaults.buttonColors(containerColor = Coral, contentColor = Fundo)) { Text("Atualizar", fontSize = 15.sp) }
             }
         }
-        Text("Uma bolha fica por cima do navegador. Ao tocar nela, o app lê a tela, traduz do inglês para o português e mostra a página traduzida. Toque de novo para voltar.",
+        Text("Uma bolha fica por cima do navegador. Ao tocar nela, o app lê a tela, traduz e mostra a página traduzida. Toque de novo para voltar.",
             color = Texto2, fontSize = 14.sp)
 
         Cartao("Captura da tela", if (servicoLigado) "Ativada" else "Ativar",
@@ -135,8 +138,11 @@ private fun Preparacao() {
             }
         }
 
-        Cartao("Inglês para português", pacote,
-            "O pacote de idioma é baixado uma vez e depois a tradução funciona sem internet.",
+        Cartao("Tradução sem internet", pacote,
+            "Com internet, o app usa um tradutor online, que sai melhor e entende qualquer idioma. " +
+            "Sem internet, ele usa o tradutor do próprio aparelho, e para isso o pacote precisa estar baixado. " +
+            "A troca entre os dois é automática. Este botão baixa o pacote de inglês; outros idiomas são baixados " +
+            "na primeira vez que aparecerem.",
             pronto = pacote == "Pronto") {
             if (pacote != "Pronto") {
                 pacote = "Baixando…"
@@ -147,13 +153,15 @@ private fun Preparacao() {
             }
         }
 
-        if (servicoLigado && pacote == "Pronto")
-            Text("Tudo pronto. Abra o quadrinho no navegador e toque na bolha.", color = Coral, fontSize = 14.sp)
+        if (servicoLigado)
+            Text(if (pacote == "Pronto") "Tudo pronto. Abra o quadrinho no navegador e toque na bolha."
+                 else "Dá para usar já, com internet. Baixe o pacote para funcionar sem ela também.",
+                 color = Coral, fontSize = 14.sp)
         else
-            Text("Faltam os passos acima.", color = Texto2, fontSize = 13.sp)
+            Text("Falta ligar a captura, acima.", color = Texto2, fontSize = 13.sp)
 
         Text("Versão instalada " + Atualizador.versaoInstalada(ctx).first, color = Texto2, fontSize = 12.sp)
-        Text("Primeira versão: traduz a tela parada, uma tela por vez. Não acompanha a rolagem, e onomatopeia desenhada não é traduzida.",
+        Text("Traduz a tela parada, uma tela por vez. Não acompanha a rolagem, e onomatopeia desenhada não é traduzida.",
             color = Texto2, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
     }
 }

@@ -14,8 +14,8 @@ android {
         applicationId = "br.maxymus.tradutor"
         minSdk = 30            // takeScreenshot da acessibilidade exige API 30
         targetSdk = 34
-        versionCode = 4
-        versionName = "0.4"
+        versionCode = 5
+        versionName = "0.5"
         ndk { abiFilters += listOf("arm64-v8a") }
         buildConfigField("String", "TELEMETRIA_TOKEN", "\"" + (System.getenv("TELEMETRIA_TOKEN") ?: "") + "\"")
     }
@@ -53,5 +53,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.5")
     implementation("com.google.mlkit:text-recognition:16.0.1")   // OCR latino no aparelho
     implementation("com.google.mlkit:translate:17.0.3")          // tradução offline, pacote baixado sob demanda
+    implementation("com.google.mlkit:language-id:17.0.6")        // detecta o idioma da fala, para servir a qualquer língua
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }

@@ -116,7 +116,6 @@ class ServicoTradutor : AccessibilityService() {
 
     private fun traduzTela() {
         if (trabalhando) return
-        if (!Traducao.pacotePronto) { aviso("Idioma ainda baixando. Tente quando terminar."); return }
         trabalhando = true
         escopo.launch {
             // A captura pega a tela inteira, inclusive a bolha. Mudar o alfa NAO basta: a janela so some depois de
@@ -131,12 +130,12 @@ class ServicoTradutor : AccessibilityService() {
             val camada = withContext(Dispatchers.Default) {
                 val falas = Falas.ler(tela, topo, base)
                 if (falas.isEmpty()) null
-                else Pintura.camada(tela, falas) { Traducao.traduzir(it) } to falas.size
+                else Pintura.camada(tela, falas) { Traducao.traduzir(this@ServicoTradutor, it) } to falas.size
             }
             val ms = (System.nanoTime() - t0) / 1_000_000
             trabalhando = false
             if (camada == null) { aviso("Não encontrei texto. Mova um pouco a página e tente de novo."); Telemetria.evento("traduziu", mapOf("falas" to 0, "ms" to ms)); return@launch }
-            Telemetria.evento("traduziu", mapOf("falas" to camada.second, "ms" to ms, "cache" to Traducao.noCache))
+            Telemetria.evento("traduziu", mapOf("falas" to camada.second, "ms" to ms, "cache" to Traducao.noCache, "caminho" to Traducao.ultimoCaminho, "origem" to (Traducao.ultimaOrigem ?: "?")))
             mostraSobreposicao(tela, camada.first)
         }
     }
