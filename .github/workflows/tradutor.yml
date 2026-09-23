@@ -20,6 +20,7 @@ jobs:
           echo "CAMERA_KEYSTORE=$RUNNER_TEMP/camera.jks" >> "$GITHUB_ENV"
           echo "CAMERA_KEYSTORE_SENHA=${{ secrets.SIGNING_KEY_PASSWORD }}" >> "$GITHUB_ENV"
           echo "TELEMETRIA_TOKEN=${{ secrets.TELEMETRIA_TOKEN }}" >> "$GITHUB_ENV"
+          echo "TRADUTOR_TOKEN=${{ secrets.TRADUTOR_TOKEN }}" >> "$GITHUB_ENV"
       - name: Build (release assinado, R8)
         run: gradle :tradutor:assembleRelease --no-daemon
       - uses: actions/upload-artifact@v4

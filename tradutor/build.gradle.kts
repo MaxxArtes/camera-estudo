@@ -14,10 +14,12 @@ android {
         applicationId = "br.maxymus.tradutor"
         minSdk = 30            // takeScreenshot da acessibilidade exige API 30
         targetSdk = 34
-        versionCode = 6
-        versionName = "0.6"
+        versionCode = 7
+        versionName = "0.7"
         ndk { abiFilters += listOf("arm64-v8a") }
         buildConfigField("String", "TELEMETRIA_TOKEN", "\"" + (System.getenv("TELEMETRIA_TOKEN") ?: "") + "\"")
+        // token do NOSSO servico de tradução por modelo de linguagem; a chave do provedor fica no servidor
+        buildConfigField("String", "TRADUTOR_TOKEN", "\"" + (System.getenv("TRADUTOR_TOKEN") ?: "") + "\"")
     }
     val ksCaminho = System.getenv("CAMERA_KEYSTORE")
     val ksSenha = System.getenv("CAMERA_KEYSTORE_SENHA")

@@ -139,7 +139,7 @@ class ServicoTradutor : AccessibilityService() {
             val ms = (System.nanoTime() - t0) / 1_000_000
             trabalhando = false
             if (camada == null) { aviso("Não encontrei texto. Mova um pouco a página e tente de novo."); Telemetria.evento("traduziu", mapOf("falas" to 0, "ms" to ms)); return@launch }
-            Telemetria.evento("traduziu", mapOf("falas" to camada.second, "ms" to ms, "cache" to Traducao.noCache, "caminho" to Traducao.ultimoCaminho, "origem" to (Traducao.ultimaOrigem ?: "?"), "online" to Traducao.ultimoOnline, "offline" to Traducao.ultimoOffline))
+            Telemetria.evento("traduziu", mapOf("falas" to camada.second, "ms" to ms, "cache" to Traducao.noCache, "caminho" to Traducao.ultimoCaminho, "origem" to (Traducao.ultimaOrigem ?: "?"), "online" to Traducao.ultimoOnline, "offline" to Traducao.ultimoOffline, "modelo" to Traducao.ultimoModelo))
             mostraSobreposicao(tela, camada.first)
         }
     }

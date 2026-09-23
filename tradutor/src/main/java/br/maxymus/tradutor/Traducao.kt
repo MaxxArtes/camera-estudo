@@ -95,15 +95,22 @@ object Traducao {
         }
         if (faltando.isEmpty()) return saida
         if (temRede(ctx)) {
-            val junto = faltando.mapIndexed { i, t -> "${i + 1}. $t" }.joinToString("\n")
+            // 1º o NOSSO serviço (modelo de linguagem, melhor qualidade e vê a tela inteira de uma vez)
+            porModelo(faltando, origem)?.let { lista ->
+                for ((i, t) in faltando.withIndex()) lista.getOrNull(i)?.let { if (it.isNotBlank() && it != t) { saida[t] = it; cache[chave(origem, t)] = it; ultimoOnline++ } }
+            }
+        }
+        val restantes = faltando.filter { it !in saida }
+        if (restantes.isNotEmpty() && temRede(ctx)) {
+            val junto = restantes.mapIndexed { i, t -> "${i + 1}. $t" }.joinToString("\n")
             val r = porRede(junto, origem)
             if (r != null) {
                 val linhas = r.split("\n").mapNotNull { l ->
                     val m = Regex("^\\s*(\\d+)[.)]\\s*(.+)$").find(l.trim()) ?: return@mapNotNull null
                     m.groupValues[1].toIntOrNull()?.minus(1) to m.groupValues[2].trim()
                 }.filter { it.first != null }.associate { it.first!! to it.second }
-                if (linhas.size >= faltando.size * 0.6) {
-                    for ((i, t) in faltando.withIndex()) linhas[i]?.let { saida[t] = it; cache[chave(origem, t)] = it; ultimoOnline++ }
+                if (linhas.size >= restantes.size * 0.6) {
+                    for ((i, t) in restantes.withIndex()) linhas[i]?.let { saida[t] = it; cache[chave(origem, t)] = it; ultimoOnline++ }
                 }
             }
         }
@@ -130,7 +137,35 @@ object Traducao {
         return r
     }
 
-    /** MyMemory, sem chave. Null quando falha ou quando a cota do dia acabou — aí o local assume. */
+    /**
+     * NOSSO serviço: modelo de linguagem, a tela inteira numa chamada. A chave do provedor fica NO SERVIDOR; o app
+     * manda só um token que dá direito a traduzir dentro de uma cota. Foi por isso que ele existe: o APK é
+     * instalado fora da loja e qualquer um consegue abrir e ler o que está dentro.
+     * Medido em 23/09: acerta "Você é o Sr. Seonghyeon Han?", que os outros dois caminhos erravam.
+     */
+    private fun porModelo(falas: List<String>, origem: String): List<String>? {
+        if (BuildConfig.TRADUTOR_TOKEN.isEmpty() || falas.isEmpty()) return null
+        return runCatching {
+            val corpo = JSONObject().put("de", origem).put("para", "português do Brasil")
+                .put("falas", org.json.JSONArray(falas)).toString().toByteArray()
+            val con = (URL("https://pocketlm.maxymus.dev.br/tradutor/traduzir").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"; doOutput = true
+                connectTimeout = 8_000; readTimeout = 60_000
+                setRequestProperty("Authorization", "Bearer " + BuildConfig.TRADUTOR_TOKEN)
+                setRequestProperty("Content-Type", "application/json")
+            }
+            con.outputStream.use { it.write(corpo) }
+            if (con.responseCode != 200) { ultimoModelo = "http " + con.responseCode; return null }
+            val j = JSONObject(con.inputStream.bufferedReader().use { it.readText() })
+            ultimoModelo = j.optString("modelo", "?")
+            val a = j.getJSONArray("falas")
+            List(a.length()) { a.getString(it) }
+        }.getOrElse { ultimoModelo = "falhou"; null }
+    }
+
+    @Volatile var ultimoModelo: String = "-"
+
+    /** MyMemory, sem chave. Reserva para quando o nosso serviço não responde. */
     private fun porRede(texto: String, origem: String): String? = runCatching {
         val par = URLEncoder.encode("$origem|${destino.lowercase()}", "UTF-8")
         val q = URLEncoder.encode(texto.take(900), "UTF-8")
