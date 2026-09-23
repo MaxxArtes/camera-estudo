@@ -67,6 +67,7 @@ class MainActivity : ComponentActivity() {
 private fun Preparacao() {
     val ctx = LocalContext.current
     var servicoLigado by remember { mutableStateOf(false) }
+    var tentouAtivar by remember { mutableStateOf(false) }
     var pacote by remember { mutableStateOf(if (Traducao.pacotePronto) "Pronto" else "Baixar pacote") }
     val escopo = androidx.compose.runtime.rememberCoroutineScope()
 
@@ -94,7 +95,29 @@ private fun Preparacao() {
             "na hora, inclusive o que estiver em outros aplicativos. Isso é ligado em Acessibilidade, nas " +
             "configurações do Android, e você desliga no mesmo lugar quando quiser.",
             pronto = servicoLigado) {
+            tentouAtivar = true
             ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+        }
+
+        // O Android bloqueia acessibilidade para app instalado fora da loja ("configurações restritas"). O caminho
+        // para liberar NÃO fica na tela de acessibilidade, então o app diz onde é em vez de deixar o dono procurando.
+        if (tentouAtivar && !servicoLigado) Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF2A2026)).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Apareceu \"Controlada pelas configurações restritas\"?", color = Texto, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text("É uma proteção do Android para app que não veio da loja, não é erro deste app. Para liberar:\n\n" +
+                 "1. Configurações, Apps, Gerenciar apps, e abra o Tradutor.\n" +
+                 "2. Toque nos três pontos, no canto superior direito.\n" +
+                 "3. Escolha Permitir configurações restritas.\n" +
+                 "4. Volte para Acessibilidade e ligue o Tradutor de tela.",
+                 color = Texto2, fontSize = 13.sp)
+            Button(onClick = {
+                ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.parse("package:" + ctx.packageName)))
+            }, modifier = Modifier.fillMaxWidth().height(56.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Coral, contentColor = Fundo)) {
+                Text("Abrir as informações do app", fontSize = 15.sp)
+            }
         }
 
         Cartao("Inglês para português", pacote,
