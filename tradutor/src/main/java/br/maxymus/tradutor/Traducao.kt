@@ -95,22 +95,30 @@ object Traducao {
         }
         if (faltando.isEmpty()) return saida
         if (temRede(ctx)) {
-            // 1º o NOSSO serviço (modelo de linguagem, melhor qualidade e vê a tela inteira de uma vez)
-            porModelo(faltando, origem)?.let { lista ->
-                for ((i, t) in faltando.withIndex()) lista.getOrNull(i)?.let { if (it.isNotBlank() && it != t) { saida[t] = it; cache[chave(origem, t)] = it; ultimoOnline++ } }
+            // Os dois caminhos online saem AO MESMO TEMPO. O modelo traduz melhor mas leva de 4 a 7 s; o tradutor
+            // de máquina responde em ~1 s. Em fila, o dono esperava a soma — foi a lentidão que ele sentiu.
+            // Agora espera-se o modelo até PRAZO_MODELO e, se ele não chegar, usa o que a máquina já trouxe.
+            val piscina = java.util.concurrent.Executors.newFixedThreadPool(2)
+            val numerado = faltando.mapIndexed { i, t -> "${i + 1}. $t" }.joinToString("\n")
+            val fModelo = piscina.submit<List<String>?> { porModelo(faltando, origem) }
+            val fMaquina = piscina.submit<String?> { porRede(numerado, origem) }
+            piscina.shutdown()
+            val doModelo = runCatching { fModelo.get(PRAZO_MODELO, TimeUnit.SECONDS) }.getOrElse { fModelo.cancel(true); null }
+            if (doModelo != null) {
+                for ((i, t) in faltando.withIndex()) doModelo.getOrNull(i)?.let {
+                    if (it.isNotBlank() && it != t) { saida[t] = it; cache[chave(origem, t)] = it; ultimoOnline++ }
+                }
             }
-        }
-        val restantes = faltando.filter { it !in saida }
-        if (restantes.isNotEmpty() && temRede(ctx)) {
-            val junto = restantes.mapIndexed { i, t -> "${i + 1}. $t" }.joinToString("\n")
-            val r = porRede(junto, origem)
-            if (r != null) {
-                val linhas = r.split("\n").mapNotNull { l ->
-                    val m = Regex("^\\s*(\\d+)[.)]\\s*(.+)$").find(l.trim()) ?: return@mapNotNull null
-                    m.groupValues[1].toIntOrNull()?.minus(1) to m.groupValues[2].trim()
-                }.filter { it.first != null }.associate { it.first!! to it.second }
-                if (linhas.size >= restantes.size * 0.6) {
-                    for ((i, t) in restantes.withIndex()) linhas[i]?.let { saida[t] = it; cache[chave(origem, t)] = it; ultimoOnline++ }
+            if (faltando.any { it !in saida }) {
+                val r = runCatching { fMaquina.get(6, TimeUnit.SECONDS) }.getOrNull()
+                if (r != null) {
+                    val linhas = r.split("\n").mapNotNull { l ->
+                        val m = Regex("^\\s*(\\d+)[.)]\\s*(.+)$").find(l.trim()) ?: return@mapNotNull null
+                        m.groupValues[1].toIntOrNull()?.minus(1) to m.groupValues[2].trim()
+                    }.filter { it.first != null }.associate { it.first!! to it.second }
+                    if (linhas.size >= faltando.size * 0.6) {
+                        for ((i, t) in faltando.withIndex()) if (t !in saida) linhas[i]?.let { saida[t] = it; cache[chave(origem, t)] = it; ultimoOnline++ }
+                    }
                 }
             }
         }
@@ -150,7 +158,7 @@ object Traducao {
                 .put("falas", org.json.JSONArray(falas)).toString().toByteArray()
             val con = (URL("https://pocketlm.maxymus.dev.br/tradutor/traduzir").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"; doOutput = true
-                connectTimeout = 8_000; readTimeout = 60_000
+                connectTimeout = 6_000; readTimeout = 25_000
                 setRequestProperty("Authorization", "Bearer " + BuildConfig.TRADUTOR_TOKEN)
                 setRequestProperty("Content-Type", "application/json")
             }
@@ -164,6 +172,8 @@ object Traducao {
     }
 
     @Volatile var ultimoModelo: String = "-"
+    /** quanto o app espera pelo modelo antes de ficar com o que a máquina trouxe (medido: ele leva 4 a 7 s) */
+    const val PRAZO_MODELO = 9L
 
     /** MyMemory, sem chave. Reserva para quando o nosso serviço não responde. */
     private fun porRede(texto: String, origem: String): String? = runCatching {

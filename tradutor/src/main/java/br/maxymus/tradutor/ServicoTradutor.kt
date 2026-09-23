@@ -47,6 +47,7 @@ class ServicoTradutor : AccessibilityService() {
     private var bolha: View? = null
     private var sobreposicao: View? = null
     private var trabalhando = false
+    private var msOcr = 0L; private var msTrad = 0L; private var msPint = 0L
     private var bx = 0; private var by = 0
 
     override fun onServiceConnected() {
@@ -129,17 +130,24 @@ class ServicoTradutor : AccessibilityService() {
             val topo = (tela.height * 0.11f).toInt(); val base = (tela.height * 0.96f).toInt()
             val t0 = System.nanoTime()
             val camada = withContext(Dispatchers.Default) {
+                val tOcr = System.nanoTime()
                 val falas = Falas.ler(tela, topo, base)
+                msOcr = (System.nanoTime() - tOcr) / 1_000_000
                 if (falas.isEmpty()) null
                 else {
+                    val tTrad = System.nanoTime()
                     val mapa = Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto })
-                    Pintura.camada(tela, falas) { mapa[it] ?: it } to falas.size
+                    msTrad = (System.nanoTime() - tTrad) / 1_000_000
+                    val tPint = System.nanoTime()
+                    val c = Pintura.camada(tela, falas) { mapa[it] ?: it }
+                    msPint = (System.nanoTime() - tPint) / 1_000_000
+                    c to falas.size
                 }
             }
             val ms = (System.nanoTime() - t0) / 1_000_000
             trabalhando = false
             if (camada == null) { aviso("Não encontrei texto. Mova um pouco a página e tente de novo."); Telemetria.evento("traduziu", mapOf("falas" to 0, "ms" to ms)); return@launch }
-            Telemetria.evento("traduziu", mapOf("falas" to camada.second, "ms" to ms, "cache" to Traducao.noCache, "caminho" to Traducao.ultimoCaminho, "origem" to (Traducao.ultimaOrigem ?: "?"), "online" to Traducao.ultimoOnline, "offline" to Traducao.ultimoOffline, "modelo" to Traducao.ultimoModelo))
+            Telemetria.evento("traduziu", mapOf("falas" to camada.second, "ms" to ms, "cache" to Traducao.noCache, "caminho" to Traducao.ultimoCaminho, "origem" to (Traducao.ultimaOrigem ?: "?"), "online" to Traducao.ultimoOnline, "offline" to Traducao.ultimoOffline, "modelo" to Traducao.ultimoModelo, "ms_ocr" to msOcr, "ms_trad" to msTrad, "ms_pint" to msPint))
             mostraSobreposicao(tela, camada.first)
         }
     }
