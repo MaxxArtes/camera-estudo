@@ -69,9 +69,15 @@ private fun Preparacao() {
     var servicoLigado by remember { mutableStateOf(false) }
     var tentouAtivar by remember { mutableStateOf(false) }
     var nova by remember { mutableStateOf<Atualizador.Versao?>(null) }
-    LaunchedEffect(Unit) {
+    // reconfere A CADA VOLTA à tela: antes a busca acontecia uma vez só, quando a tela nascia, então quem
+    // deixasse o app aberto nunca mais via versão nova. Foi o que aconteceu com o dono em 22/09.
+    var recarrega by remember { mutableStateOf(0) }
+    var procurando by remember { mutableStateOf(false) }
+    LaunchedEffect(recarrega) {
+        procurando = true
         val v = Atualizador.consultar(); val inst = Atualizador.versaoInstalada(ctx)
-        if (v != null && v.codigo > inst.second) nova = v
+        nova = if (v != null && v.codigo > inst.second) v else null
+        procurando = false
     }
     var pacote by remember { mutableStateOf("Baixar pacote") }
     val escopo = androidx.compose.runtime.rememberCoroutineScope()
@@ -83,7 +89,7 @@ private fun Preparacao() {
     }
     val dono = LocalLifecycleOwner.current
     DisposableEffect(dono) {
-        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) confere() }
+        val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) { confere(); recarrega++ } }
         dono.lifecycle.addObserver(obs); onDispose { dono.lifecycle.removeObserver(obs) }
     }
     LaunchedEffect(Unit) {
@@ -160,7 +166,14 @@ private fun Preparacao() {
         else
             Text("Falta ligar a captura, acima.", color = Texto2, fontSize = 13.sp)
 
-        Text("Versão instalada " + Atualizador.versaoInstalada(ctx).first, color = Texto2, fontSize = 12.sp)
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text("Versão instalada " + Atualizador.versaoInstalada(ctx).first, color = Texto2, fontSize = 12.sp,
+                modifier = Modifier.weight(1f))
+            androidx.compose.material3.TextButton(onClick = { recarrega++ }, enabled = !procurando) {
+                Text(if (procurando) "Procurando…" else if (nova == null) "Procurar atualização" else "Atualização disponível",
+                    color = if (nova == null) Texto2 else Coral, fontSize = 12.sp)
+            }
+        }
         Text("Traduz a tela parada, uma tela por vez. Não acompanha a rolagem, e onomatopeia desenhada não é traduzida.",
             color = Texto2, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
     }
