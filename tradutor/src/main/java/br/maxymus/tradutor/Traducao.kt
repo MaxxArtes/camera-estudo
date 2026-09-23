@@ -74,6 +74,47 @@ object Traducao {
         Tasks.await(t.downloadModelIfNeeded(DownloadConditions.Builder().requireWifi().build()), 1, TimeUnit.SECONDS); true
     }.getOrDefault(false)
 
+    @Volatile var ultimoOnline = 0
+    @Volatile var ultimoOffline = 0
+
+    /**
+     * Traduz a tela INTEIRA numa requisição só, numerando as falas. Medido em 23/09: o serviço devolve a
+     * numeração intacta e cada linha traduzida. Mandar uma requisição por fala estourava o limite de uso e o app
+     * caía para o motor local no meio da leitura, que foi o que a telemetria mostrou acontecendo.
+     */
+    fun traduzirLote(ctx: Context, textos: List<String>): Map<String, String> {
+        ultimoOnline = 0; ultimoOffline = 0
+        val saida = HashMap<String, String>()
+        val origem = origemDe(textos.joinToString(" ").take(300)) ?: "en"
+        ultimaOrigem = origem
+        if (origem == destino) { textos.forEach { saida[it] = it }; return saida }
+        val faltando = ArrayList<String>()
+        for (t in textos) {
+            val c = cache[chave(origem, t)]
+            if (c != null) saida[t] = c else if (t !in faltando) faltando += t
+        }
+        if (faltando.isEmpty()) return saida
+        if (temRede(ctx)) {
+            val junto = faltando.mapIndexed { i, t -> "${i + 1}. $t" }.joinToString("\n")
+            val r = porRede(junto, origem)
+            if (r != null) {
+                val linhas = r.split("\n").mapNotNull { l ->
+                    val m = Regex("^\\s*(\\d+)[.)]\\s*(.+)$").find(l.trim()) ?: return@mapNotNull null
+                    m.groupValues[1].toIntOrNull()?.minus(1) to m.groupValues[2].trim()
+                }.filter { it.first != null }.associate { it.first!! to it.second }
+                if (linhas.size >= faltando.size * 0.6) {
+                    for ((i, t) in faltando.withIndex()) linhas[i]?.let { saida[t] = it; cache[chave(origem, t)] = it; ultimoOnline++ }
+                }
+            }
+        }
+        for (t in faltando) if (t !in saida) {
+            val l = local(t, origem)
+            if (l != null) { saida[t] = l; cache[chave(origem, t)] = l; ultimoOffline++ } else saida[t] = t
+        }
+        ultimoCaminho = when { ultimoOnline > 0 && ultimoOffline == 0 -> "online"; ultimoOnline == 0 && ultimoOffline > 0 -> "offline"; ultimoOnline > 0 -> "misto"; else -> "cache" }
+        return saida
+    }
+
     /** Traduz uma fala. Bloqueante. Devolve o original quando tudo falha, para a tela nunca ficar vazia. */
     fun traduzir(ctx: Context, texto: String): String {
         val origem = origemDe(texto) ?: "en"
@@ -92,7 +133,7 @@ object Traducao {
     /** MyMemory, sem chave. Null quando falha ou quando a cota do dia acabou — aí o local assume. */
     private fun porRede(texto: String, origem: String): String? = runCatching {
         val par = URLEncoder.encode("$origem|${destino.lowercase()}", "UTF-8")
-        val q = URLEncoder.encode(texto.take(480), "UTF-8")
+        val q = URLEncoder.encode(texto.take(900), "UTF-8")
         val con = (URL("https://api.mymemory.translated.net/get?q=$q&langpair=$par").openConnection() as HttpURLConnection).apply {
             connectTimeout = 6_000; readTimeout = 12_000
             setRequestProperty("User-Agent", "TradutorDeTela/0.5 (app pessoal)")

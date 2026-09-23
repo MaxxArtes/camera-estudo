@@ -14,8 +14,8 @@ android {
         applicationId = "br.maxymus.tradutor"
         minSdk = 30            // takeScreenshot da acessibilidade exige API 30
         targetSdk = 34
-        versionCode = 5
-        versionName = "0.5"
+        versionCode = 6
+        versionName = "0.6"
         ndk { abiFilters += listOf("arm64-v8a") }
         buildConfigField("String", "TELEMETRIA_TOKEN", "\"" + (System.getenv("TELEMETRIA_TOKEN") ?: "") + "\"")
     }

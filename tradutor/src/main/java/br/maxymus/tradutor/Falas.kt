@@ -45,7 +45,10 @@ object Falas {
             fora@ for (i in l.indices) {
                 for (j in i + 1 until l.size) {
                     val a = l[i]; val b = l[j]
-                    val alt = max(1, min(a.caixa.height(), b.caixa.height()))
+                    // ALTURA DA LINHA, não do bloco. Usar a altura do bloco era um defeito: depois de juntar
+                    // 3 linhas o "bloco" media 150 px, e aí 1,6 vez isso engolia o BALÃO VIZINHO inteiro. Foi o
+                    // que aconteceu na captura do dono em 23/09, com dois balões virando um.
+                    val alt = max(1, min(a.alturaLinha, b.alturaLinha))
                     val vert = if (b.caixa.top >= a.caixa.bottom) b.caixa.top - a.caixa.bottom else a.caixa.top - b.caixa.bottom
                     val sobrepoe = min(a.caixa.right, b.caixa.right) - max(a.caixa.left, b.caixa.left)
                     val largura = min(a.caixa.width(), b.caixa.width())

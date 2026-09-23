@@ -125,17 +125,21 @@ class ServicoTradutor : AccessibilityService() {
             val tela = captura()
             bolha?.visibility = View.VISIBLE
             if (tela == null) { trabalhando = false; aviso("Não consegui capturar a tela."); return@launch }
-            val topo = dp(0); val base = tela.height
+            // fora as barras do sistema e do navegador: sem isto o app le a barra de endereço e gasta tradução
+            val topo = (tela.height * 0.11f).toInt(); val base = (tela.height * 0.96f).toInt()
             val t0 = System.nanoTime()
             val camada = withContext(Dispatchers.Default) {
                 val falas = Falas.ler(tela, topo, base)
                 if (falas.isEmpty()) null
-                else Pintura.camada(tela, falas) { Traducao.traduzir(this@ServicoTradutor, it) } to falas.size
+                else {
+                    val mapa = Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto })
+                    Pintura.camada(tela, falas) { mapa[it] ?: it } to falas.size
+                }
             }
             val ms = (System.nanoTime() - t0) / 1_000_000
             trabalhando = false
             if (camada == null) { aviso("Não encontrei texto. Mova um pouco a página e tente de novo."); Telemetria.evento("traduziu", mapOf("falas" to 0, "ms" to ms)); return@launch }
-            Telemetria.evento("traduziu", mapOf("falas" to camada.second, "ms" to ms, "cache" to Traducao.noCache, "caminho" to Traducao.ultimoCaminho, "origem" to (Traducao.ultimaOrigem ?: "?")))
+            Telemetria.evento("traduziu", mapOf("falas" to camada.second, "ms" to ms, "cache" to Traducao.noCache, "caminho" to Traducao.ultimoCaminho, "origem" to (Traducao.ultimaOrigem ?: "?"), "online" to Traducao.ultimoOnline, "offline" to Traducao.ultimoOffline))
             mostraSobreposicao(tela, camada.first)
         }
     }
