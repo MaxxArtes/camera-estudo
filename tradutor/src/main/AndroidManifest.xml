@@ -11,6 +11,14 @@
         android:theme="@style/Theme.Tradutor">
         <!-- o modelo do OCR vem junto com o app, para a primeira leitura nao esperar download -->
         <meta-data android:name="com.google.mlkit.vision.DEPENDENCIES" android:value="ocr" />
+        <!-- necessario para o instalador abrir o APK que o atualizador baixou -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.arquivos"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/caminhos" />
+        </provider>
         <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

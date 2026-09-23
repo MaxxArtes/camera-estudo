@@ -68,6 +68,11 @@ private fun Preparacao() {
     val ctx = LocalContext.current
     var servicoLigado by remember { mutableStateOf(false) }
     var tentouAtivar by remember { mutableStateOf(false) }
+    var nova by remember { mutableStateOf<Atualizador.Versao?>(null) }
+    LaunchedEffect(Unit) {
+        val v = Atualizador.consultar(); val inst = Atualizador.versaoInstalada(ctx)
+        if (v != null && v.codigo > inst.second) nova = v
+    }
     var pacote by remember { mutableStateOf(if (Traducao.pacotePronto) "Pronto" else "Baixar pacote") }
     val escopo = androidx.compose.runtime.rememberCoroutineScope()
 
@@ -86,6 +91,16 @@ private fun Preparacao() {
     Column(Modifier.fillMaxSize().background(Fundo).verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("Tradutor de tela", color = Texto, fontSize = 22.sp, fontWeight = FontWeight.Medium)
+        nova?.let { v ->
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Superficie).padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Versão ${v.nome} disponível", color = Texto, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                if (v.mudou.isNotEmpty()) Text(v.mudou.first().take(180), color = Texto2, fontSize = 13.sp)
+                Button(onClick = { Atualizador.baixarEInstalar(ctx, v); nova = null },
+                    modifier = Modifier.fillMaxWidth().height(56.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Coral, contentColor = Fundo)) { Text("Atualizar", fontSize = 15.sp) }
+            }
+        }
         Text("Uma bolha fica por cima do navegador. Ao tocar nela, o app lê a tela, traduz do inglês para o português e mostra a página traduzida. Toque de novo para voltar.",
             color = Texto2, fontSize = 14.sp)
 
@@ -137,6 +152,7 @@ private fun Preparacao() {
         else
             Text("Faltam os passos acima.", color = Texto2, fontSize = 13.sp)
 
+        Text("Versão instalada " + Atualizador.versaoInstalada(ctx).first, color = Texto2, fontSize = 12.sp)
         Text("Primeira versão: traduz a tela parada, uma tela por vez. Não acompanha a rolagem, e onomatopeia desenhada não é traduzida.",
             color = Texto2, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
     }
