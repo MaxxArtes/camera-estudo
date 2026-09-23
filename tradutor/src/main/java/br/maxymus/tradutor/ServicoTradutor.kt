@@ -118,10 +118,13 @@ class ServicoTradutor : AccessibilityService() {
         if (trabalhando) return
         if (!Traducao.pacotePronto) { aviso("Idioma ainda baixando. Tente quando terminar."); return }
         trabalhando = true
-        bolha?.alpha = 0f      // a captura pega a tela inteira, inclusive a bolha: some antes (alerta do Astra)
         escopo.launch {
+            // A captura pega a tela inteira, inclusive a bolha. Mudar o alfa NAO basta: a janela so some depois de
+            // desenhar o proximo quadro. Sem esta espera a bolha aparece congelada dentro da propria traducao.
+            bolha?.visibility = View.INVISIBLE
+            kotlinx.coroutines.delay(90)
             val tela = captura()
-            bolha?.alpha = 1f
+            bolha?.visibility = View.VISIBLE
             if (tela == null) { trabalhando = false; aviso("Não consegui capturar a tela."); return@launch }
             val topo = dp(0); val base = tela.height
             val t0 = System.nanoTime()
@@ -169,7 +172,7 @@ class ServicoTradutor : AccessibilityService() {
             setBackgroundColor(0xCC111114.toInt())
             setPadding(dp(14), dp(6), dp(14), dp(6))
         }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT).apply {
-            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL; topMargin = dp(16)
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL; bottomMargin = dp(28)
         })
         // o toque que fecha é CONSUMIDO: não pode vazar e clicar em algo do navegador por baixo
         caixa.setOnTouchListener { _, e -> if (e.action == MotionEvent.ACTION_UP) tiraSobreposicao(); true }
@@ -178,8 +181,9 @@ class ServicoTradutor : AccessibilityService() {
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.OPAQUE)
         runCatching { janelas.addView(caixa, p); sobreposicao = caixa }
-        bolha?.let { runCatching { janelas.removeView(it) }; bolha = null }
-        mostraBolha()   // a bolha volta por cima da sobreposição
+        // a bolha precisa ficar POR CIMA da sobreposição; remover e recriar deixava duas na tela
+        bolha?.let { b -> runCatching { janelas.removeViewImmediate(b) }; bolha = null }
+        mostraBolha()
     }
 
     private fun tiraSobreposicao() { sobreposicao?.let { runCatching { janelas.removeView(it) } }; sobreposicao = null }
