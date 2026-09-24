@@ -41,6 +41,7 @@ class ServicoTradutor : AccessibilityService() {
         @Volatile var ativo: ServicoTradutor? = null
         const val ACAO_TRADUZIR = "br.maxymus.tradutor.TRADUZIR"
         const val ACAO_BOLHA = "br.maxymus.tradutor.BOLHA"
+        const val ACAO_PREPARAR = "br.maxymus.tradutor.PREPARAR"
         private const val CANAL = "tradutor"
         private const val AVISO = 1
     }
@@ -51,6 +52,11 @@ class ServicoTradutor : AccessibilityService() {
             when (i.action) {
                 ACAO_TRADUZIR -> traduzTela()
                 ACAO_BOLHA -> { if (bolha == null) mostraBolha() else tiraBolha(); notificacao() }
+                ACAO_PREPARAR -> {
+                    preparar = !preparar
+                    getSharedPreferences("tradutor", Context.MODE_PRIVATE).edit().putBoolean("preparar", preparar).apply()
+                    Telemetria.evento("preparar", mapOf("ligado" to preparar)); notificacao()
+                }
             }
         }
     }
@@ -61,14 +67,19 @@ class ServicoTradutor : AccessibilityService() {
     private var sobreposicao: View? = null
     private var trabalhando = false
     private var msOcr = 0L; private var msTrad = 0L; private var msPint = 0L
+    private var preparar = false
+    private var ultimaRolagem = 0L
+    private var ultimaAssinatura = 0L
+    private var jobPreparo: kotlinx.coroutines.Job? = null
     private var bx = 0; private var by = 0
 
     override fun onServiceConnected() {
         ativo = this
         janelas = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         Telemetria.iniciar(this)
-        val filtro = android.content.IntentFilter().apply { addAction(ACAO_TRADUZIR); addAction(ACAO_BOLHA) }
+        val filtro = android.content.IntentFilter().apply { addAction(ACAO_TRADUZIR); addAction(ACAO_BOLHA); addAction(ACAO_PREPARAR) }
         androidx.core.content.ContextCompat.registerReceiver(this, receptor, filtro, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
+        preparar = getSharedPreferences("tradutor", Context.MODE_PRIVATE).getBoolean("preparar", true)
         mostraBolha()
         notificacao()
     }
@@ -98,17 +109,67 @@ class ServicoTradutor : AccessibilityService() {
         val n = android.app.Notification.Builder(this, CANAL)
             .setSmallIcon(android.R.drawable.ic_menu_sort_alphabetically)
             .setContentTitle("Tradutor de tela")
-            .setContentText(if (bolha != null) "Toque em Traduzir, ou use a bolha" else "Bolha escondida")
+            .setContentText((if (bolha != null) "Toque em Traduzir, ou use a bolha" else "Bolha escondida") +
+                (if (preparar) " · adiantando" else ""))
             .setOngoing(true).setShowWhen(false)
             .setContentIntent(android.app.PendingIntent.getActivity(this, 0,
                 android.content.Intent(this, MainActivity::class.java), android.app.PendingIntent.FLAG_IMMUTABLE))
             .addAction(android.app.Notification.Action.Builder(null as android.graphics.drawable.Icon?, "Traduzir", acao(ACAO_TRADUZIR)).build())
             .addAction(android.app.Notification.Action.Builder(null as android.graphics.drawable.Icon?,
                 if (bolha != null) "Esconder bolha" else "Mostrar bolha", acao(ACAO_BOLHA)).build())
+            .addAction(android.app.Notification.Action.Builder(null as android.graphics.drawable.Icon?,
+                if (preparar) "Parar de adiantar" else "Adiantar", acao(ACAO_PREPARAR)).build())
             .build()
         runCatching { nm.notify(AVISO, n) }
     }
-    override fun onAccessibilityEvent(e: AccessibilityEvent?) {}
+    /**
+     * Pré-carregamento (pedido do dono, 24/09): enquanto ele rola e LÊ, o app traduz em silêncio o que está na
+     * tela e guarda no cache. Como o cache é indexado pelo TEXTO, o trabalho feito agora vale quando ele tocar na
+     * bolha — e aí só sobra ler a tela e desenhar, sem esperar tradução. É a diferença entre ~5 s e ~1 s.
+     *
+     * Só roda quando: está ligado, não há tradução na tela, nada em andamento, e passou o tempo de descanso desde
+     * a última rolagem. E só processa se a TELA MUDOU de verdade — a comparação é feita numa miniatura de 24x24,
+     * que custa quase nada, em vez de refazer o reconhecimento à toa.
+     */
+    override fun onAccessibilityEvent(e: AccessibilityEvent?) {
+        if (!preparar || e == null) return
+        if (e.eventType != AccessibilityEvent.TYPE_VIEW_SCROLLED && e.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
+        ultimaRolagem = System.currentTimeMillis()
+        if (jobPreparo?.isActive == true) return
+        jobPreparo = escopo.launch {
+            while (System.currentTimeMillis() - ultimaRolagem < 700) kotlinx.coroutines.delay(250)
+            if (!preparar || trabalhando || sobreposicao != null) return@launch
+            preparaEmSilencio()
+        }
+    }
+
+    private suspend fun preparaEmSilencio() {
+        if (!Traducao.temRede(this)) return
+        bolha?.visibility = View.INVISIBLE
+        kotlinx.coroutines.delay(90)
+        val tela = captura()
+        bolha?.visibility = View.VISIBLE
+        if (tela == null) return
+        val assinatura = assinaturaDe(tela)
+        if (assinatura == ultimaAssinatura) return           // tela igual: nada novo para adiantar
+        ultimaAssinatura = assinatura
+        val t0 = System.nanoTime()
+        val n = withContext(Dispatchers.Default) {
+            val falas = Falas.ler(tela, (tela.height * 0.11f).toInt(), (tela.height * 0.96f).toInt())
+            if (falas.isEmpty()) 0 else { Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto }); falas.size }
+        }
+        if (n > 0) Telemetria.evento("preparou", mapOf("falas" to n, "ms" to (System.nanoTime() - t0) / 1_000_000, "cache" to Traducao.noCache))
+    }
+
+    /** Miniatura de 24x24 somada: barata o bastante para rodar sempre e detectar que a tela mudou. */
+    private fun assinaturaDe(b: Bitmap): Long {
+        val p = Bitmap.createScaledBitmap(b, 24, 24, true)
+        val px = IntArray(24 * 24).also { p.getPixels(it, 0, 24, 0, 0, 24, 24) }
+        if (p !== b) p.recycle()
+        var h = 1125899906842597L
+        for (c in px) h = h * 31 + (c and 0x00F0F0F0).toLong()
+        return h
+    }
     override fun onInterrupt() {}
 
     // ---------------- bolha ----------------
