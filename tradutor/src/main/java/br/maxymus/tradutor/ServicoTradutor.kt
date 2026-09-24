@@ -39,7 +39,20 @@ class ServicoTradutor : AccessibilityService() {
 
     companion object {
         @Volatile var ativo: ServicoTradutor? = null
-        const val ACAO_LIGAR = "br.maxymus.tradutor.LIGAR"
+        const val ACAO_TRADUZIR = "br.maxymus.tradutor.TRADUZIR"
+        const val ACAO_BOLHA = "br.maxymus.tradutor.BOLHA"
+        private const val CANAL = "tradutor"
+        private const val AVISO = 1
+    }
+
+    /** Recebe os toques da notificação fixa. */
+    private val receptor = object : android.content.BroadcastReceiver() {
+        override fun onReceive(c: Context, i: android.content.Intent) {
+            when (i.action) {
+                ACAO_TRADUZIR -> traduzTela()
+                ACAO_BOLHA -> { if (bolha == null) mostraBolha() else tiraBolha(); notificacao() }
+            }
+        }
     }
 
     private val escopo = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -54,10 +67,47 @@ class ServicoTradutor : AccessibilityService() {
         ativo = this
         janelas = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         Telemetria.iniciar(this)
+        val filtro = android.content.IntentFilter().apply { addAction(ACAO_TRADUZIR); addAction(ACAO_BOLHA) }
+        androidx.core.content.ContextCompat.registerReceiver(this, receptor, filtro, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         mostraBolha()
+        notificacao()
     }
 
-    override fun onDestroy() { ativo = null; tiraSobreposicao(); tiraBolha(); super.onDestroy() }
+    override fun onDestroy() {
+        ativo = null; tiraSobreposicao(); tiraBolha()
+        runCatching { unregisterReceiver(receptor) }
+        runCatching { (getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager).cancel(AVISO) }
+        super.onDestroy()
+    }
+
+    /**
+     * Notificação fixa (pedido do dono, 24/09): traduzir sem depender da bolha, e um jeito de sumir com ela quando
+     * ela atrapalhar a leitura. Silenciosa e de baixa prioridade, para não piscar nem tocar a cada uso.
+     */
+    private fun notificacao() {
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        runCatching {
+            nm.createNotificationChannel(android.app.NotificationChannel(CANAL, "Tradutor de tela",
+                android.app.NotificationManager.IMPORTANCE_LOW).apply {
+                description = "Atalho fixo para traduzir a tela"; setShowBadge(false)
+            })
+        }
+        fun acao(a: String) = android.app.PendingIntent.getBroadcast(this, a.hashCode(),
+            android.content.Intent(a).setPackage(packageName),
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
+        val n = android.app.Notification.Builder(this, CANAL)
+            .setSmallIcon(android.R.drawable.ic_menu_sort_alphabetically)
+            .setContentTitle("Tradutor de tela")
+            .setContentText(if (bolha != null) "Toque em Traduzir, ou use a bolha" else "Bolha escondida")
+            .setOngoing(true).setShowWhen(false)
+            .setContentIntent(android.app.PendingIntent.getActivity(this, 0,
+                android.content.Intent(this, MainActivity::class.java), android.app.PendingIntent.FLAG_IMMUTABLE))
+            .addAction(android.app.Notification.Action.Builder(null as android.graphics.drawable.Icon?, "Traduzir", acao(ACAO_TRADUZIR)).build())
+            .addAction(android.app.Notification.Action.Builder(null as android.graphics.drawable.Icon?,
+                if (bolha != null) "Esconder bolha" else "Mostrar bolha", acao(ACAO_BOLHA)).build())
+            .build()
+        runCatching { nm.notify(AVISO, n) }
+    }
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {}
     override fun onInterrupt() {}
 

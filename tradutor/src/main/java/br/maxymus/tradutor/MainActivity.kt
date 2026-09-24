@@ -56,6 +56,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(estado: Bundle?) {
         super.onCreate(estado)
         Telemetria.iniciar(this)
+        // sem esta permissão a notificação fixa simplesmente não aparece no Android 13 ou mais novo
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Coral, background = Fundo, surface = Superficie, onSurface = Texto)) {
                 Preparacao()
@@ -80,7 +84,6 @@ private fun Preparacao() {
         nova = if (v != null && v.codigo > inst.second) v else null
         procurando = false
     }
-    var pacote by remember { mutableStateOf("Baixar pacote") }
     val escopo = androidx.compose.runtime.rememberCoroutineScope()
 
     fun confere() {
@@ -93,10 +96,7 @@ private fun Preparacao() {
         val obs = LifecycleEventObserver { _, e -> if (e == Lifecycle.Event.ON_RESUME) { confere(); recarrega++ } }
         dono.lifecycle.addObserver(obs); onDispose { dono.lifecycle.removeObserver(obs) }
     }
-    LaunchedEffect(Unit) {
-        confere()
-        if (withContext(Dispatchers.IO) { Traducao.pacotePronto() }) pacote = "Pronto"
-    }
+    LaunchedEffect(Unit) { confere() }
 
     Column(Modifier.fillMaxSize().background(Fundo).verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -145,25 +145,10 @@ private fun Preparacao() {
             }
         }
 
-        Cartao("Tradução sem internet", pacote,
-            "Com internet, o app usa um tradutor online, que sai melhor e entende qualquer idioma. " +
-            "Sem internet, ele usa o tradutor do próprio aparelho, e para isso o pacote precisa estar baixado. " +
-            "A troca entre os dois é automática. Este botão baixa o pacote de inglês; outros idiomas são baixados " +
-            "na primeira vez que aparecerem.",
-            pronto = pacote == "Pronto") {
-            if (pacote != "Pronto") {
-                pacote = "Baixando…"
-                escopo.launch {
-                    val ok = withContext(Dispatchers.IO) { Traducao.prepararPacote() }
-                    pacote = if (ok) "Pronto" else "Falhou, tente de novo"
-                }
-            }
-        }
+        ListaIdiomas()
 
         if (servicoLigado)
-            Text(if (pacote == "Pronto") "Tudo pronto. Abra o quadrinho no navegador e toque na bolha."
-                 else "Dá para usar já, com internet. Baixe o pacote para funcionar sem ela também.",
-                 color = Coral, fontSize = 14.sp)
+            Text("Tudo pronto. Abra o quadrinho no navegador e toque na bolha.", color = Coral, fontSize = 14.sp)
         else
             Text("Falta ligar a captura, acima.", color = Texto2, fontSize = 13.sp)
 
@@ -177,6 +162,45 @@ private fun Preparacao() {
         }
         Text("Traduz a tela parada, uma tela por vez. Não acompanha a rolagem, e onomatopeia desenhada não é traduzida.",
             color = Texto2, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+    }
+}
+
+/**
+ * Idiomas guardados para uso sem internet. Com internet nada disso é preciso, e é o que o texto diz: isto existe
+ * para o modo sem rede. Dá para APAGAR também, porque cada pacote ocupa espaço real no aparelho.
+ */
+@Composable
+private fun ListaIdiomas() {
+    val escopo = androidx.compose.runtime.rememberCoroutineScope()
+    var baixados by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var ocupado by remember { mutableStateOf<String?>(null) }
+    var versao by remember { mutableStateOf(0) }
+    LaunchedEffect(versao) { baixados = withContext(Dispatchers.IO) { Idiomas.baixados() } }
+
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Superficie).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Idiomas sem internet", color = Texto, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        Text("Com internet o app entende qualquer idioma e não precisa de nada baixado. Esta lista é para quando " +
+             "você estiver sem rede. Cada pacote ocupa espaço no aparelho, então baixe só o que usa. " +
+             "O português precisa estar baixado para qualquer par funcionar.",
+             color = Texto2, fontSize = 13.sp)
+        Idiomas.LISTA.forEach { (tag, nome) ->
+            val tem = tag in baixados
+            Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text(nome, color = if (tem) Texto else Texto2, fontSize = 14.sp, modifier = Modifier.weight(1f))
+                when {
+                    ocupado == tag -> Text("…", color = Coral, fontSize = 14.sp)
+                    tem -> androidx.compose.material3.TextButton(onClick = {
+                        ocupado = tag
+                        escopo.launch { withContext(Dispatchers.IO) { Idiomas.apagar(tag) }; ocupado = null; versao++ }
+                    }) { Text("Apagar", color = Texto2, fontSize = 13.sp) }
+                    else -> androidx.compose.material3.TextButton(onClick = {
+                        ocupado = tag
+                        escopo.launch { withContext(Dispatchers.IO) { Idiomas.baixar(tag) }; ocupado = null; versao++ }
+                    }) { Text("Baixar", color = Coral, fontSize = 13.sp) }
+                }
+            }
+        }
     }
 }
 

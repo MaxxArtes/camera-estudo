@@ -192,9 +192,16 @@ object Traducao {
     }.getOrNull()
 
     private fun local(texto: String, origem: String): String? = runCatching {
+        // sem o pacote do par o ML Kit falha calado; conferir antes evita gastar 15 s por fala à toa
+        val baixados = Idiomas.baixados()
+        if (origem !in baixados || destino !in baixados) { semPacote = origem; return null }
+        semPacote = null
         val t = tradutorLocal(origem) ?: return null
         Tasks.await(t.translate(texto), 15, TimeUnit.SECONDS)
     }.getOrNull()
+
+    /** idioma que apareceu sem pacote baixado, para a tela poder avisar qual falta */
+    @Volatile var semPacote: String? = null
 
     val noCache: Int get() = cache.size
 }
