@@ -74,6 +74,7 @@ class ServicoTradutor : AccessibilityService() {
     private var continuo = false          // sobreposição que acompanha a rolagem, em vez da tela congelada
     private var fechar: View? = null      // o X, janela própria porque a camada não recebe toque
     private var menu: View? = null
+    private var adiantando = false
     private var bx = 0; private var by = 0
 
     override fun onServiceConnected() {
@@ -219,7 +220,8 @@ class ServicoTradutor : AccessibilityService() {
                         p.x = if (p.x + lado / 2 < meio) dp(12) else resources.displayMetrics.widthPixels - lado - dp(12)
                         runCatching { janelas.updateViewLayout(v, p) }
                         bx = p.x; by = p.y
-                    } else if (System.currentTimeMillis() - descidaEm > 550) abreMenu()
+                    } else if (adiantando) adiantando = false
+                    else if (System.currentTimeMillis() - descidaEm > 550) abreMenu()
                     else if (continuo) encerraContinuo() else iniciaContinuo()
                     true
                 }
@@ -314,7 +316,65 @@ class ServicoTradutor : AccessibilityService() {
         runCatching { janelas.addView(v, p); fechar = v }
     }
 
-    /** Toque longo na bolha: as duas escolhas que o dono pediu. */
+    /**
+     * Adiantar o capítulo (pedido do dono, 24/09): a captura só alcança o que está DESENHADO na tela, e o que está
+     * abaixo da dobra o navegador ainda nem desenhou — não existe como pixel. O único jeito de traduzir o que ele
+     * ainda não viu é rolar de verdade. Então o app rola sozinho, lê e traduz cada tela para o cache, e volta.
+     * Depois disso a leitura fica instantânea, porque o cache é indexado pelo TEXTO.
+     *
+     * Volta ao ponto de partida rolando o mesmo tanto para trás. Não é exato, e o aviso diz isso.
+     */
+    private suspend fun adiantaCapitulo(maxTelas: Int = 25) {
+        if (adiantando) return
+        adiantando = true
+        aviso("Adiantando o capítulo. Toque na bolha para parar.")
+        var telas = 0
+        var iguais = 0
+        for (i in 0 until maxTelas) {
+            if (!adiantando) break
+            bolha?.visibility = View.INVISIBLE
+            sobreposicao?.visibility = View.INVISIBLE
+            kotlinx.coroutines.delay(90)
+            val tela = captura()
+            bolha?.visibility = View.VISIBLE
+            if (tela == null) break
+            val assin = assinaturaDe(tela)
+            if (assin == ultimaAssinatura) { iguais++; if (iguais >= 2) break } else iguais = 0
+            ultimaAssinatura = assin
+            withContext(Dispatchers.Default) {
+                val falas = Falas.ler(tela, (tela.height * 0.11f).toInt(), (tela.height * 0.96f).toInt())
+                if (falas.isNotEmpty()) Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto })
+            }
+            telas++
+            if (!rola(true)) break
+            kotlinx.coroutines.delay(650)
+        }
+        // volta para onde estava
+        repeat(telas) { if (rola(false)) kotlinx.coroutines.delay(500) }
+        adiantando = false
+        aviso("Adiantei $telas telas. A leitura agora sai na hora.")
+        Telemetria.evento("adiantou_capitulo", mapOf("telas" to telas, "cache" to Traducao.noCache))
+    }
+
+    /** Rolagem por gesto: é o que alcança o navegador, que não expõe a página como conteúdo. */
+    private suspend fun rola(paraBaixo: Boolean): Boolean = kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+        val l = resources.displayMetrics.widthPixels / 2f
+        val alt = resources.displayMetrics.heightPixels
+        val de = if (paraBaixo) alt * 0.80f else alt * 0.28f
+        val ate = if (paraBaixo) alt * 0.22f else alt * 0.86f
+        val caminho = android.graphics.Path().apply { moveTo(l, de); lineTo(l, ate) }
+        val gesto = android.accessibilityservice.GestureDescription.Builder()
+            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(caminho, 0, 320)).build()
+        val ok = runCatching {
+            dispatchGesture(gesto, object : GestureResultCallback() {
+                override fun onCompleted(d: android.accessibilityservice.GestureDescription?) { if (cont.isActive) cont.resume(true) {} }
+                override fun onCancelled(d: android.accessibilityservice.GestureDescription?) { if (cont.isActive) cont.resume(false) {} }
+            }, null)
+        }.getOrDefault(false)
+        if (!ok && cont.isActive) cont.resume(false) {}
+    }
+
+    /** Toque longo na bolha: as escolhas que o dono pediu. */
     private fun abreMenu() {
         if (menu != null) { tiraMenu(); return }
         fun item(texto: String, acao: () -> Unit) = TextView(this).apply {
@@ -328,6 +388,9 @@ class ServicoTradutor : AccessibilityService() {
                 setColor(0xFF252529.toInt()); cornerRadius = dp(14).toFloat()
             }
             addView(item("Traduzir a tela toda (parada)") { traduzTela() })
+            addView(item(if (adiantando) "Parar de adiantar o capítulo" else "Adiantar o capítulo inteiro") {
+                if (adiantando) adiantando = false else escopo.launch { adiantaCapitulo() }
+            })
             addView(item("Idiomas") {
                 startActivity(android.content.Intent(this@ServicoTradutor, MainActivity::class.java)
                     .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)

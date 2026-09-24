@@ -3,6 +3,7 @@
     android:accessibilityEventTypes="typeWindowStateChanged|typeViewScrolled|typeWindowContentChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
     android:canTakeScreenshot="true"
+    android:canPerformGestures="true"
     android:canRetrieveWindowContent="false"
     android:notificationTimeout="200"
     android:description="@string/servico_desc" />
