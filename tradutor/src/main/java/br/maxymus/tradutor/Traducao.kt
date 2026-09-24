@@ -33,6 +33,18 @@ import java.util.concurrent.TimeUnit
  */
 object Traducao {
     @Volatile var destino: String = TranslateLanguage.PORTUGUESE
+    /** vazio = detectar sozinho; preenchido = o dono fixou o idioma de origem */
+    @Volatile var origemFixa: String = ""
+
+    fun carregarPreferencias(ctx: Context) {
+        val p = ctx.getSharedPreferences("tradutor", Context.MODE_PRIVATE)
+        destino = p.getString("destino", TranslateLanguage.PORTUGUESE) ?: TranslateLanguage.PORTUGUESE
+        origemFixa = p.getString("origem", "") ?: ""
+    }
+    fun guardarPreferencias(ctx: Context) {
+        ctx.getSharedPreferences("tradutor", Context.MODE_PRIVATE).edit()
+            .putString("destino", destino).putString("origem", origemFixa).apply()
+    }
     @Volatile var ultimaOrigem: String? = null
     @Volatile var ultimoCaminho: String = "-"
     private val cache = ConcurrentHashMap<String, String>()
@@ -85,7 +97,7 @@ object Traducao {
     fun traduzirLote(ctx: Context, textos: List<String>): Map<String, String> {
         ultimoOnline = 0; ultimoOffline = 0
         val saida = HashMap<String, String>()
-        val origem = origemDe(textos.joinToString(" ").take(300)) ?: "en"
+        val origem = origemFixa.ifBlank { origemDe(textos.joinToString(" ").take(300)) ?: "en" }
         ultimaOrigem = origem
         if (origem == destino) { textos.forEach { saida[it] = it }; return saida }
         val faltando = ArrayList<String>()
@@ -165,7 +177,7 @@ object Traducao {
     private fun porModelo(falas: List<String>, origem: String): List<String>? {
         if (BuildConfig.TRADUTOR_TOKEN.isEmpty() || falas.isEmpty()) return null
         return runCatching {
-            val corpo = JSONObject().put("de", origem).put("para", "português do Brasil")
+            val corpo = JSONObject().put("de", origem).put("para", Idiomas.nomeCheio(destino))
                 .put("falas", org.json.JSONArray(falas)).toString().toByteArray()
             val con = (URL("https://pocketlm.maxymus.dev.br/tradutor/traduzir").openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"; doOutput = true

@@ -6,6 +6,7 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -56,6 +57,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(estado: Bundle?) {
         super.onCreate(estado)
         Telemetria.iniciar(this)
+        Traducao.carregarPreferencias(this)
         // sem esta permissão a notificação fixa simplesmente não aparece no Android 13 ou mais novo
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
@@ -145,6 +147,7 @@ private fun Preparacao() {
             }
         }
 
+        EscolhaIdiomas()
         ListaIdiomas()
 
         if (servicoLigado)
@@ -162,6 +165,49 @@ private fun Preparacao() {
         }
         Text("Traduz a tela parada, uma tela por vez. Não acompanha a rolagem, e onomatopeia desenhada não é traduzida.",
             color = Texto2, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+    }
+}
+
+/** De qual idioma e para qual idioma. Automático detecta sozinho, que é o que serve para quadrinho. */
+@Composable
+private fun EscolhaIdiomas() {
+    val ctx = LocalContext.current
+    var de by remember { mutableStateOf(Traducao.origemFixa) }
+    var para by remember { mutableStateOf(Traducao.destino) }
+    var abrindo by remember { mutableStateOf<String?>(null) }
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Superficie).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Idiomas", color = Texto, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text("Traduzir de", color = Texto2, fontSize = 14.sp, modifier = Modifier.weight(1f))
+            androidx.compose.material3.TextButton(onClick = { abrindo = if (abrindo == "de") null else "de" }) {
+                Text(if (de.isBlank()) "Automático" else Idiomas.nome(de), color = Coral, fontSize = 14.sp)
+            }
+        }
+        if (abrindo == "de") Column {
+            (listOf("" to "Automático (detecta sozinho)") + Idiomas.LISTA.map { it.first to Idiomas.nome(it.first) }).forEach { (tag, nome) ->
+                Text(nome, color = if (tag == de) Coral else Texto, fontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth().height(44.dp).clickable {
+                        de = tag; Traducao.origemFixa = tag; Traducao.guardarPreferencias(ctx); abrindo = null
+                    }.padding(top = 12.dp))
+            }
+        }
+        Row(Modifier.fillMaxWidth().height(48.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text("Traduzir para", color = Texto2, fontSize = 14.sp, modifier = Modifier.weight(1f))
+            androidx.compose.material3.TextButton(onClick = { abrindo = if (abrindo == "para") null else "para" }) {
+                Text(Idiomas.nome(para), color = Coral, fontSize = 14.sp)
+            }
+        }
+        if (abrindo == "para") Column {
+            Idiomas.LISTA.forEach { (tag, _) ->
+                Text(Idiomas.nome(tag), color = if (tag == para) Coral else Texto, fontSize = 14.sp,
+                    modifier = Modifier.fillMaxWidth().height(44.dp).clickable {
+                        para = tag; Traducao.destino = tag; Traducao.guardarPreferencias(ctx); abrindo = null
+                    }.padding(top = 12.dp))
+            }
+        }
+        Text("Automático serve para quadrinho: ele descobre o idioma de cada tela. Fixe só se ele errar.",
+            color = Texto2, fontSize = 12.sp)
     }
 }
 

@@ -60,5 +60,11 @@ object Idiomas {
         Telemetria.evento("idioma_apagado", mapOf("idioma" to tag)); true
     }.getOrDefault(false)
 
-    fun nome(tag: String): String = LISTA.firstOrNull { it.first == tag }?.second ?: tag
+    fun nome(tag: String): String = LISTA.firstOrNull { it.first == tag }?.second?.removeSuffix(" (destino)") ?: tag
+
+    /** nome por extenso, para o pedido ao modelo de linguagem ("traduza para X") */
+    fun nomeCheio(tag: String): String = when (tag) {
+        TranslateLanguage.PORTUGUESE -> "português do Brasil"
+        else -> nome(tag)
+    }
 }

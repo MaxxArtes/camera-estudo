@@ -50,7 +50,7 @@ class ServicoTradutor : AccessibilityService() {
     private val receptor = object : android.content.BroadcastReceiver() {
         override fun onReceive(c: Context, i: android.content.Intent) {
             when (i.action) {
-                ACAO_TRADUZIR -> traduzTela()
+                ACAO_TRADUZIR -> if (continuo) encerraContinuo() else iniciaContinuo()
                 ACAO_BOLHA -> { if (bolha == null) mostraBolha() else tiraBolha(); notificacao() }
                 ACAO_PREPARAR -> {
                     preparar = !preparar
@@ -71,6 +71,9 @@ class ServicoTradutor : AccessibilityService() {
     private var ultimaRolagem = 0L
     private var ultimaAssinatura = 0L
     private var jobPreparo: kotlinx.coroutines.Job? = null
+    private var continuo = false          // sobreposição que acompanha a rolagem, em vez da tela congelada
+    private var fechar: View? = null      // o X, janela própria porque a camada não recebe toque
+    private var menu: View? = null
     private var bx = 0; private var by = 0
 
     override fun onServiceConnected() {
@@ -80,12 +83,14 @@ class ServicoTradutor : AccessibilityService() {
         val filtro = android.content.IntentFilter().apply { addAction(ACAO_TRADUZIR); addAction(ACAO_BOLHA); addAction(ACAO_PREPARAR) }
         androidx.core.content.ContextCompat.registerReceiver(this, receptor, filtro, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         preparar = getSharedPreferences("tradutor", Context.MODE_PRIVATE).getBoolean("preparar", true)
+        Traducao.carregarPreferencias(this)
         mostraBolha()
         notificacao()
     }
 
     override fun onDestroy() {
-        ativo = null; tiraSobreposicao(); tiraBolha()
+        ativo = null; continuo = false; tiraSobreposicao(); tiraBolha(); tiraMenu()
+        fechar?.let { runCatching { janelas.removeView(it) } }; fechar = null
         runCatching { unregisterReceiver(receptor) }
         runCatching { (getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager).cancel(AVISO) }
         super.onDestroy()
@@ -132,14 +137,15 @@ class ServicoTradutor : AccessibilityService() {
      * que custa quase nada, em vez de refazer o reconhecimento à toa.
      */
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {
-        if (!preparar || e == null) return
+        if (e == null || (!preparar && !continuo)) return
         if (e.eventType != AccessibilityEvent.TYPE_VIEW_SCROLLED && e.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
         ultimaRolagem = System.currentTimeMillis()
         if (jobPreparo?.isActive == true) return
         jobPreparo = escopo.launch {
             while (System.currentTimeMillis() - ultimaRolagem < 700) kotlinx.coroutines.delay(250)
-            if (!preparar || trabalhando || sobreposicao != null) return@launch
-            preparaEmSilencio()
+            if (trabalhando) return@launch
+            if (continuo) desenhaContinuo()
+            else if (preparar && sobreposicao == null) preparaEmSilencio()
         }
     }
 
@@ -197,10 +203,10 @@ class ServicoTradutor : AccessibilityService() {
             y = (resources.displayMetrics.heightPixels * 0.60f).toInt()
         }
         bx = p.x; by = p.y
-        var x0 = 0f; var y0 = 0f; var px0 = 0; var py0 = 0; var arrastou = false
+        var x0 = 0f; var y0 = 0f; var px0 = 0; var py0 = 0; var arrastou = false; var descidaEm = 0L
         v.setOnTouchListener { _, e ->
             when (e.action) {
-                MotionEvent.ACTION_DOWN -> { x0 = e.rawX; y0 = e.rawY; px0 = p.x; py0 = p.y; arrastou = false; true }
+                MotionEvent.ACTION_DOWN -> { x0 = e.rawX; y0 = e.rawY; px0 = p.x; py0 = p.y; arrastou = false; descidaEm = System.currentTimeMillis(); true }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = e.rawX - x0; val dy = e.rawY - y0
                     if (abs(dx) > dp(8) || abs(dy) > dp(8)) arrastou = true
@@ -213,7 +219,8 @@ class ServicoTradutor : AccessibilityService() {
                         p.x = if (p.x + lado / 2 < meio) dp(12) else resources.displayMetrics.widthPixels - lado - dp(12)
                         runCatching { janelas.updateViewLayout(v, p) }
                         bx = p.x; by = p.y
-                    } else traduzTela()
+                    } else if (System.currentTimeMillis() - descidaEm > 550) abreMenu()
+                    else if (continuo) encerraContinuo() else iniciaContinuo()
                     true
                 }
                 else -> false
@@ -226,8 +233,122 @@ class ServicoTradutor : AccessibilityService() {
 
     // ---------------- tradução ----------------
 
+    /**
+     * Modo contínuo (pedido do dono, 24/09): a camada traduzida fica POR CIMA sem receber toque, então a página
+     * rola normalmente por baixo. Quando a rolagem para, ela se redesenha na posição nova. Fecha no X ou tocando
+     * na bolha de novo.
+     *
+     * Isto substitui a tela congelada como gesto principal. A congelada continua existindo no menu do toque longo,
+     * porque ela é melhor quando o dono quer PARAR e ler com calma sem nada se mexendo.
+     */
+    private fun iniciaContinuo() {
+        continuo = true
+        mostraFechar()
+        notificacao()
+        escopo.launch { desenhaContinuo() }
+    }
+
+    private fun encerraContinuo() {
+        continuo = false
+        tiraSobreposicao()
+        fechar?.let { runCatching { janelas.removeView(it) } }; fechar = null
+        notificacao()
+    }
+
+    private suspend fun desenhaContinuo() {
+        if (!continuo || trabalhando) return
+        trabalhando = true
+        sobreposicao?.visibility = View.INVISIBLE
+        bolha?.visibility = View.INVISIBLE
+        fechar?.visibility = View.INVISIBLE
+        kotlinx.coroutines.delay(90)
+        val tela = captura()
+        bolha?.visibility = View.VISIBLE
+        fechar?.visibility = View.VISIBLE
+        if (tela == null || !continuo) { trabalhando = false; sobreposicao?.visibility = View.VISIBLE; return }
+        val assin = assinaturaDe(tela)
+        if (assin == ultimaAssinatura && sobreposicao != null) { trabalhando = false; sobreposicao?.visibility = View.VISIBLE; return }
+        ultimaAssinatura = assin
+        val camada = withContext(Dispatchers.Default) {
+            val falas = Falas.ler(tela, (tela.height * 0.11f).toInt(), (tela.height * 0.96f).toInt())
+            if (falas.isEmpty()) null else {
+                val mapa = Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto })
+                Pintura.camada(tela, falas) { mapa[it] ?: it } to falas.size
+            }
+        }
+        trabalhando = false
+        if (!continuo) return
+        if (camada == null) { sobreposicao?.visibility = View.VISIBLE; aviso("Não encontrei texto aqui."); return }
+        mostraCamada(camada.first)
+        Telemetria.evento("traduziu", mapOf("modo" to "continuo", "falas" to camada.second,
+            "caminho" to Traducao.ultimoCaminho, "origem" to (Traducao.ultimaOrigem ?: "?"), "modelo" to Traducao.ultimoModelo))
+    }
+
+    /** Camada que NÃO recebe toque: a página continua rolando por baixo. */
+    private fun mostraCamada(camada: Bitmap) {
+        val alvo = sobreposicao as? ImageView
+        if (alvo != null) { alvo.setImageBitmap(camada); alvo.visibility = View.VISIBLE; return }
+        val v = ImageView(this).apply { setImageBitmap(camada); scaleType = ImageView.ScaleType.FIT_XY }
+        val p = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT)
+        runCatching { janelas.addView(v, p); sobreposicao = v }
+    }
+
+    private fun mostraFechar() {
+        if (fechar != null) return
+        val lado = dp(40)
+        val v = TextView(this).apply {
+            text = "✕"; setTextColor(0xFF111114.toInt()); textSize = 17f; gravity = Gravity.CENTER
+            background = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(0xFFFF575F.toInt())
+            }
+            setOnClickListener { encerraContinuo() }
+        }
+        val p = WindowManager.LayoutParams(lado, lado, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT).apply {
+            gravity = Gravity.TOP or Gravity.END; x = dp(12); y = dp(90)
+        }
+        runCatching { janelas.addView(v, p); fechar = v }
+    }
+
+    /** Toque longo na bolha: as duas escolhas que o dono pediu. */
+    private fun abreMenu() {
+        if (menu != null) { tiraMenu(); return }
+        fun item(texto: String, acao: () -> Unit) = TextView(this).apply {
+            this.text = texto; setTextColor(0xFFF5F5F5.toInt()); textSize = 15f
+            setPadding(dp(18), dp(14), dp(18), dp(14))
+            setOnClickListener { tiraMenu(); acao() }
+        }
+        val caixa = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xFF252529.toInt()); cornerRadius = dp(14).toFloat()
+            }
+            addView(item("Traduzir a tela toda (parada)") { traduzTela() })
+            addView(item("Idiomas") {
+                startActivity(android.content.Intent(this@ServicoTradutor, MainActivity::class.java)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                    .putExtra("abrir", "idiomas"))
+            })
+            addView(item("Fechar") { })
+        }
+        val p = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.TRANSLUCENT).apply {
+            gravity = Gravity.CENTER
+        }
+        runCatching { janelas.addView(caixa, p); menu = caixa }
+    }
+
+    private fun tiraMenu() { menu?.let { runCatching { janelas.removeView(it) } }; menu = null }
+
     private fun traduzTela() {
         if (trabalhando) return
+        if (continuo) encerraContinuo()   // as duas camadas não podem existir juntas
         trabalhando = true
         escopo.launch {
             // A captura pega a tela inteira, inclusive a bolha. Mudar o alfa NAO basta: a janela so some depois de
