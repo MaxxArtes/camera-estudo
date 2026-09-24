@@ -103,7 +103,18 @@ object Traducao {
             val fModelo = piscina.submit<List<String>?> { porModelo(faltando, origem) }
             val fMaquina = piscina.submit<String?> { porRede(numerado, origem) }
             piscina.shutdown()
-            val doModelo = runCatching { fModelo.get(PRAZO_MODELO, TimeUnit.SECONDS) }.getOrElse { fModelo.cancel(true); null }
+            val doModelo = runCatching { fModelo.get(PRAZO_MODELO, TimeUnit.SECONDS) }.getOrNull()
+            if (doModelo == null) {
+                // não cancela: deixa o modelo terminar em segundo plano e CORRIGIR o cache. A tela atual sai com a
+                // tradução rápida, mas o próximo toque na mesma fala já vem com a boa, sem esperar de novo.
+                Thread {
+                    runCatching { fModelo.get(40, TimeUnit.SECONDS) }.getOrNull()?.let { tarde ->
+                        for ((i, t) in faltando.withIndex()) tarde.getOrNull(i)?.let {
+                            if (it.isNotBlank() && it != t) cache[chave(origem, t)] = it
+                        }
+                    }
+                }.start()
+            }
             if (doModelo != null) {
                 for ((i, t) in faltando.withIndex()) doModelo.getOrNull(i)?.let {
                     if (it.isNotBlank() && it != t) { saida[t] = it; cache[chave(origem, t)] = it; ultimoOnline++ }
