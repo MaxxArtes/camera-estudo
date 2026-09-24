@@ -271,19 +271,25 @@ class ServicoTradutor : AccessibilityService() {
         val assin = assinaturaDe(tela)
         if (assin == ultimaAssinatura && sobreposicao != null) { trabalhando = false; sobreposicao?.visibility = View.VISIBLE; return }
         ultimaAssinatura = assin
-        val camada = withContext(Dispatchers.Default) {
-            val falas = Falas.ler(tela, (tela.height * 0.11f).toInt(), (tela.height * 0.96f).toInt())
-            if (falas.isEmpty()) null else {
-                val mapa = Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto })
-                Pintura.camada(tela, falas) { mapa[it] ?: it } to falas.size
-            }
+        // DUAS PASSADAS, para a tela não ficar esperando tradução: primeiro desenha o que já está no cache
+        // (medido: 97 ms de leitura + 174 ms de desenho), depois busca o que falta e redesenha. Com o capítulo
+        // adiantado, a primeira passada já é a final.
+        val falas = withContext(Dispatchers.Default) {
+            Falas.ler(tela, (tela.height * 0.11f).toInt(), (tela.height * 0.96f).toInt())
         }
+        if (falas.isEmpty()) { trabalhando = false; sobreposicao?.visibility = View.VISIBLE; return }
+        val textos = falas.map { it.texto }
+        val conhecido = withContext(Dispatchers.Default) { Traducao.soCache(this@ServicoTradutor, textos) }
+        if (conhecido.isNotEmpty() && continuo)
+            mostraCamada(withContext(Dispatchers.Default) { Pintura.camada(tela, falas) { conhecido[it] ?: it } })
+        val mapa = withContext(Dispatchers.Default) { Traducao.traduzirLote(this@ServicoTradutor, textos) }
         trabalhando = false
         if (!continuo) return
-        if (camada == null) { sobreposicao?.visibility = View.VISIBLE; aviso("Não encontrei texto aqui."); return }
-        mostraCamada(camada.first)
-        Telemetria.evento("traduziu", mapOf("modo" to "continuo", "falas" to camada.second,
-            "caminho" to Traducao.ultimoCaminho, "origem" to (Traducao.ultimaOrigem ?: "?"), "modelo" to Traducao.ultimoModelo))
+        if (mapa != conhecido || conhecido.isEmpty())
+            mostraCamada(withContext(Dispatchers.Default) { Pintura.camada(tela, falas) { mapa[it] ?: it } })
+        Telemetria.evento("traduziu", mapOf("modo" to "continuo", "falas" to falas.size,
+            "ja_no_cache" to conhecido.size, "caminho" to Traducao.ultimoCaminho,
+            "origem" to (Traducao.ultimaOrigem ?: "?"), "modelo" to Traducao.ultimoModelo))
     }
 
     /** Camada que NÃO recebe toque: a página continua rolando por baixo. */

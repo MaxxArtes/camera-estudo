@@ -153,6 +153,18 @@ object Traducao {
         return saida
     }
 
+    /**
+     * Só o que JÁ está no cache, sem tocar em rede. Serve para desenhar na hora e não deixar o dono esperando:
+     * medido em 24/09, ler a tela custa 97 ms e desenhar 174 ms, mas traduzir custa 1776 ms. Com o que já é
+     * conhecido a tela aparece em menos de 300 ms; o resto entra quando chegar.
+     */
+    fun soCache(ctx: Context, textos: List<String>): Map<String, String> {
+        val origem = origemFixa.ifBlank { origemDe(textos.joinToString(" ").take(300)) ?: "en" }
+        val saida = HashMap<String, String>()
+        for (t in textos) cache[chave(origem, t)]?.let { saida[t] = it }
+        return saida
+    }
+
     /** Traduz uma fala. Bloqueante. Devolve o original quando tudo falha, para a tela nunca ficar vazia. */
     fun traduzir(ctx: Context, texto: String): String {
         val origem = origemDe(texto) ?: "en"
