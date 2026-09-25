@@ -2,4 +2,5 @@
     <string name="app_name">Tradutor</string>
     <string name="servico_nome">Tradutor de tela</string>
     <string name="servico_desc">Ao tocar na bolha, captura a tela para achar o texto, traduzir e mostrar por cima. A captura acontece só nesse momento e não é guardada.</string>
+    <string name="leitor_nome">Ler capítulo traduzido</string>
 </resources>

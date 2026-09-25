@@ -27,6 +27,16 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Leitor de capitulo: recebe o endereco compartilhado do navegador. So ACTION_SEND: com ACTION_VIEW
+             o app viraria candidato a abrir todo link do sistema, que nao e o que o dono quer. -->
+        <activity android:name=".LeitorActivity" android:exported="true" android:screenOrientation="portrait"
+            android:label="@string/leitor_nome">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
         <!-- A captura da tela e a bolha vivem aqui. Servico de acessibilidade pode criar janela do tipo
              TYPE_ACCESSIBILITY_OVERLAY sem a permissao de desenhar sobre outros apps: uma permissao a menos. -->
         <service

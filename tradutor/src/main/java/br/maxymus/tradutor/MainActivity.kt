@@ -116,6 +116,8 @@ private fun Preparacao() {
         Text("Uma bolha fica por cima do navegador. Ao tocar nela, o app lê a tela, traduz e mostra a página traduzida. Toque de novo para voltar.",
             color = Texto2, fontSize = 14.sp)
 
+        CartaoLeitor()
+
         Cartao("Captura da tela", if (servicoLigado) "Ativada" else "Ativar",
             "Para funcionar, o app precisa capturar o que está na tela quando você toca na bolha. " +
             "A captura acontece só nesse momento, não fica guardada, e ela alcança qualquer coisa visível " +
@@ -246,6 +248,47 @@ private fun ListaIdiomas() {
                     }) { Text("Baixar", color = Coral, fontSize = 13.sp) }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Leitor de capítulo. Caminho que não depende de nenhuma permissão: o app baixa a página, acha os quadros,
+ * baixa as imagens originais e traduz quadro a quadro. O endereço entra por ação do dono — a área de
+ * transferência NÃO é lida sozinha, "Colar" é um toque dele (desenho do Astra, 25/09).
+ */
+@Composable
+private fun CartaoLeitor() {
+    val ctx = LocalContext.current
+    val prancheta = androidx.compose.ui.platform.LocalClipboardManager.current
+    var endereco by remember { mutableStateOf("") }
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Superficie).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Leitor de capítulo", color = Texto, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        Text("Cole o endereço de um capítulo para ler com tradução. O app baixa os quadros no seu aparelho e " +
+             "troca o texto pelo traduzido. Quando há internet, o texto das falas é enviado para tradução; " +
+             "sem internet, a tradução acontece aqui mesmo, com o idioma baixado.",
+             color = Texto2, fontSize = 13.sp)
+        androidx.compose.material3.OutlinedTextField(
+            value = endereco, onValueChange = { endereco = it }, singleLine = true,
+            label = { Text("Endereço do capítulo", fontSize = 13.sp) },
+            modifier = Modifier.fillMaxWidth(),
+            colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Texto, unfocusedTextColor = Texto,
+                focusedBorderColor = Coral, unfocusedBorderColor = Color(0xFF3A3A42),
+                focusedLabelColor = Coral, unfocusedLabelColor = Texto2, cursorColor = Coral))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            androidx.compose.material3.TextButton(onClick = {
+                prancheta.getText()?.text?.let { t -> Regex("https?://\\S+").find(t)?.let { endereco = it.value } }
+            }) { Text("Colar", color = Coral, fontSize = 14.sp) }
+        }
+        Button(onClick = {
+            ctx.startActivity(Intent(ctx, LeitorActivity::class.java).putExtra("endereco", endereco.trim()))
+        }, enabled = Capitulo.ehEndereco(endereco),
+            modifier = Modifier.fillMaxWidth().height(56.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = Coral, contentColor = Fundo,
+                disabledContainerColor = Color(0xFF2F2F35), disabledContentColor = Texto2)) {
+            Text("Abrir capítulo", fontSize = 15.sp)
         }
     }
 }
