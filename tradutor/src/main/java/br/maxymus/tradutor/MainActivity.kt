@@ -88,10 +88,16 @@ private fun Preparacao() {
     }
     val escopo = androidx.compose.runtime.rememberCoroutineScope()
 
+    var bolhaNaTela by remember { mutableStateOf(false) }
+
     fun confere() {
         val nome = ctx.packageName + "/" + ServicoTradutor::class.java.name
         val lista = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
         servicoLigado = lista.split(':').any { it.equals(nome, true) } || ServicoTradutor.ativo != null
+        bolhaNaTela = ServicoTradutor.bolhaNaTela
+        // a notificação fixa pode ser dispensada com um arrasto no Android 14 e acima, e não voltava sozinha:
+        // abrir o app a recoloca, porque ela é o outro caminho para a bolha
+        if (servicoLigado) ctx.sendBroadcast(Intent(ServicoTradutor.ACAO_NOTIFICAR).setPackage(ctx.packageName))
     }
     val dono = LocalLifecycleOwner.current
     DisposableEffect(dono) {
@@ -151,6 +157,23 @@ private fun Preparacao() {
 
         EscolhaIdiomas()
         ListaIdiomas()
+
+        // Sem este cartão a bolha escondida só voltava pela notificação fixa — e ela pode ser dispensada.
+        // Era um beco sem saída: o botão da captura fica desabilitado quando o serviço já está ligado.
+        if (servicoLigado) Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Superficie).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Bolha", color = Texto, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            Text(if (bolhaNaTela) "A bolha está na tela. Toque nela para traduzir, arraste para mudar de lugar."
+                 else "A bolha está escondida. Traga ela de volta para traduzir por cima do navegador.",
+                 color = Texto2, fontSize = 13.sp)
+            Button(onClick = {
+                ctx.sendBroadcast(Intent(ServicoTradutor.ACAO_BOLHA).setPackage(ctx.packageName))
+                escopo.launch { kotlinx.coroutines.delay(300); bolhaNaTela = ServicoTradutor.bolhaNaTela }
+            }, modifier = Modifier.fillMaxWidth().height(56.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Coral, contentColor = Fundo)) {
+                Text(if (bolhaNaTela) "Esconder bolha" else "Mostrar bolha", fontSize = 15.sp)
+            }
+        }
 
         if (servicoLigado)
             Text("Tudo pronto. Abra o quadrinho no navegador e toque na bolha.", color = Coral, fontSize = 14.sp)
@@ -277,10 +300,14 @@ private fun CartaoLeitor() {
                 focusedTextColor = Texto, unfocusedTextColor = Texto,
                 focusedBorderColor = Coral, unfocusedBorderColor = Color(0xFF3A3A42),
                 focusedLabelColor = Coral, unfocusedLabelColor = Texto2, cursorColor = Coral))
+        val ultimo = remember { ctx.getSharedPreferences("leitor", android.content.Context.MODE_PRIVATE).getString("ultimo", null) }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             androidx.compose.material3.TextButton(onClick = {
                 prancheta.getText()?.text?.let { t -> Regex("https?://\\S+").find(t)?.let { endereco = it.value } }
             }) { Text("Colar", color = Coral, fontSize = 14.sp) }
+            if (ultimo != null) androidx.compose.material3.TextButton(onClick = { endereco = ultimo }) {
+                Text("Último capítulo", color = Coral, fontSize = 14.sp)
+            }
         }
         Button(onClick = {
             ctx.startActivity(Intent(ctx, LeitorActivity::class.java).putExtra("endereco", endereco.trim()))

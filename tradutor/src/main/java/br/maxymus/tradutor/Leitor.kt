@@ -88,6 +88,9 @@ class Leitor(ctx: Context, val endereco: String) {
         quadros = urls.mapIndexed { i, u -> Quadro(i, u) }
         falhouLista = urls.isEmpty()
         carregando = false
+        // guarda o último capítulo que abriu de verdade: fechar o leitor não pode ser beco sem saída quando a
+        // área de transferência já mudou de conteúdo
+        if (urls.isNotEmpty()) prefs.edit().putString("ultimo", endereco).apply()
         Telemetria.evento("leitor_abriu", mapOf("quadros" to urls.size, "do_disco" to reaproveitou))
     }
 

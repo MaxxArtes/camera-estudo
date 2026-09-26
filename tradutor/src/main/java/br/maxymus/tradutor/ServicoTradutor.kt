@@ -42,6 +42,10 @@ class ServicoTradutor : AccessibilityService() {
         const val ACAO_TRADUZIR = "br.maxymus.tradutor.TRADUZIR"
         const val ACAO_BOLHA = "br.maxymus.tradutor.BOLHA"
         const val ACAO_PREPARAR = "br.maxymus.tradutor.PREPARAR"
+        const val ACAO_NOTIFICAR = "br.maxymus.tradutor.NOTIFICAR"
+
+        /** A tela de preparação precisa saber o que oferecer: mostrar ou esconder a bolha. */
+        val bolhaNaTela: Boolean get() = ativo?.bolha != null
         private const val CANAL = "tradutor"
         private const val AVISO = 1
     }
@@ -52,6 +56,7 @@ class ServicoTradutor : AccessibilityService() {
             when (i.action) {
                 ACAO_TRADUZIR -> if (continuo) encerraContinuo() else iniciaContinuo()
                 ACAO_BOLHA -> { if (bolha == null) mostraBolha() else tiraBolha(); notificacao() }
+                ACAO_NOTIFICAR -> notificacao()
                 ACAO_PREPARAR -> {
                     preparar = !preparar
                     getSharedPreferences("tradutor", Context.MODE_PRIVATE).edit().putBoolean("preparar", preparar).apply()
@@ -81,7 +86,7 @@ class ServicoTradutor : AccessibilityService() {
         ativo = this
         janelas = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         Telemetria.iniciar(this)
-        val filtro = android.content.IntentFilter().apply { addAction(ACAO_TRADUZIR); addAction(ACAO_BOLHA); addAction(ACAO_PREPARAR) }
+        val filtro = android.content.IntentFilter().apply { addAction(ACAO_TRADUZIR); addAction(ACAO_BOLHA); addAction(ACAO_PREPARAR); addAction(ACAO_NOTIFICAR) }
         androidx.core.content.ContextCompat.registerReceiver(this, receptor, filtro, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         preparar = getSharedPreferences("tradutor", Context.MODE_PRIVATE).getBoolean("preparar", true)
         Traducao.carregarPreferencias(this)
@@ -115,7 +120,7 @@ class ServicoTradutor : AccessibilityService() {
         val n = android.app.Notification.Builder(this, CANAL)
             .setSmallIcon(android.R.drawable.ic_menu_sort_alphabetically)
             .setContentTitle("Tradutor de tela")
-            .setContentText((if (bolha != null) "Toque em Traduzir, ou use a bolha" else "Bolha escondida") +
+            .setContentText((if (bolha != null) "Toque em Traduzir, ou use a bolha" else "Bolha escondida · toque em Mostrar bolha") +
                 (if (preparar) " · adiantando" else ""))
             .setOngoing(true).setShowWhen(false)
             .setContentIntent(android.app.PendingIntent.getActivity(this, 0,
@@ -402,7 +407,7 @@ class ServicoTradutor : AccessibilityService() {
                     .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                     .putExtra("abrir", "idiomas"))
             })
-            addView(item("Fechar") { })
+            addView(item("Fechar este menu") { })
         }
         val p = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
