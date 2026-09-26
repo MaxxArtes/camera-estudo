@@ -73,7 +73,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun Preparacao() {
     val ctx = LocalContext.current
-    var servicoLigado by remember { mutableStateOf(false) }
+    var servicoLigado by remember { mutableStateOf(false) }   // rodando AGORA
+    var servicoListado by remember { mutableStateOf(false) }  // ligado nas configuracoes do Android
     var tentouAtivar by remember { mutableStateOf(false) }
     var nova by remember { mutableStateOf<Atualizador.Versao?>(null) }
     // reconfere A CADA VOLTA à tela: antes a busca acontecia uma vez só, quando a tela nascia, então quem
@@ -93,11 +94,18 @@ private fun Preparacao() {
     fun confere() {
         val nome = ctx.packageName + "/" + ServicoTradutor::class.java.name
         val lista = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
-        servicoLigado = lista.split(':').any { it.equals(nome, true) } || ServicoTradutor.ativo != null
+        // Estas DUAS perguntas não são a mesma, e tratá-las como uma foi o defeito: com um "ou" entre elas o app
+        // dizia "Ativada" para serviço listado mas morto, e todo botão falava com ninguém, em silêncio.
+        // Acontece de verdade: instalar atualização mata o processo, e o HyperOS nem sempre religa o serviço.
+        servicoListado = lista.split(':').any { it.equals(nome, true) }
+        servicoLigado = ServicoTradutor.ativo != null
         bolhaNaTela = ServicoTradutor.bolhaNaTela
-        // a notificação fixa pode ser dispensada com um arrasto no Android 14 e acima, e não voltava sozinha:
-        // abrir o app a recoloca, porque ela é o outro caminho para a bolha
-        if (servicoLigado) ctx.sendBroadcast(Intent(ServicoTradutor.ACAO_NOTIFICAR).setPackage(ctx.packageName))
+        if (servicoLigado) {
+            // a notificação fixa pode ser dispensada com um arrasto no Android 14 e acima, e não voltava sozinha
+            ServicoTradutor.ativo?.let { runCatching { it.reafirmaNotificacao() } }
+        } else if (servicoListado) {
+            Telemetria.evento("servico_listado_morto", mapOf("android" to android.os.Build.VERSION.SDK_INT))
+        }
     }
     val dono = LocalLifecycleOwner.current
     DisposableEffect(dono) {
@@ -124,7 +132,7 @@ private fun Preparacao() {
 
         CartaoLeitor()
 
-        Cartao("Captura da tela", if (servicoLigado) "Ativada" else "Ativar",
+        Cartao("Captura da tela", if (servicoLigado) "Ativada" else if (servicoListado) "Reativar" else "Ativar",
             "Para funcionar, o app precisa capturar o que está na tela quando você toca na bolha. " +
             "A captura acontece só nesse momento, não fica guardada, e ela alcança qualquer coisa visível " +
             "na hora, inclusive o que estiver em outros aplicativos. Isso é ligado em Acessibilidade, nas " +
@@ -136,7 +144,7 @@ private fun Preparacao() {
 
         // O Android bloqueia acessibilidade para app instalado fora da loja ("configurações restritas"). O caminho
         // para liberar NÃO fica na tela de acessibilidade, então o app diz onde é em vez de deixar o dono procurando.
-        if (tentouAtivar && !servicoLigado) Column(
+        if (tentouAtivar && !servicoListado) Column(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF2A2026)).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Apareceu \"Controlada pelas configurações restritas\"?", color = Texto, fontSize = 15.sp, fontWeight = FontWeight.Medium)
@@ -158,6 +166,21 @@ private fun Preparacao() {
         EscolhaIdiomas()
         ListaIdiomas()
 
+        if (servicoListado && !servicoLigado) Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF2A2026)).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("A captura consta ligada, mas não está rodando", color = Texto, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text("Instalar uma atualização encerra o app, e o sistema do celular não religa a captura sempre. " +
+                 "Enquanto ela não estiver rodando, a bolha não aparece e nenhum botão daqui funciona.\n\n" +
+                 "Para resolver: em Acessibilidade, DESLIGUE o Tradutor de tela e ligue de novo.",
+                 color = Texto2, fontSize = 13.sp)
+            Button(onClick = { ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Coral, contentColor = Fundo)) {
+                Text("Abrir Acessibilidade", fontSize = 15.sp)
+            }
+        }
+
         // Sem este cartão a bolha escondida só voltava pela notificação fixa — e ela pode ser dispensada.
         // Era um beco sem saída: o botão da captura fica desabilitado quando o serviço já está ligado.
         if (servicoLigado) Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Superficie).padding(16.dp),
@@ -167,8 +190,9 @@ private fun Preparacao() {
                  else "A bolha está escondida. Traga ela de volta para traduzir por cima do navegador.",
                  color = Texto2, fontSize = 13.sp)
             Button(onClick = {
-                ctx.sendBroadcast(Intent(ServicoTradutor.ACAO_BOLHA).setPackage(ctx.packageName))
-                escopo.launch { kotlinx.coroutines.delay(300); bolhaNaTela = ServicoTradutor.bolhaNaTela }
+                val s = ServicoTradutor.ativo
+                if (s == null) { servicoLigado = false; servicoListado = true }
+                else bolhaNaTela = s.alternarBolha()
             }, modifier = Modifier.fillMaxWidth().height(56.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Coral, contentColor = Fundo)) {
                 Text(if (bolhaNaTela) "Esconder bolha" else "Mostrar bolha", fontSize = 15.sp)

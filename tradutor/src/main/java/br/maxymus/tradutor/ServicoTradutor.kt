@@ -233,10 +233,28 @@ class ServicoTradutor : AccessibilityService() {
                 else -> false
             }
         }
-        runCatching { janelas.addView(v, p); bolha = v }
+        runCatching { janelas.addView(v, p); bolha = v }.onFailure {
+            Telemetria.evento("erro", mapOf("onde" to "mostrar_bolha", "msg" to (it.message ?: it::class.java.simpleName).take(120)))
+        }
     }
 
     private fun tiraBolha() { bolha?.let { runCatching { janelas.removeView(it) } }; bolha = null }
+
+    /**
+     * Caminho DIRETO para a tela do app, sem broadcast no meio. O broadcast tinha uma falha silenciosa: se o
+     * serviço estivesse listado nas configurações mas não estivesse rodando, o pedido não chegava a ninguém e
+     * o botão não fazia nada, sem dizer nada. Aqui a tela só chama isto quando tem a instância na mão, e
+     * recebe de volta o estado REAL em vez de adivinhar depois de uma espera.
+     */
+    /** A tela do app recoloca a notificação fixa ao abrir, porque ela pode ter sido dispensada num arrasto. */
+    fun reafirmaNotificacao() = notificacao()
+
+    fun alternarBolha(): Boolean {
+        if (bolha == null) mostraBolha() else tiraBolha()
+        notificacao()
+        Telemetria.evento("bolha", mapOf("na_tela" to (bolha != null), "de" to "app"))
+        return bolha != null
+    }
 
     // ---------------- tradução ----------------
 
