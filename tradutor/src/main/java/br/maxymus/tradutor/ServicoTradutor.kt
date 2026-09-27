@@ -75,6 +75,8 @@ class ServicoTradutor : AccessibilityService() {
     private var preparar = false
     private var ultimaRolagem = 0L
     private var ultimaAssinatura = 0L
+    private var ultimaCorrecao = 0
+    private var jobRevisao: kotlinx.coroutines.Job? = null
     private var jobPreparo: kotlinx.coroutines.Job? = null
     private var continuo = false          // sobreposição que acompanha a rolagem, em vez da tela congelada
     private var fechar: View? = null      // o X, janela própria porque a camada não recebe toque
@@ -292,27 +294,57 @@ class ServicoTradutor : AccessibilityService() {
         fechar?.visibility = View.VISIBLE
         if (tela == null || !continuo) { trabalhando = false; sobreposicao?.visibility = View.VISIBLE; return }
         val assin = assinaturaDe(tela)
-        if (assin == ultimaAssinatura && sobreposicao != null) { trabalhando = false; sobreposicao?.visibility = View.VISIBLE; return }
+        // tela igual não basta para pular: se o modelo chegou atrasado e melhorou o cache, tem que redesenhar
+        val corr = Traducao.correcoes
+        if (assin == ultimaAssinatura && corr == ultimaCorrecao && sobreposicao != null) {
+            trabalhando = false; sobreposicao?.visibility = View.VISIBLE; return
+        }
         ultimaAssinatura = assin
+        ultimaCorrecao = corr
         // DUAS PASSADAS, para a tela não ficar esperando tradução: primeiro desenha o que já está no cache
         // (medido: 97 ms de leitura + 174 ms de desenho), depois busca o que falta e redesenha. Com o capítulo
         // adiantado, a primeira passada já é a final.
+        val tOcr = System.nanoTime()
         val falas = withContext(Dispatchers.Default) {
             Falas.ler(tela, (tela.height * 0.11f).toInt(), (tela.height * 0.96f).toInt())
         }
+        val msO = (System.nanoTime() - tOcr) / 1_000_000
         if (falas.isEmpty()) { trabalhando = false; sobreposicao?.visibility = View.VISIBLE; return }
         val textos = falas.map { it.texto }
         val conhecido = withContext(Dispatchers.Default) { Traducao.soCache(this@ServicoTradutor, textos) }
         if (conhecido.isNotEmpty() && continuo)
             mostraCamada(withContext(Dispatchers.Default) { Pintura.camada(tela, falas) { conhecido[it] ?: it } })
+        val tTrad = System.nanoTime()
         val mapa = withContext(Dispatchers.Default) { Traducao.traduzirLote(this@ServicoTradutor, textos) }
+        val msT = (System.nanoTime() - tTrad) / 1_000_000
         trabalhando = false
         if (!continuo) return
+        val tPint = System.nanoTime()
         if (mapa != conhecido || conhecido.isEmpty())
             mostraCamada(withContext(Dispatchers.Default) { Pintura.camada(tela, falas) { mapa[it] ?: it } })
+        val msP = (System.nanoTime() - tPint) / 1_000_000
         Telemetria.evento("traduziu", mapOf("modo" to "continuo", "falas" to falas.size,
             "ja_no_cache" to conhecido.size, "caminho" to Traducao.ultimoCaminho,
-            "origem" to (Traducao.ultimaOrigem ?: "?"), "modelo" to Traducao.ultimoModelo))
+            "origem" to (Traducao.ultimaOrigem ?: "?"), "modelo" to Traducao.ultimoModelo,
+            "ms_ocr" to msO, "ms_trad" to msT, "ms_pint" to msP, "cache" to Traducao.noCache))
+        agendaRevisao()
+    }
+
+    /**
+     * O modelo bom chega atrasado e corrige o cache. Sem isto a tradução rápida ficaria na tela para sempre,
+     * porque o laço só redesenha quando a tela MUDA — e o dono está parado, lendo. Então espera-se a correção
+     * por até 12 s e redesenha UMA vez quando ela vem.
+     */
+    private fun agendaRevisao() {
+        jobRevisao?.cancel()
+        jobRevisao = escopo.launch {
+            val partiu = Traducao.correcoes
+            repeat(24) {
+                kotlinx.coroutines.delay(500)
+                if (!continuo) return@launch
+                if (Traducao.correcoes != partiu) { desenhaContinuo(); return@launch }
+            }
+        }
     }
 
     /** Camada que NÃO recebe toque: a página continua rolando por baixo. */

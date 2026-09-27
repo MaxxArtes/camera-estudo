@@ -47,6 +47,17 @@ object Traducao {
     }
     @Volatile var ultimaOrigem: String? = null
     @Volatile var ultimoCaminho: String = "-"
+    /** Sobe quando o modelo chega atrasado e melhora o cache. Quem desenha usa isto para redesenhar uma vez. */
+    @Volatile var correcoes: Int = 0
+
+    /** "1. Fala" -> {0: "Fala"}. Devolve nulo quando vem lixo, para não estragar a tela com resposta pela metade. */
+    private fun numeradas(r: String, quantas: Int): Map<Int, String>? {
+        val m = r.split("\n").mapNotNull { l ->
+            val g = Regex("^\\s*(\\d+)[.)]\\s*(.+)$").find(l.trim()) ?: return@mapNotNull null
+            g.groupValues[1].toIntOrNull()?.minus(1) to g.groupValues[2].trim()
+        }.filter { it.first != null }.associate { it.first!! to it.second }
+        return if (m.size >= quantas * 0.6) m else null
+    }
     private val cache = ConcurrentHashMap<String, String>()
     private val tradutores = ConcurrentHashMap<String, Translator>()
     private val identificador by lazy { LanguageIdentification.getClient() }
@@ -115,15 +126,41 @@ object Traducao {
             val fModelo = piscina.submit<List<String>?> { porModelo(faltando, origem) }
             val fMaquina = piscina.submit<String?> { porRede(numerado, origem) }
             piscina.shutdown()
-            val doModelo = runCatching { fModelo.get(PRAZO_MODELO, TimeUnit.SECONDS) }.getOrNull()
+
+            /*
+             * QUEM CHEGAR PRIMEIRO manda. Medido na bancada em 27/09, com o serviço e a rede de verdade:
+             *
+             *     nosso serviço com modelo de linguagem .... 9,05 s
+             *     tradutor de máquina ..................... 0,24 a 0,41 s
+             *
+             * O código antigo esperava o MODELO por 9 s antes de sequer olhar o resultado da máquina, que já
+             * estava na mão desde os 300 ms. A tela ficava parada 9 s com a tradução disponível — foi essa a
+             * lentidão. A telemetria mostrou 9,1 s no percentil 90 de 399 preparos, e o servidor acusando
+             * "broken pipe" porque o app desistia no mesmo segundo em que a resposta saía.
+             *
+             * Agora o laço devolve assim que QUALQUER um dos dois serve, e o modelo, quando chega atrasado,
+             * corrige o cache e pede um redesenho. O dono vê a tradução em menos de meio segundo e a versão
+             * melhor entra sozinha alguns segundos depois, sem ele esperar por ela.
+             */
+            var doModelo: List<String>? = null
+            var daMaquina: Map<Int, String>? = null
+            val limite = System.nanoTime() + PRAZO_MODELO * 1_000_000_000L
+            while (System.nanoTime() < limite) {
+                if (fModelo.isDone) { doModelo = runCatching { fModelo.get() }.getOrNull(); break }
+                if (daMaquina == null && fMaquina.isDone)
+                    daMaquina = runCatching { fMaquina.get() }.getOrNull()?.let { numeradas(it, faltando.size) }
+                if (daMaquina != null) break     // já há o que mostrar: segurar a tela pelo modelo não se paga
+                runCatching { Thread.sleep(40) }
+            }
             if (doModelo == null) {
-                // não cancela: deixa o modelo terminar em segundo plano e CORRIGIR o cache. A tela atual sai com a
-                // tradução rápida, mas o próximo toque na mesma fala já vem com a boa, sem esperar de novo.
+                // não cancela: deixa o modelo terminar em segundo plano e CORRIGIR o cache, e avisa quem desenha
                 Thread {
                     runCatching { fModelo.get(40, TimeUnit.SECONDS) }.getOrNull()?.let { tarde ->
+                        var mudou = 0
                         for ((i, t) in faltando.withIndex()) tarde.getOrNull(i)?.let {
-                            if (it.isNotBlank() && it != t) cache[chave(origem, t)] = it
+                            if (it.isNotBlank() && it != t && cache[chave(origem, t)] != it) { cache[chave(origem, t)] = it; mudou++ }
                         }
+                        if (mudou > 0) correcoes++
                     }
                 }.start()
             }
@@ -133,16 +170,9 @@ object Traducao {
                 }
             }
             if (faltando.any { it !in saida }) {
-                val r = runCatching { fMaquina.get(6, TimeUnit.SECONDS) }.getOrNull()
-                if (r != null) {
-                    val linhas = r.split("\n").mapNotNull { l ->
-                        val m = Regex("^\\s*(\\d+)[.)]\\s*(.+)$").find(l.trim()) ?: return@mapNotNull null
-                        m.groupValues[1].toIntOrNull()?.minus(1) to m.groupValues[2].trim()
-                    }.filter { it.first != null }.associate { it.first!! to it.second }
-                    if (linhas.size >= faltando.size * 0.6) {
-                        for ((i, t) in faltando.withIndex()) if (t !in saida) linhas[i]?.let { saida[t] = it; cache[chave(origem, t)] = it; ultimoOnline++ }
-                    }
-                }
+                val linhas = daMaquina ?: runCatching { fMaquina.get(6, TimeUnit.SECONDS) }.getOrNull()?.let { numeradas(it, faltando.size) }
+                if (linhas != null) for ((i, t) in faltando.withIndex())
+                    if (t !in saida) linhas[i]?.let { saida[t] = it; cache[chave(origem, t)] = it; ultimoOnline++ }
             }
         }
         for (t in faltando) if (t !in saida) {
