@@ -1066,7 +1066,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                             if (nv != null) { gaveta = false; Atualizador.baixarEInstalar(contexto, nv) }
                             else escopo.launch {
                                 val v = Atualizador.consultar()
-                                if (v == null) Toast.makeText(contexto, "Não consegui consultar o canal (sem rede?)", Toast.LENGTH_SHORT).show()
+                                if (v == null) Toast.makeText(contexto, "Não consegui consultar o canal: " + Atualizador.ultimoErro, Toast.LENGTH_LONG).show()
                                 else if (v.codigo > instalada.second) { novaVersao = v; avisoAtualizacao = true; Toast.makeText(contexto, "Versão ${v.nome} disponível", Toast.LENGTH_SHORT).show() }
                                 else Toast.makeText(contexto, "Você já está na versão mais recente (${instalada.first})", Toast.LENGTH_SHORT).show()
                             }

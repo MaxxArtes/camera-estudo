@@ -27,6 +27,13 @@ import java.net.URL
  */
 object Atualizador {
     private const val URL_MANIFESTO = "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/releases.json"
+    /** Espelho em outro provedor. Em 30/09 o R2 passou o dia desabilitado e o aparelho ficou sem canal
+     *  nenhum, porque o manifesto só existia lá. Dois caminhos, queda de um não cega o app. */
+    private const val URL_ESPELHO = "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/releases.json"
+
+    /** Por que a última consulta falhou. Antes isso era jogado fora e a tela dizia "sem rede?" para
+     *  qualquer causa, o que transformou um problema de 10 minutos numa investigação de horas. */
+    @Volatile var ultimoErro: String = "-"
 
     data class Versao(val nome: String, val codigo: Int, val apk: String, val mudou: List<String>)
 
@@ -38,10 +45,19 @@ object Atualizador {
 
     /** Consulta o canal. Devolve a versão do canal (mesmo que igual) ou null se não deu para ler. */
     suspend fun consultar(): Versao? = withContext(Dispatchers.IO) {
+        ultimoErro = "-"
+        consultarEm(URL_MANIFESTO) ?: consultarEm(URL_ESPELHO)
+    }
+
+    private fun consultarEm(endereco: String): Versao? =
         runCatching {
-            val con = (URL("$URL_MANIFESTO?t=${System.currentTimeMillis()}").openConnection() as HttpURLConnection).apply {
-                connectTimeout = 8000; readTimeout = 8000; setRequestProperty("Cache-Control", "no-cache")
+            // o parâmetro de tempo fura cache do CDN; no GitHub ele não faz falta e a URL redireciona
+            val alvo = if (endereco.contains("r2.dev")) "$endereco?t=${System.currentTimeMillis()}" else endereco
+            val con = (URL(alvo).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 8000; readTimeout = 8000; instanceFollowRedirects = true
+                setRequestProperty("Cache-Control", "no-cache")
             }
+            if (con.responseCode != 200) throw java.io.IOException("http " + con.responseCode)
             val texto = con.inputStream.bufferedReader().use { it.readText() }
             val j = JSONObject(texto)
             val mudou = mutableListOf<String>()
@@ -51,8 +67,12 @@ object Atualizador {
                 if (m != null) for (i in 0 until m.length()) mudou += m.getString(i)
             }
             Versao(j.getString("versionName"), j.getInt("versionCode"), j.getString("apk"), mudou)
-        }.getOrNull()
-    }
+        }.getOrElse { e ->
+            ultimoErro = (e.javaClass.simpleName + (e.message?.let { ": $it" } ?: "")).take(120)
+            Telemetria.evento("erro", mapOf("onde" to "atualizador",
+                "host" to endereco.substringAfter("//").substringBefore("/"), "msg" to ultimoErro))
+            null
+        }
 
     /** Baixa o APK com o DownloadManager (barra na área de notificações) e, ao terminar, abre o instalador. */
     fun baixarEInstalar(contexto: Context, v: Versao) {
