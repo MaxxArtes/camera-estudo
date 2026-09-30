@@ -23,6 +23,13 @@ object Capitulo {
 
     fun ehEndereco(t: String) = t.trim().startsWith("http", true)
 
+    /** Caminho do endereço, sem esquema e sem host. O host não entra em filtro de nome. */
+    private fun caminhoDe(u: String): String {
+        val semEsquema = u.substringAfter("//", u)
+        val barra = semEsquema.indexOf('/')
+        return if (barra >= 0) semEsquema.substring(barra) else ""
+    }
+
     /**
      * Endereços dos quadros, na ordem em que aparecem. Bloqueante. Lista vazia quando não reconhece a página.
      *
@@ -41,13 +48,18 @@ object Capitulo {
             Telemetria.evento("erro", mapOf("onde" to "capitulo_html", "http" to con.responseCode)); return emptyList()
         }
         val html = con.inputStream.bufferedReader().use { it.readText() }
-        val ini = html.indexOf("_imageList")
-        val trecho = if (ini > 0) html.substring(ini) else html
-        val achados = IMAGEM.findAll(trecho).map { it.value }
-            .filter { u -> LIXO.none { u.contains(it, true) } }
-            .distinct().toList()
-        Telemetria.evento("capitulo_lista", mapOf("quadros" to achados.size, "html_kb" to html.length / 1024,
-            "lista_propria" to (ini > 0), "ms" to (System.nanoTime() - t0) / 1_000_000))
+        val brutas = IMAGEM.findAll(html).map { it.value }.distinct().toList()
+        // O FILTRO SÓ OLHA O CAMINHO, nunca o endereço inteiro. Medido em 30/09: o CDN da Webtoon é
+        // "webtoon-phinf.pstatic.net", e "pstatic" contém "static", que estava na lista de lixo. O filtro
+        // derrubava as 239 URLs da página, as 153 boas junto, e o app dizia "não reconheço este site" —
+        // acusando o site por um defeito meu. Com o filtro no caminho sobram exatamente os 153 quadros.
+        val achados = brutas.filter { u -> LIXO.none { lixo -> caminhoDe(u).contains(lixo, true) } }
+        Telemetria.evento("capitulo_lista", mapOf("quadros" to achados.size, "brutas" to brutas.size,
+            "html_kb" to html.length / 1024, "ms" to (System.nanoTime() - t0) / 1_000_000))
+        // achar endereços e filtrar todos é defeito do filtro, não site desconhecido: isso se registra separado
+        if (brutas.isNotEmpty() && achados.isEmpty())
+            Telemetria.evento("erro", mapOf("onde" to "capitulo_filtro", "brutas" to brutas.size,
+                "exemplo" to brutas.first().take(90)))
         achados
     }.getOrElse {
         Telemetria.evento("erro", mapOf("onde" to "capitulo_html", "msg" to (it.message ?: "").take(90)))
