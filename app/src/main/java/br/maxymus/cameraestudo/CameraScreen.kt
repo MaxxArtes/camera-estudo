@@ -83,6 +83,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.BurstMode
+import androidx.compose.material.icons.filled.CameraRear
 import androidx.compose.material.icons.filled.CenterFocusStrong
 import androidx.compose.material.icons.filled.SlowMotionVideo
 import androidx.compose.material.icons.filled.Monitor
@@ -1071,6 +1072,12 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                             }
                         }
                     }
+                    item { Ajuste(Icons.Filled.CameraRear, "Sensores", "Lentes e concorrência", false) {
+                        gaveta = false
+                        runCatching { Sensores.compartilhar(contexto) }.onFailure {
+                            Toast.makeText(contexto, "Não consegui ler as características das câmeras.", Toast.LENGTH_SHORT).show()
+                        }
+                    } }
                     item { Ajuste(Icons.Filled.MoreHoriz, "Mais", "", false) { gaveta = false } }
                 }
             }
