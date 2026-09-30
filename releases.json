@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.77",
+      "build": 91,
+      "tag": "v0.77-build91",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.77-build91.apk",
+      "mudou": [
+        "Camera 0.77: diagnostico dos sensores, para o aparelho responder sobre concorrencia"
+      ]
+    },
+    {
       "versao": "0.76",
       "build": 87,
       "tag": "v0.76-build87",
@@ -712,11 +721,11 @@
       ]
     }
   ],
-  "versionName": "0.76",
-  "versionCode": 76,
-  "build": 87,
+  "versionName": "0.77",
+  "versionCode": 77,
+  "build": 91,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.76-build87.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.77-build91.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-22T23:58:32Z"
+  "publicadoEm": "2026-09-30T20:33:03Z"
 }
