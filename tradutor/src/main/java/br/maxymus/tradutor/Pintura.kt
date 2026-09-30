@@ -47,6 +47,8 @@ object Pintura {
             val letra = corDaLetra(px, w, x0, y0, rw, rh, dist, fundo)
 
             var mascara = BooleanArray(rw * rh) { dist[it] >= limiar }
+            mascara = soDoTexto(mascara, rw, rh, f.caixa.left - x0, f.caixa.top - y0,
+                                f.caixa.right - x0, f.caixa.bottom - y0)
             val engorda = max(3, (alt * 0.22f).toInt())
             mascara = dilata(mascara, rw, rh, engorda)
             val alfa = suaviza(mascara, rw, rh, max(1, (alt * 0.07f).toInt()))
@@ -59,6 +61,37 @@ object Pintura {
     }
 
     /** Conta-gotas: mediana do anel de `pad` px em volta da caixa. É a cor que o balão tem ali. */
+    /**
+     * Mantém só as manchas LIGADAS à caixa do texto.
+     *
+     * Medido em 30/09 sobre os quadros reais do capítulo: a fala mora num balão claro e estreito, com mediana
+     * de 90 px de largura, sobre um quadro 70% preto. O anel do conta-gotas pega o BRANCO do balão como fundo,
+     * e a regra "longe do fundo é letra" passa então a valer para todo o PRETO de fora do balão. Era isso que
+     * produzia as manchas brancas rasgadas vazando para fora da fala, que o dono viu na primeira leitura.
+     *
+     * O preto de fora é uma mancha SEPARADA das letras, porque a borda do balão fica entre as duas. Então basta
+     * ficar com o que encosta na caixa que o reconhecedor devolveu. Sem isso, quanto mais escuro o quadro, pior
+     * ficava — exatamente ao contrário do que o desenho pretendia.
+     */
+    private fun soDoTexto(m: BooleanArray, rw: Int, rh: Int, cx0: Int, cy0: Int, cx1: Int, cy1: Int): BooleanArray {
+        val fica = BooleanArray(rw * rh)
+        val pilha = IntArray(rw * rh)
+        var topo = 0
+        for (y in max(0, cy0) until min(rh, cy1)) for (x in max(0, cx0) until min(rw, cx1)) {
+            val k = y * rw + x
+            if (m[k] && !fica[k]) { fica[k] = true; pilha[topo++] = k }
+        }
+        while (topo > 0) {
+            val k = pilha[--topo]
+            val x = k % rw; val y = k / rw
+            if (x > 0)      { val v = k - 1;  if (m[v] && !fica[v]) { fica[v] = true; pilha[topo++] = v } }
+            if (x < rw - 1) { val v = k + 1;  if (m[v] && !fica[v]) { fica[v] = true; pilha[topo++] = v } }
+            if (y > 0)      { val v = k - rw; if (m[v] && !fica[v]) { fica[v] = true; pilha[topo++] = v } }
+            if (y < rh - 1) { val v = k + rw; if (m[v] && !fica[v]) { fica[v] = true; pilha[topo++] = v } }
+        }
+        return fica
+    }
+
     private fun corDoAnel(px: IntArray, w: Int, x0: Int, y0: Int, rw: Int, rh: Int, pad: Int): Int {
         val r = ArrayList<Int>(4 * pad * max(rw, rh) / 2)
         val g = ArrayList<Int>(r.size); val b = ArrayList<Int>(r.size)
