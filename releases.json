@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.78",
+      "build": 92,
+      "tag": "v0.78-build92",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.78-build92.apk",
+      "mudou": [
+        "Camera 0.78: canal de atualizacao com dois caminhos e erro que se nomeia"
+      ]
+    },
+    {
       "versao": "0.77",
       "build": 91,
       "tag": "v0.77-build91",
@@ -721,11 +730,11 @@
       ]
     }
   ],
-  "versionName": "0.77",
-  "versionCode": 77,
-  "build": 91,
+  "versionName": "0.78",
+  "versionCode": 78,
+  "build": 92,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.77-build91.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.78-build92.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-09-30T20:33:03Z"
+  "publicadoEm": "2026-09-30T21:54:19Z"
 }
