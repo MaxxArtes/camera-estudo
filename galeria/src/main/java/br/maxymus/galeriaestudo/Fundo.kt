@@ -114,7 +114,13 @@ object Fundo {
     fun segmentar(ctx: Context, b: Bitmap, motor: Motor = Motor.Leve): Mascara? {
         val t0 = System.nanoTime()
         val leve = segmentarLeve(ctx, b)
-        if (motor == Motor.Leve) return leve
+        // O Leve saía daqui SEM telemetria: o dono testou o recorte com ele em 30/09 e só chegou "editor_salvou".
+        // Padrão e Alta registram mais abaixo; este caminho precisa registrar também, inclusive a falha.
+        if (motor == Motor.Leve) {
+            Telemetria.evento("editor_motor", mapOf("motor" to "Leve", "ok" to (leve != null),
+                "ms" to (System.nanoTime() - t0) / 1_000_000, "larg" to b.width, "alt" to b.height))
+            return leve
+        }
         val esc = min(1f, 1024f / max(b.width, b.height))
         val peq = if (esc < 1f) Bitmap.createScaledBitmap(b, max(1, (b.width * esc).toInt()), max(1, (b.height * esc).toInt()), true) else b
         var mapa: FloatArray? = null; var mw = 0; var mh = 0; var motivo: String? = null
