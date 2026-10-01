@@ -14,82 +14,113 @@ import kotlin.math.min
  * do dono (scratchpad/p3.py), com três defeitos já corrigidos lá antes de virar Kotlin:
  *
  *  1. Conta-gotas: a cor do fundo vem da mediana do ANEL em volta da caixa do texto, não de um chute.
- *  2. Cobertura pelo FORMATO DAS LETRAS, não por retângulo (ideia do dono): tudo que se afasta da cor do fundo é
- *     letra; esse desenho é engordado e só ele é coberto. No fundo preto o retângulo deixava um cinza visível, e
- *     sobre arte ele apagava desenho que não era texto.
- *  3. A cobertura tem que ser MAIOR que a suavização da borda, senão o texto original vaza e os dois se leem juntos.
+ *  2. A cobertura era pelo FORMATO DAS LETRAS, ideia do dono em 22/09. Em 01/10, lendo um capítulo inteiro, ele
+ *     reverteu vendo o resultado: "mesmo que não fique certinho, fazer só uma faixa quadrada; o importante é ser
+ *     rápido, natural e legível". A máscara irregular vazava para fora do balão em quadro escuro e o texto saía
+ *     miúdo demais. Agora é FAIXA SÓLIDA, e legibilidade ganha de elegância.
+ *  3. A faixa é opaca e de canto reto, na cor do balão, com o texto na cor medida da letra (desenho do Astra,
+ *     01/10). Nada de transparência: sobre arte escura ela precisa delimitar a área sozinha.
  *
  * A saída é uma camada transparente do tamanho da tela: só o que foi pintado fica opaco.
  */
 object Pintura {
+
+    /** Uma fala já medida e pronta para desenhar. A posição ainda pode mudar na resolução de colisão. */
+    private class Faixa(var x0: Int, var y0: Int, var x1: Int, var y1: Int,
+                        var linhas: List<String>, val tam: Float, val fundo: Int, val letra: Int) {
+        val altura get() = y1 - y0
+        fun bate(o: Faixa, folga: Int) = x0 < o.x1 && o.x0 < x1 && y0 < o.y1 + folga && o.y0 < y1 + folga
+    }
 
     fun camada(tela: Bitmap, falas: List<Falas.Fala>, traduz: (String) -> String): Bitmap {
         val w = tela.width; val h = tela.height
         val saida = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(saida)
         val px = IntArray(w * h).also { tela.getPixels(it, 0, w, 0, 0, w, h) }
+        val tinta = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); textAlign = Paint.Align.CENTER
+        }
+
+        // ---- 1. medir todas as falas ANTES de desenhar qualquer uma ----
+        val faixas = ArrayList<Faixa>()
         for (f in falas) {
+            val texto = traduz(f.texto)
+            if (texto.isBlank()) continue
             val alt = f.alturaLinha
-            val pad = max(10, (alt * 0.45f).toInt())
-            val x0 = max(0, f.caixa.left - pad); val y0 = max(0, f.caixa.top - pad)
-            val x1 = min(w, f.caixa.right + pad); val y1 = min(h, f.caixa.bottom + pad)
-            val rw = x1 - x0; val rh = y1 - y0
+            val pad = max(8, (alt * 0.45f).toInt())
+            val ax0 = max(0, f.caixa.left - pad); val ay0 = max(0, f.caixa.top - pad)
+            val ax1 = min(w, f.caixa.right + pad); val ay1 = min(h, f.caixa.bottom + pad)
+            val rw = ax1 - ax0; val rh = ay1 - ay0
             if (rw < 8 || rh < 8) continue
 
-            val fundo = corDoAnel(px, w, x0, y0, rw, rh, pad)
+            val fundo = corDoAnel(px, w, ax0, ay0, rw, rh, pad)
             val dist = IntArray(rw * rh)
             for (y in 0 until rh) for (x in 0 until rw) {
-                val c = px[(y0 + y) * w + (x0 + x)]
+                val c = px[(ay0 + y) * w + (ax0 + x)]
                 dist[y * rw + x] = abs((c shr 16 and 255) - (fundo shr 16 and 255)) +
                         abs((c shr 8 and 255) - (fundo shr 8 and 255)) + abs((c and 255) - (fundo and 255))
             }
-            val limiar = max(60, (percentil(dist, 97) * 0.35f).toInt())
-            val letra = corDaLetra(px, w, x0, y0, rw, rh, dist, fundo)
+            val letra = corDaLetra(px, w, ax0, ay0, rw, rh, dist, fundo)
 
-            var mascara = BooleanArray(rw * rh) { dist[it] >= limiar }
-            mascara = soDoTexto(mascara, rw, rh, f.caixa.left - x0, f.caixa.top - y0,
-                                f.caixa.right - x0, f.caixa.bottom - y0)
-            val engorda = max(3, (alt * 0.22f).toInt())
-            mascara = dilata(mascara, rw, rh, engorda)
-            val alfa = suaviza(mascara, rw, rh, max(1, (alt * 0.07f).toInt()))
+            // margens e limites de crescimento, do desenho do Astra: 6% na horizontal, 4% na vertical,
+            // cresce até 10% de largura e 30% de altura, e só então encolhe a fonte, no máximo 10%
+            val mx = max(4, (f.caixa.width() * 0.06f).toInt())
+            val my = max(3, (f.caixa.height() * 0.04f).toInt())
+            val larguraUtil = (min(w - 2 * mx, (f.caixa.width() * 1.10f).toInt()) - 2 * mx).coerceAtLeast(24)
+            val alturaMax = f.caixa.height() * 1.30f
+            val piso = max(14f, alt * 0.90f)
+            var tam = alt * 1.05f
+            var linhas: List<String>
+            while (true) {
+                tinta.textSize = tam
+                linhas = quebra(texto, tinta, larguraUtil.toFloat())
+                if (linhas.size * tam * 1.25f <= alturaMax || tam <= piso) break
+                tam -= 1f
+            }
+            tinta.textSize = tam
+            val larguraTexto = linhas.maxOfOrNull { tinta.measureText(it) }?.toInt() ?: 0
+            val fw = min(w, max(f.caixa.width(), larguraTexto + 1) + 2 * mx)
+            val fh = min(h, (linhas.size * tam * 1.25f).toInt() + 2 * my)
+            val fx0 = (f.caixa.centerX() - fw / 2).coerceIn(0, max(0, w - fw))
+            val fy0 = (f.caixa.centerY() - fh / 2).coerceIn(0, max(0, h - fh))
+            faixas += Faixa(fx0, fy0, fx0 + fw, fy0 + fh, linhas, tam, fundo, letra)
+        }
 
-            val cobre = IntArray(rw * rh) { k -> ((alfa[k] * 255).toInt().coerceIn(0, 255) shl 24) or (fundo and 0x00FFFFFF) }
-            canvas.drawBitmap(cobre, 0, rw, x0, y0, rw, rh, true, null)
-            escreve(canvas, traduz(f.texto), x0, y0, rw, rh, alt, letra)
+        // ---- 2. resolver colisão ANTES de desenhar: nunca uma tradução por cima da outra ----
+        val folga = max(4, (h * 0.004f).toInt())
+        faixas.sortBy { it.y0 }
+        val postas = ArrayList<Faixa>()
+        for (fx in faixas) {
+            var voltas = 0
+            while (voltas < 40) {
+                val choque = postas.firstOrNull { it.bate(fx, folga) } ?: break
+                val novoTopo = choque.y1 + folga
+                if (novoTopo + fx.altura > h) break
+                fx.y1 = novoTopo + fx.altura; fx.y0 = novoTopo
+                voltas++
+            }
+            val resta = postas.firstOrNull { it.bate(fx, folga) }
+            if (resta == null) postas += fx
+            else {
+                // sem espaço para deslocar: junta as duas numa faixa só, em parágrafos na ordem de leitura
+                resta.linhas = resta.linhas + fx.linhas
+                resta.y1 = min(h, resta.y0 + (resta.linhas.size * resta.tam * 1.25f).toInt() + 8)
+                resta.x1 = min(w, max(resta.x1, fx.x1)); resta.x0 = min(resta.x0, fx.x0)
+            }
+        }
+
+        // ---- 3. desenhar ----
+        val tintaFundo = Paint()
+        for (fx in postas) {
+            tintaFundo.color = fx.fundo
+            canvas.drawRect(fx.x0.toFloat(), fx.y0.toFloat(), fx.x1.toFloat(), fx.y1.toFloat(), tintaFundo)
+            tinta.color = fx.letra; tinta.textSize = fx.tam
+            val linha = fx.tam * 1.25f
+            var y = fx.y0 + (fx.altura - fx.linhas.size * linha) / 2f + fx.tam
+            val cx = (fx.x0 + fx.x1) / 2f
+            for (l in fx.linhas) { canvas.drawText(l, cx, y, tinta); y += linha }
         }
         return saida
-    }
-
-    /** Conta-gotas: mediana do anel de `pad` px em volta da caixa. É a cor que o balão tem ali. */
-    /**
-     * Mantém só as manchas LIGADAS à caixa do texto.
-     *
-     * Medido em 30/09 sobre os quadros reais do capítulo: a fala mora num balão claro e estreito, com mediana
-     * de 90 px de largura, sobre um quadro 70% preto. O anel do conta-gotas pega o BRANCO do balão como fundo,
-     * e a regra "longe do fundo é letra" passa então a valer para todo o PRETO de fora do balão. Era isso que
-     * produzia as manchas brancas rasgadas vazando para fora da fala, que o dono viu na primeira leitura.
-     *
-     * O preto de fora é uma mancha SEPARADA das letras, porque a borda do balão fica entre as duas. Então basta
-     * ficar com o que encosta na caixa que o reconhecedor devolveu. Sem isso, quanto mais escuro o quadro, pior
-     * ficava — exatamente ao contrário do que o desenho pretendia.
-     */
-    private fun soDoTexto(m: BooleanArray, rw: Int, rh: Int, cx0: Int, cy0: Int, cx1: Int, cy1: Int): BooleanArray {
-        val fica = BooleanArray(rw * rh)
-        val pilha = IntArray(rw * rh)
-        var topo = 0
-        for (y in max(0, cy0) until min(rh, cy1)) for (x in max(0, cx0) until min(rw, cx1)) {
-            val k = y * rw + x
-            if (m[k] && !fica[k]) { fica[k] = true; pilha[topo++] = k }
-        }
-        while (topo > 0) {
-            val k = pilha[--topo]
-            val x = k % rw; val y = k / rw
-            if (x > 0)      { val v = k - 1;  if (m[v] && !fica[v]) { fica[v] = true; pilha[topo++] = v } }
-            if (x < rw - 1) { val v = k + 1;  if (m[v] && !fica[v]) { fica[v] = true; pilha[topo++] = v } }
-            if (y > 0)      { val v = k - rw; if (m[v] && !fica[v]) { fica[v] = true; pilha[topo++] = v } }
-            if (y < rh - 1) { val v = k + rw; if (m[v] && !fica[v]) { fica[v] = true; pilha[topo++] = v } }
-        }
-        return fica
     }
 
     private fun corDoAnel(px: IntArray, w: Int, x0: Int, y0: Int, rw: Int, rh: Int, pad: Int): Int {
@@ -129,51 +160,8 @@ object Pintura {
         return c[((c.size - 1) * p / 100).coerceIn(0, c.size - 1)]
     }
 
-    /** Dilatação em caixa separável: engorda o desenho das letras para pegar contorno e sombra. */
-    private fun dilata(b: BooleanArray, w: Int, h: Int, r: Int): BooleanArray {
-        val t = BooleanArray(w * h); val o = BooleanArray(w * h)
-        for (y in 0 until h) { val l = y * w; var c = 0
-            for (x in 0 until min(w, r)) if (b[l + x]) c++
-            for (x in 0 until w) { if (x + r < w && b[l + x + r]) c++; if (x - r - 1 >= 0 && b[l + x - r - 1]) c--; t[l + x] = c > 0 } }
-        for (x in 0 until w) { var c = 0
-            for (y in 0 until min(h, r)) if (t[y * w + x]) c++
-            for (y in 0 until h) { if (y + r < h && t[(y + r) * w + x]) c++; if (y - r - 1 >= 0 && t[(y - r - 1) * w + x]) c--; o[y * w + x] = c > 0 } }
-        return o
-    }
 
-    /** Borda macia: média em caixa sobre a máscara, para a cobertura não ter serrilhado. */
-    private fun suaviza(b: BooleanArray, w: Int, h: Int, r: Int): FloatArray {
-        val a = FloatArray(w * h) { if (b[it]) 1f else 0f }
-        val t = FloatArray(w * h); val o = FloatArray(w * h)
-        for (y in 0 until h) { val l = y * w; var s = 0f; var n = 0
-            for (x in 0 until min(w, r)) { s += a[l + x]; n++ }
-            for (x in 0 until w) { if (x + r < w) { s += a[l + x + r]; n++ }; if (x - r - 1 >= 0) { s -= a[l + x - r - 1]; n-- }; t[l + x] = s / n } }
-        for (x in 0 until w) { var s = 0f; var n = 0
-            for (y in 0 until min(h, r)) { s += t[y * w + x]; n++ }
-            for (y in 0 until h) { if (y + r < h) { s += t[(y + r) * w + x]; n++ }; if (y - r - 1 >= 0) { s -= t[(y - r - 1) * w + x]; n-- }
-                o[y * w + x] = min(1f, t[y * w + x] * 0.35f + (s / n) * 1.3f) } }
-        return o
-    }
 
-    /** Escreve centralizado, quebrando por palavra e encolhendo até caber (português é mais longo que inglês). */
-    private fun escreve(canvas: Canvas, texto: String, x0: Int, y0: Int, rw: Int, rh: Int, alt: Int, cor: Int) {
-        if (texto.isBlank()) return
-        val tinta = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD); color = cor; textAlign = Paint.Align.CENTER
-        }
-        var tam = max(12f, alt * 1.05f)
-        var linhas: List<String> = emptyList()
-        while (tam > 10f) {
-            tinta.textSize = tam
-            linhas = quebra(texto, tinta, rw * 0.92f)
-            if (linhas.size * tam * 1.2f <= rh * 0.96f) break
-            tam -= 2f
-        }
-        tinta.textSize = tam
-        var y = y0 + (rh - linhas.size * tam * 1.2f) / 2f + tam
-        val cx = x0 + rw / 2f
-        for (l in linhas) { canvas.drawText(l, cx, y, tinta); y += tam * 1.2f }
-    }
 
     private fun quebra(texto: String, tinta: Paint, largura: Float): List<String> {
         val saida = ArrayList<String>(); var atual = StringBuilder()
