@@ -125,6 +125,17 @@ object Traducao {
             val numerado = faltando.mapIndexed { i, t -> "${i + 1}. $t" }.joinToString("\n")
             val fModelo = piscina.submit<List<String>?> { porModelo(faltando, origem) }
             val fMaquina = piscina.submit<String?> { porRede(numerado, origem) }
+            // Sem a máquina (cota acabada), quem faz o papel de resposta rápida é o ML Kit no aparelho, pedido do
+            // dono em 01/10. Ele também corre em paralelo e o modelo, chegando depois, corrige o cache.
+            val semMaquina = System.currentTimeMillis() < maquinaEsgotadaAte
+            val fLocal = if (semMaquina) java.util.concurrent.Executors.newSingleThreadExecutor().let { ex ->
+                ex.submit<Map<Int, String>?> {
+                    val m = HashMap<Int, String>()
+                    for ((i, t) in faltando.withIndex()) local(t, origem)?.let { if (it.isNotBlank()) m[i] = it }
+                    if (m.size >= faltando.size * 0.6) m else null
+                }.also { ex.shutdown() }
+            } else null
+            var doLocal: Map<Int, String>? = null
             piscina.shutdown()
 
             /*
@@ -150,6 +161,8 @@ object Traducao {
                 if (daMaquina == null && fMaquina.isDone)
                     daMaquina = runCatching { fMaquina.get() }.getOrNull()?.let { numeradas(it, faltando.size) }
                 if (daMaquina != null) break     // já há o que mostrar: segurar a tela pelo modelo não se paga
+                if (doLocal == null && fLocal != null && fLocal.isDone) doLocal = runCatching { fLocal.get() }.getOrNull()
+                if (doLocal != null) break
                 runCatching { Thread.sleep(40) }
             }
             if (doModelo == null) {
@@ -169,7 +182,10 @@ object Traducao {
                     if (it.isNotBlank() && it != t) { saida[t] = it; cache[chave(origem, t)] = it; ultimoOnline++ }
                 }
             }
-            if (faltando.any { it !in saida }) {
+            doLocal?.let { m ->
+                for ((i, t) in faltando.withIndex()) if (t !in saida) m[i]?.let { saida[t] = it; cache[chave(origem, t)] = it; ultimoOffline++ }
+            }
+            if (faltando.any { it !in saida } && !semMaquina) {
                 val linhas = daMaquina ?: runCatching { fMaquina.get(6, TimeUnit.SECONDS) }.getOrNull()?.let { numeradas(it, faltando.size) }
                 if (linhas != null) for ((i, t) in faltando.withIndex())
                     if (t !in saida) linhas[i]?.let { saida[t] = it; cache[chave(origem, t)] = it; ultimoOnline++ }
@@ -248,10 +264,15 @@ object Traducao {
             connectTimeout = 6_000; readTimeout = 12_000
             setRequestProperty("User-Agent", "TradutorDeTela/0.5 (app pessoal)")
         }
+        if (System.currentTimeMillis() < maquinaEsgotadaAte) return null
+        if (con.responseCode == 429 || con.responseCode == 403) { esgotou("http " + con.responseCode); return null }
         if (con.responseCode != 200) return null
         val j = JSONObject(con.inputStream.bufferedReader().use { it.readText() })
-        if (j.optBoolean("quotaFinished", false)) { Telemetria.evento("cota_online"); return null }
         val t = j.getJSONObject("responseData").optString("translatedText").trim()
+        // Medido em 01/10: com a cota gratuita acabada a API responde 200 e escreve um AVISO no lugar da
+        // tradução, sem marcar quotaFinished. O evento cota_online nunca tinha chegado, por isso.
+        if (j.optBoolean("quotaFinished", false) || j.optInt("responseStatus", 200) == 429 ||
+            t.contains("MYMEMORY WARNING", true) || t.contains("FREE TRANSLATIONS", true)) { esgotou(t.take(60)); return null }
         // a API devolve aviso em MAIÚSCULAS quando não traduz de verdade
         if (t.isBlank() || t.startsWith("NO QUERY", true) || t.startsWith("QUERY LENGTH", true) || t.equals(texto, true)) null else t
     }.getOrNull()
@@ -264,6 +285,16 @@ object Traducao {
         val t = tradutorLocal(origem) ?: return null
         Tasks.await(t.translate(texto), 15, TimeUnit.SECONDS)
     }.getOrNull()
+
+    /** Cota do tradutor de máquina acabou: não chamar de novo até a virada do dia (ela renova diariamente). */
+    @Volatile var maquinaEsgotadaAte = 0L
+    private fun esgotou(motivo: String) {
+        val c = java.util.Calendar.getInstance().apply {
+            add(java.util.Calendar.DAY_OF_YEAR, 1); set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 5)
+        }
+        if (maquinaEsgotadaAte < System.currentTimeMillis()) Telemetria.evento("cota_online", mapOf("motivo" to motivo))
+        maquinaEsgotadaAte = c.timeInMillis
+    }
 
     /** idioma que apareceu sem pacote baixado, para a tela poder avisar qual falta */
     @Volatile var semPacote: String? = null
