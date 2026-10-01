@@ -170,15 +170,32 @@ private fun Preparacao() {
             Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF2A2026)).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("A captura consta ligada, mas não está rodando", color = Texto, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-            Text("Instalar uma atualização encerra o app, e o sistema do celular não religa a captura sempre. " +
-                 "Enquanto ela não estiver rodando, a bolha não aparece e nenhum botão daqui funciona.\n\n" +
-                 "Para resolver: em Acessibilidade, DESLIGUE o Tradutor de tela e ligue de novo.",
+            // Medido em 01/10: o dono fechou o app pelos recentes e tentou religar 4 vezes em 30 s, sem efeito.
+            // No HyperOS, fechar pelos recentes equivale a forçar a parada, e com a inicialização automática
+            // desligada o sistema RECUSA religar o serviço — desligar e ligar na Acessibilidade sozinho não basta.
+            Text("O sistema do celular encerrou o app e não deixa a captura voltar sozinha. " +
+                 "Faça os três passos, na ordem. Os dois primeiros são uma vez só.",
                  color = Texto2, fontSize = 13.sp)
-            Button(onClick = { ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Coral, contentColor = Fundo)) {
-                Text("Abrir Acessibilidade", fontSize = 15.sp)
+            Passo("1. Ligue a Inicialização automática do Tradutor") {
+                Telemetria.evento("ajuda_reativar", mapOf("passo" to "autostart"))
+                val miui = Intent().setComponent(android.content.ComponentName("com.miui.securitycenter",
+                    "com.miui.permcenter.autostart.AutoStartManagementActivity"))
+                runCatching { ctx.startActivity(miui) }.onFailure {
+                    ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        android.net.Uri.parse("package:" + ctx.packageName)))
+                }
             }
+            Passo("2. Bateria do Tradutor: Sem restrições") {
+                Telemetria.evento("ajuda_reativar", mapOf("passo" to "bateria"))
+                ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    android.net.Uri.parse("package:" + ctx.packageName)))
+            }
+            Passo("3. Desligue e ligue o Tradutor em Acessibilidade") {
+                Telemetria.evento("ajuda_reativar", mapOf("passo" to "acessibilidade"))
+                ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            }
+            Text("Para não acontecer de novo: não feche o Tradutor arrastando nos recentes. Se quiser, " +
+                 "trave ele lá com o cadeado.", color = Texto2, fontSize = 12.sp)
         }
 
         // Sem este cartão a bolha escondida só voltava pela notificação fixa — e ela pode ser dispensada.
@@ -341,6 +358,14 @@ private fun CartaoLeitor() {
                 disabledContainerColor = Color(0xFF2F2F35), disabledContentColor = Texto2)) {
             Text("Abrir capítulo", fontSize = 15.sp)
         }
+    }
+}
+
+@Composable
+private fun Passo(texto: String, aoTocar: () -> Unit) {
+    Button(onClick = aoTocar, modifier = Modifier.fillMaxWidth().height(56.dp),
+        colors = ButtonDefaults.buttonColors(containerColor = Coral, contentColor = Fundo)) {
+        Text(texto, fontSize = 14.sp)
     }
 }
 
