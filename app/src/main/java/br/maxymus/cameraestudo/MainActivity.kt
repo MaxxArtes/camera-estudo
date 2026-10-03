@@ -45,9 +45,14 @@ class MainActivity : ComponentActivity() {
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean =
         if ((keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) && Atalhos.aoDisparar != null) true else super.onKeyUp(keyCode, event)
 
+    // primeiro plano para o Atualizador: o instalador só abre com o app à vista (S13)
+    override fun onStart() { super.onStart(); Atualizador.primeiroPlano = true }
+    override fun onStop() { Atualizador.primeiroPlano = false; super.onStop() }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Telemetria.iniciar(this)
+        DoisSensores.relatarInterrompida(this)   // teste de dois sensores que morreu no meio: conta uma vez (tudo em IO, sob a trava da marca)
         Pessoas.iniciar(this)
         Acabamento.app = applicationContext
         setContent {

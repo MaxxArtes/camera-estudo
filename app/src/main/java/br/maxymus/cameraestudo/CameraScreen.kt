@@ -1,6 +1,7 @@
 package br.maxymus.cameraestudo
 
 import android.Manifest
+import android.app.Activity
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CaptureRequest
@@ -9,6 +10,7 @@ import android.hardware.camera2.TotalCaptureResult
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.SystemClock
 import android.provider.MediaStore
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -23,6 +25,7 @@ import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.AspectRatio
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.CameraState
 import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageCapture
@@ -118,6 +121,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -139,6 +143,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
@@ -146,12 +151,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImage
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 import kotlin.math.abs
 import kotlin.math.max
@@ -267,6 +279,37 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var avisoAtualizacao by remember { mutableStateOf(true) }
     val instalada = remember { Atualizador.versaoInstalada(contexto) }
 
+    // ---- teste de dois sensores (0.79). A tela continua a única dona do CameraX: DoisSensores nunca toca nele. ----
+    var testando by remember { mutableStateOf(false) }               // véu, tela ligada, obturador e volume travados
+    var experimento by remember { mutableStateOf(false) }            // CameraX solto: o efeito de ligação só faz unbind
+    var religar by remember { mutableIntStateOf(0) }                 // chave nova a cada fim de teste: força religar o CameraX
+    var soltouEm by remember { mutableStateOf(0L) }
+    var devolvendo by remember { mutableStateOf<String?>(null) }     // rodada cuja câmera está voltando (véu "Devolvendo")
+    var cameraNaoVoltou by remember { mutableStateOf<String?>(null) }
+    var ultimaDevolucao by remember { mutableStateOf<String?>(null) }
+    var erroBind by remember { mutableStateOf<String?>(null) }
+    var escolhaSensores by remember { mutableStateOf(false) }
+    var ultimoResumoDois by remember { mutableStateOf<String?>(null) }
+    var ultimaPastaDois by remember { mutableStateOf<java.io.File?>(null) }
+    var resultadoDois by remember { mutableStateOf<DoisSensores.Resultado?>(null) }
+    var pacoteDois by remember { mutableStateOf<DoisSensores.Pacote?>(null) }
+    var carregandoPacoteDois by remember { mutableStateOf(false) }
+    var ultimoParAberto by remember { mutableStateOf(false) }
+    var pacoteUltimo by remember { mutableStateOf<DoisSensores.Pacote?>(null) }
+    var carregandoUltimo by remember { mutableStateOf(false) }
+    var ampliada by remember { mutableStateOf<DoisSensores.Miniatura?>(null) }
+    var ampliadaBmp by remember { mutableStateOf<Bitmap?>(null) }
+    var rodadaTeste by remember { mutableStateOf<DoisSensores.Rodada?>(null) }
+    var jobTeste by remember { mutableStateOf<Job?>(null) }
+    var execucaoLancada by remember { mutableStateOf(false) }
+    var cancelandoTeste by remember { mutableStateOf(false) }
+    var segundosTeste by remember { mutableIntStateOf(0) }
+    // câmera da Camera2 do teste ainda sem o onClosed do sistema (S2/S3): "Fechando a câmera…", sem novo teste e sem religar
+    // o CameraX. Nasce da rodada retida, para valer também com a tela recriada no meio do fechamento.
+    var cameraRetida by remember { mutableStateOf(DoisSensores.retida != null) }
+    var fechamentoPendente by remember { mutableStateOf(DoisSensores.retida?.fechamentoPendente == true) }
+    val prontaAtualizacao by Atualizador.pronta.collectAsState()
+
     // Ao abrir: consulta o canal de atualização em segundo plano (falha em silêncio se estiver sem rede).
     LaunchedEffect(Unit) {
         val v = Atualizador.consultar()
@@ -310,10 +353,60 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
 
     LaunchedEffect(Unit) { ultima = Fotos.listar(contexto, limite = 1).firstOrNull()?.uri }
 
-    // (Re)liga a câmera quando muda lente, modo ou proporção.
-    LaunchedEffect(lente, modo, proporcao, capturaRapida, extensao, retratoSoftware, ultraHdrAtivo, rawAtivo) {
+    /**
+     * Vigia da volta do CameraX depois do teste de dois sensores. Roda no escopo da tela (não no efeito de ligação), para
+     * nenhuma troca de chave cancelá-lo, e conta até 15 s só com o app em primeiro plano. Começa no religar, e não
+     * depois do bind: se o efeito de ligação falhar antes de terminar, o vigia ainda vence o prazo e oferece "Reabrir".
+     */
+    fun vigiarDevolucao(rodada: String) {
+        escopo.launch {
+            val inicio = SystemClock.elapsedRealtime()
+            var ultimoTique = inicio
+            var contado = 0L
+            var estadoFinal = "cancelado"
+            var codigo: Int? = null
+            var abriuEm: Long? = null
+            try {
+                while (true) {
+                    val st = camera?.cameraInfo?.cameraState?.value
+                    st?.error?.code?.let { codigo = it }
+                    if (st?.type == CameraState.Type.OPEN) { estadoFinal = "aberta"; abriuEm = SystemClock.elapsedRealtime(); break }
+                    if (camera == null && !ligando && !experimento) { estadoFinal = "bind_falhou"; break }
+                    val agora = SystemClock.elapsedRealtime()
+                    if (dono.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) contado += agora - ultimoTique
+                    ultimoTique = agora
+                    if (contado >= 15_000) { estadoFinal = codigo?.let { "erro:$it" } ?: "prazo"; break }
+                    if (agora - inicio >= 300_000) { estadoFinal = "aguardando_primeiro_plano"; break }
+                    delay(100)
+                }
+            } finally {
+                val agora = SystemClock.elapsedRealtime()
+                if (estadoFinal == "cancelado" && !dono.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) estadoFinal = "aguardando_primeiro_plano"
+                DoisSensores.ev("dois_camerax", linkedMapOf(
+                    "rodada" to rodada, "acao" to "religou", "estado" to estadoFinal, "erro_codigo" to codigo,
+                    "bind_classe" to (if (estadoFinal == "bind_falhou") erroBind else null),
+                    "ms_sem_camerax" to (if (soltouEm > 0L) (abriuEm ?: agora) - soltouEm else null),
+                    "ms_ate_abrir" to abriuEm?.let { it - inicio }, "ms_contados" to contado))
+                if (devolvendo == rodada) devolvendo = null
+                cameraNaoVoltou = when (estadoFinal) {
+                    "aberta", "cancelado", "aguardando_primeiro_plano" -> null
+                    "bind_falhou" -> "bind"
+                    else -> codigo?.toString() ?: "sem_resposta"
+                }
+            }
+        }
+    }
+
+    // (Re)liga a câmera quando muda lente, modo ou proporção, e no fim do teste de dois sensores (experimento, religar).
+    LaunchedEffect(lente, modo, proporcao, capturaRapida, extensao, retratoSoftware, ultraHdrAtivo, rawAtivo, experimento, religar, cameraRetida) {
         ligando = true
         val provider = ProcessCameraProvider.getInstance(contexto).get()
+        // teste de dois sensores em curso: a "0" é da Camera2; o CameraX fica solto e o disparo travado (ligando = true)
+        if (experimento) { provider.unbindAll(); camera = null; return@LaunchedEffect }
+        // S3: sem o onClosed da rodada anterior (rodada órfã de Activity recriada, cão de guarda com a thread presa,
+        // cancelamento forçado) NÃO há bind novo, nem depois de esperar, nem por toque do dono: o tempo e o toque não provam
+        // que a "0" foi liberada. O efeito abaixo religa sozinho quando o sistema confirma (onClosed).
+        if (cameraRetida) { provider.unbindAll(); camera = null; return@LaunchedEffect }
         @Suppress("DEPRECATION")
         // vídeo grava em 16:9 (Quality.HIGHEST = 1080p); a prévia acompanha para o enquadramento bater com o arquivo (dono, 17/09)
         val preview = Preview.Builder().setTargetAspectRatio(if (modo.video) AspectRatio.RATIO_16_9 else proporcao)
@@ -401,7 +494,12 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             if (modo.video) provider.bindToLifecycle(dono, seletor, preview, videoCapture)
             else if (scannerVivo || retratoVivo) provider.bindToLifecycle(dono, seletor, preview, imageCapture, imageAnalysis)
             else provider.bindToLifecycle(dono, seletor, preview, imageCapture)
-        }.onFailure { Telemetria.evento("erro", mapOf("onde" to "abrir_camera", "modo" to modo.name.lowercase(), "msg" to (it.message ?: ""))); Toast.makeText(contexto, "Não consegui abrir a câmera: ${it.message}", Toast.LENGTH_LONG).show() }.getOrNull()
+        }.onFailure {
+            erroBind = it.javaClass.simpleName   // só a classe: a mensagem é texto livre e não vai à telemetria (S5)
+            Telemetria.evento("erro", mapOf("onde" to "abrir_camera", "modo" to modo.name.lowercase(), "msg" to (it.message ?: ""), "rodada" to devolvendo))
+            Toast.makeText(contexto, "Não consegui abrir a câmera: ${it.message}", Toast.LENGTH_LONG).show()
+        }.getOrNull()
+        if (camera != null) erroBind = null
         // o aparelho diz se aceita Ultra HDR (CameraX 1.4+, câmera e configuração); só então o formato é pedido
         ultraHdrSuportado = camera?.let { runCatching { ImageCapture.getImageCaptureCapabilities(it.cameraInfo).supportedOutputFormats.contains(ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR) }.getOrDefault(false) } ?: false
         rawSuportado = camera?.let { runCatching { ImageCapture.getImageCaptureCapabilities(it.cameraInfo).supportedOutputFormats.contains(ImageCapture.OUTPUT_FORMAT_RAW_JPEG) }.getOrDefault(false) } ?: false
@@ -440,8 +538,29 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             cam.cameraControl.setExposureCompensationIndex(0)
         }
     }
+    // S2/S3: enquanto a câmera do teste não tiver o onClosed, o véu diz "Fechando a câmera…" (e, passado o prazo, o aviso com
+    // "Reabrir câmera"); quando o sistema confirma, o CameraX volta sozinho, com o mesmo vigia da devolução de sempre
+    LaunchedEffect(cameraRetida) {
+        if (!cameraRetida) return@LaunchedEffect
+        val id = DoisSensores.retida?.id ?: ultimaDevolucao ?: "retida"
+        while (true) {
+            val rod = DoisSensores.retida
+            if (rod == null || rod.liberada) break
+            fechamentoPendente = rod.fechamentoPendente
+            delay(100)
+        }
+        fechamentoPendente = false
+        cameraRetida = false
+        ultimaDevolucao = id
+        devolvendo = id
+        ligando = true
+        religar++
+        vigiarDevolucao(id)
+    }
     LaunchedEffect(flash) { imageCapture.flashMode = flash }
-    LaunchedEffect(proEv, proIso, proTempoNs, proFoco, proWb, modo) {
+    // chave camera: cada religar (fim do teste de dois sensores, troca de proporção) zera as opções Camera2 acima; sem
+    // ela os ajustes manuais do PRO ficavam na tela mas fora da câmera
+    LaunchedEffect(proEv, proIso, proTempoNs, proFoco, proWb, modo, camera) {
         val cam = camera ?: return@LaunchedEffect
         if (modo != Modo.PRO) return@LaunchedEffect
         val faixaEv = cam.cameraInfo.exposureState.exposureCompensationRange
@@ -544,6 +663,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
      * (4 quadros iguais). A foto fundida segue o mesmo caminho da foto simples (inclusive o scanner).
      */
     fun tiraVarias(comHdr: Boolean) {
+        if (testando) return   // teste de dois sensores segura a câmera: nada de captura, nem no fim do temporizador
         ocupado = true
         escopo.launch {
             val cam = camera
@@ -641,6 +761,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     }
 
     fun tiraFoto() {
+        if (testando) return   // teste de dois sensores segura a câmera: o fim do temporizador também cai aqui
         if (camera == null || ligando) { Toast.makeText(contexto, "A câmera ainda está abrindo; tente de novo.", Toast.LENGTH_SHORT).show(); return }
         // HDR e rajada valem na Foto e no Retrato por software (o bokeh nativo não aceita: a extensão captura sozinha)
         val retratoSoftware = modo == Modo.RETRATO && !bokehNativo
@@ -682,7 +803,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     }
 
     fun disparar() {
-        if (ocupado) return
+        if (ocupado || testando) return
         if (modo.video) {
             val atual = gravacao
             if (atual != null) { atual.stop(); return }
@@ -719,10 +840,304 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         } else tiraFoto()
     }
 
+    // ---- teste de dois sensores: entrada, orquestração e saídas ----
+
+    fun quemCancelou(rod: DoisSensores.Rodada): String {
+        val atividade = contexto as? Activity
+        return when {
+            atividade?.isChangingConfigurations == true -> "activity_recriada"
+            atividade?.isFinishing == true -> "activity_fechando"
+            rod.cancelarPedido == DoisSensores.PEDIDO_DONO -> "dono"
+            rod.cancelarPedido == DoisSensores.PEDIDO_INTERROMPIDO -> "interrompido"
+            else -> "desconhecido"
+        }
+    }
+
+    /** Item "Sensores" da gaveta: lê em IO o último resumo e a última pasta com par, e abre o diálogo. */
+    fun abrirSensores() {
+        gaveta = false
+        escopo.launch {
+            try {
+                val (pasta, resumo) = withContext(Dispatchers.IO) { DoisSensores.ultimaPasta(contexto) to DoisSensores.ultimoResumo(contexto) }
+                ultimaPastaDois = pasta; ultimoResumoDois = resumo
+                escolhaSensores = true
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                // antes a falha aqui só virava Toast; agora leva a classe da exceção para a telemetria (a mensagem é texto livre e não sai)
+                DoisSensores.ev("erro", linkedMapOf("onde" to "sensores", "acao" to "abrir", "classe" to e.javaClass.simpleName))
+                Toast.makeText(contexto, "Não consegui abrir Sensores: ${e.javaClass.simpleName}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /**
+     * Relatório de texto (sem imagens). O portão (uma consulta pendente por vez) e a coleta do relatório consultam o
+     * serviço de câmera: rodam fora do Main, com prazo de 5 s cada, para uma chamada presa não travar a tela. Se a coleta
+     * não terminar no prazo, o relatório sai PARCIAL, com a etapa em que parou (Sensores.compartilhar). Com resultado de
+     * teste, o texto dele vai junto.
+     */
+    fun compartilharRelatorioDois(res: DoisSensores.Resultado?) {
+        escopo.launch {
+            try {
+                var p: DoisSensores.Portao? = res?.portao
+                var semPortao = false
+                if (p == null) {
+                    val d = DoisSensores.portaoAsync(contexto, res?.rodada, "relatorio")
+                    p = withTimeoutOrNull(DoisSensores.PRAZO_PORTAO_MS) { d.await() }
+                    if (p == null) {
+                        semPortao = true
+                        val etapa = DoisSensores.etapaPortao()
+                        DoisSensores.ev("dois_portao", linkedMapOf("rodada" to res?.rodada, "origem" to "relatorio", "prazo" to true, "etapa" to etapa))
+                        DoisSensores.ev("erro", linkedMapOf("onde" to "sensores", "acao" to "relatorio", "motivo" to "prazo_portao", "etapa" to etapa))
+                    } else DoisSensores.ev("dois_portao", p.campos("relatorio", res?.rodada))
+                }
+                val completo = Sensores.compartilhar(contexto, p, semPortao, res?.texto(), if (res != null) "Teste de dois sensores" else "Sensores do aparelho")
+                if (!completo) Toast.makeText(contexto, "O serviço de câmera demorou: o relatório saiu parcial.", Toast.LENGTH_LONG).show()
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                DoisSensores.ev("erro", linkedMapOf("onde" to "sensores", "acao" to "relatorio", "classe" to e.javaClass.simpleName))
+                Toast.makeText(contexto, "Não consegui montar o relatório: ${e.javaClass.simpleName}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    /** "Ver último par": abre a revisão (prévias e lista de anexos) antes de qualquer envio. */
+    fun abrirUltimoPar() {
+        val pasta = ultimaPastaDois ?: return
+        ultimoParAberto = true; pacoteUltimo = null; carregandoUltimo = true
+        escopo.launch {
+            pacoteUltimo = withContext(Dispatchers.IO) { DoisSensores.pacote(contexto, pasta) }
+            carregandoUltimo = false
+        }
+    }
+
+    /** "Apagar este teste": apaga a pasta inteira da rodada e fecha as revisões que apontavam para ela. */
+    fun apagarTeste(pasta: java.io.File) {
+        escopo.launch {
+            val ok = DoisSensores.apagar(contexto, pasta)
+            if (ok) {
+                resultadoDois = null; pacoteDois = null; carregandoPacoteDois = false
+                ultimoParAberto = false; pacoteUltimo = null; carregandoUltimo = false
+                ampliada = null; ampliadaBmp = null
+                ultimaPastaDois = withContext(Dispatchers.IO) { DoisSensores.ultimaPasta(contexto) }
+                Toast.makeText(contexto, "Teste apagado.", Toast.LENGTH_SHORT).show()
+            } else Toast.makeText(contexto, "Não consegui apagar o teste.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun ampliarDois(m: DoisSensores.Miniatura) {
+        ampliada = m; ampliadaBmp = null
+        escopo.launch {
+            val bmp = withContext(Dispatchers.IO) { DoisSensores.ampliar(m.arquivo) }
+            if (bmp != null) { if (ampliada === m) ampliadaBmp = bmp; return@launch }
+            DoisSensores.ev("erro", linkedMapOf("onde" to "dois_compartilhar", "acao" to "ampliar", "motivo" to (if (m.arquivo.exists()) "decodificar" else "arquivo_sumiu")))
+            if (ampliada === m) ampliada = null
+            Toast.makeText(contexto, "Não consegui abrir a imagem.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * "Reabrir câmera": depois de a volta do CameraX vencer o prazo, ou quando o fechamento da Camera2 do teste ficou sem o
+     * onClosed (S3). No segundo caso (rodada ainda retida) o botão só REPETE o pedido de fechamento (close() de novo) e
+     * MANTÉM a espera: cameraRetida segue true, o efeito de espera segue vivo, e o CameraX só volta quando o sistema
+     * confirmar a liberação (onClosed). Novo teste e novo bind seguem bloqueados até lá; nem o toque do dono libera a "0".
+     */
+    fun reabrirCamera() {
+        val retida = DoisSensores.retida
+        if (retida != null) {
+            DoisSensores.ev("dois_camerax", linkedMapOf("rodada" to retida.id, "acao" to "repetir_fechamento"))
+            DoisSensores.fecharPorFora(retida, "reabrir_manual")
+            Toast.makeText(contexto, "Pedi o fechamento de novo. A câmera volta sozinha quando o sistema confirmar.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val rod = ultimaDevolucao ?: "manual"
+        DoisSensores.ev("dois_camerax", linkedMapOf("rodada" to rod, "acao" to "religar_manual", "codigo_anterior" to cameraNaoVoltou))
+        cameraNaoVoltou = null
+        fechamentoPendente = false
+        cameraRetida = false
+        devolvendo = rod
+        // ligando = true ANTES do religar: o efeito só reinicia no próximo quadro, e o vigia leria camera == null com
+        // ligando == false como "bind falhou" na primeira volta
+        ligando = true
+        religar++
+        vigiarDevolucao(rod)
+    }
+
+    /**
+     * Botão do véu ou Voltar (sem confirmação). O pedido é irreversível e a câmera é fechada por fora na hora (device.close()
+     * direto); a Execucao encerra o resto cooperativamente, e passados PRAZO_CANCELAR_MS o resultado fecha sem ela. Antes
+     * de a Execucao existir, quem espera é o orquestrador.
+     */
+    fun cancelarTeste(gatilho: String) {
+        val rod = rodadaTeste ?: return
+        if (cancelandoTeste) return
+        cancelandoTeste = true
+        DoisSensores.cancelar(rod, DoisSensores.PEDIDO_DONO, gatilho)
+        if (!execucaoLancada) jobTeste?.cancel()
+    }
+
+    /**
+     * Orquestrador (Main). Passos 4 a 7 e 22 da especificação: portão leve com o CameraX ligado, revalidação, soltar o
+     * CameraX e esperar CLOSED, lançar a Execucao e acompanhar o resultado dela. A supervisão da rodada depois do lançamento
+     * (cão de guarda, prazo de cancelamento, fechar, dois_fim, liberar `ativa`) mora no DoisSensores, num escopo
+     * independente desta tela: se a Activity for recriada no meio do teste, a rodada continua supervisionada e termina com
+     * dois_fim, e aqui só se perde o acompanhamento. Antes do lançamento, todo caminho de saída (recusa, prazo, exceção,
+     * cancelamento, descarte da tela) passa pelo finally, que fecha a rodada uma vez só e devolve o CameraX por chave nova.
+     */
+    suspend fun orquestrarDoisSensores(rod: DoisSensores.Rodada, cameraAntes: Camera?, estadoAntes: String?, erroAntes: Int?) {
+        var lancou = false
+        var res: DoisSensores.Resultado? = null
+        var etapaOrq = "portao"
+        try {
+            rod.etapa = "portao"
+            val d = DoisSensores.portaoAsync(contexto, rod.id, "teste")
+            val p = withTimeoutOrNull(DoisSensores.PRAZO_PORTAO_MS) { d.await() }
+            if (p == null) { res = DoisSensores.prazoPortao(rod, "teste", DoisSensores.etapaPortao()); return }
+            rod.portao = p
+            DoisSensores.ev("dois_portao", p.campos("teste", rod.id))
+            if (rod.cancelarPedido != null) { res = DoisSensores.canceladaAntes(rod, "portao", quemCancelou(rod)); return }
+            if (p.veredito == "android_antigo" || p.veredito == "aparelho_sem_dois_sensores") { res = DoisSensores.semCamera(rod, p); return }
+            // revalidação: se o CameraX religou durante o portão, a "0" pode estar abrindo agora; não solta nada
+            if (ligando || camera !== cameraAntes) { res = DoisSensores.naoTestado(rod, p, "camerax_religando", "portao"); return }
+
+            etapaOrq = "soltar"; rod.etapa = "soltar"
+            fase = "Soltando a câmera."
+            val infoX = camera?.cameraInfo
+            experimento = true
+            ProcessCameraProvider.getInstance(contexto).get().unbindAll()
+            camera = null
+            soltouEm = SystemClock.elapsedRealtime()
+            var fechouX: Boolean? = null
+            var msX: Long? = null
+            if (infoX != null) {
+                // o unbindAll volta antes de o device fechar (é assíncrono na thread do CameraX)
+                val t0 = SystemClock.elapsedRealtime()
+                fechouX = withTimeoutOrNull(3_000) { while (infoX.cameraState.value?.type != CameraState.Type.CLOSED) delay(20); true } ?: false
+                msX = SystemClock.elapsedRealtime() - t0
+            }
+            if (rod.cancelarPedido != null) { res = DoisSensores.canceladaAntes(rod, "soltar", quemCancelou(rod)); return }
+
+            etapaOrq = "execucao"
+            val outroApp = erroAntes == CameraState.ERROR_CAMERA_IN_USE || erroAntes == CameraState.ERROR_MAX_CAMERAS_IN_USE
+            DoisSensores.lancar(contexto.applicationContext, rod, p, DoisSensores.InfoCameraX(fechouX, msX, estadoAntes, erroAntes, outroApp)) { f ->
+                escopo.launch { if (testando && !cancelandoTeste) fase = f }
+            }
+            lancou = true
+            execucaoLancada = true
+            // só acompanha: o cão de guarda (68 s) e o cancelamento que passa de 5 s (S2) correm no DoisSensores e fecham a
+            // câmera por fora; o resultado chega aqui quando a rodada fecha, e se esta tela morrer antes, a rodada segue sem ela
+            res = rod.resultado.await()
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            res = DoisSensores.falhaOrquestracao(rod, etapaOrq, e, lancou)
+        } finally {
+            withContext(NonCancellable) {
+                if (res == null && !lancou) res = DoisSensores.canceladaAntes(rod, etapaOrq, quemCancelou(rod))
+                // saiu da tela com a Execucao ainda viva: o pedido de cancelamento (irreversível, fecha a câmera por fora) é
+                // idempotente; quem fecha a rodada e solta `ativa` é a supervisão do DoisSensores
+                if (lancou && !rod.execucaoTerminou) DoisSensores.cancelar(rod, rod.cancelarPedido ?: quemCancelou(rod))
+            }
+            if (experimento) {
+                ultimaDevolucao = rod.id
+                experimento = false
+                if (rod.liberada) {
+                    devolvendo = rod.id
+                    ligando = true   // mesmo motivo do reabrirCamera: o efeito só reinicia no próximo quadro
+                    religar++
+                    vigiarDevolucao(rod.id)
+                } else {
+                    // resultado encerrado, câmera não: sem o onClosed não há religar (S2/S3). O efeito da câmera retida
+                    // mostra "Fechando a câmera…", depois o aviso com "Reabrir câmera", e religa quando o sistema confirma.
+                    fechamentoPendente = rod.fechamentoPendente
+                    cameraRetida = true
+                }
+            }
+            testando = false; fase = null; rodadaTeste = null; jobTeste = null; execucaoLancada = false; cancelandoTeste = false
+            val fim = res
+            if (fim != null) {
+                resultadoDois = fim
+                pacoteDois = null
+                carregandoPacoteDois = fim.parSalvo || fim.seqSalvo
+                if (carregandoPacoteDois) escopo.launch {
+                    pacoteDois = withContext(Dispatchers.IO) { DoisSensores.pacote(contexto, fim) }
+                    carregandoPacoteDois = false
+                }
+            }
+        }
+    }
+
+    /** "Testar dois sensores". Passo 3: guarda; dois_inicio sai sempre, também na recusa. */
+    fun testarDoisSensores() {
+        escolhaSensores = false
+        val estado = camera?.cameraInfo?.cameraState?.value
+        val estadoAntes = estado?.type?.name
+        val erroAntes = estado?.error?.code
+        val recusa = when {
+            gravacao != null -> "gravando"
+            DoisSensores.ativa != null || testando -> "ja_rodando"
+            DoisSensores.retida != null || cameraRetida -> "fechando_camera"   // S2: câmera da rodada anterior sem onClosed
+            ocupado -> "ocupado"
+            processandoDoc || processandoRetrato || processandoAcabamento || processandoLenta -> "processando"
+            contagem > 0 -> "temporizador"
+            ligando -> "camera_abrindo"   // bind que FALHOU não recusa: ligando já voltou a false e camera é null
+            else -> null
+        }
+        val rod = if (recusa == null) DoisSensores.novaRodada(contexto) else null
+        DoisSensores.ev("dois_inicio", linkedMapOf(
+            "rodada" to rod?.id, "android" to android.os.Build.VERSION.SDK_INT, "modo" to modo.name.lowercase(),
+            "lente" to (if (lente == CameraSelector.LENS_FACING_FRONT) "frontal" else "traseira"), "recusado" to recusa,
+            "camerax_estado_antes" to estadoAntes, "camerax_erro_antes" to erroAntes, "camerax_bind_falhou" to (camera == null && !ligando)))
+        if (rod == null) {
+            Toast.makeText(contexto, when (recusa) {
+                "gravando" -> "Pare a gravação antes do teste."
+                "ja_rodando" -> "O teste de dois sensores já está rodando."
+                "fechando_camera" -> "Espere a câmera terminar de fechar."
+                "temporizador" -> "Espere o temporizador terminar."
+                "camera_abrindo" -> "A câmera ainda está abrindo; tente de novo em instantes."
+                else -> "Espere a foto terminar de processar."
+            }, Toast.LENGTH_SHORT).show()
+            return
+        }
+        testando = true; cancelandoTeste = false; execucaoLancada = false; rodadaTeste = rod
+        resultadoDois = null; pacoteDois = null; cameraNaoVoltou = null
+        fase = "Verificando o aparelho."
+        val cameraAntes = camera
+        // UNDISPATCHED: o corpo começa já, dentro deste toque, e entra no try/finally de orquestrarDoisSensores antes de
+        // qualquer suspensão. Com o início padrão, a tela descartada antes do despacho cancelava o job sem rodar o corpo,
+        // e `ativa` ficava ocupada sem dois_fim (revisão do Astra, 02/10).
+        val job = escopo.launch(start = CoroutineStart.UNDISPATCHED) { orquestrarDoisSensores(rod, cameraAntes, estadoAntes, erroAntes) }
+        if (!job.isCompleted) jobTeste = job
+        // segunda rede: job terminado sem lancar() e sem fim (não deveria acontecer com UNDISPATCHED) fecha a rodada aqui
+        job.invokeOnCompletion { runCatching { if (!rod.lancada && !rod.fim.get()) DoisSensores.canceladaAntes(rod, rod.etapa, "activity_recriada") } }
+    }
+
     // teclas de volume disparam enquanto esta tela está viva
     DisposableEffect(Unit) { Atalhos.aoDisparar = { disparar() }; onDispose { Atalhos.aoDisparar = null } }
     // botão voltar do sistema: fecha o editor de cantos (grava sem recorte) ou o painel aberto, em vez de sair do app
     BackHandler(enabled = edicao != null) { edicao?.let { e -> concluirDocumento(e.uri, e.deteccao, e.tela, null, true, e.quadros, e.rot) } }
+    // durante o teste de dois sensores, Voltar é o mesmo Cancelar do véu, sem confirmação
+    BackHandler(enabled = testando) { cancelarTeste("voltar") }
+    // fechando a câmera (véu "Fechando a câmera…"): Voltar não tira o app da tela no meio do fechamento
+    BackHandler(enabled = !testando && cameraRetida && !fechamentoPendente) { }
+    // tela ligada durante o teste: apagar a tela tira o app do primeiro plano e cancela a rodada
+    val vista = LocalView.current
+    DisposableEffect(testando) {
+        if (testando) vista.keepScreenOn = true
+        onDispose { vista.keepScreenOn = false }
+    }
+    // ON_STOP marca em que etapa o app saiu da tela e pede o fim da rodada (a câmera não fica capturando em segundo plano)
+    DisposableEffect(dono) {
+        val observador = LifecycleEventObserver { _, evento ->
+            when (evento) {
+                Lifecycle.Event.ON_STOP -> DoisSensores.aoParar()
+                Lifecycle.Event.ON_START -> DoisSensores.aoIniciar()
+                else -> {}
+            }
+        }
+        dono.lifecycle.addObserver(observador)
+        onDispose { dono.lifecycle.removeObserver(observador) }
+    }
+    LaunchedEffect(testando) { segundosTeste = 0; while (testando) { delay(1000); segundosTeste++ } }
 
     Box(modifier = Modifier.fillMaxSize().background(Fundo)) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -844,7 +1259,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 }
                 if (contagem > 0) Text("$contagem", color = Color.White, fontSize = 96.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center))
                 // card de progresso: sequência, scanner, retrato por software, lenta
-                val textoProcesso = fase ?: when {
+                // a fase do teste de dois sensores aparece no véu, não aqui embaixo dele
+                val textoProcesso = (if (testando) null else fase) ?: when {
                     processandoDoc && modo == Modo.TELA -> "Recortando a tela e tirando o moiré..."
                     processandoDoc -> "Recortando e realçando..."
                     processandoRetrato -> "Desfocando o fundo..."
@@ -858,6 +1274,11 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                         Text(it, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 10.dp))
                     }
                 }
+                val naoVoltou = cameraNaoVoltou
+                if (!testando && devolvendo == null) {
+                    if (fechamentoPendente) CartaoCameraNaoVoltou("A câmera ainda não foi liberada pelo sistema.", { reabrirCamera() }, Modifier.align(Alignment.Center))
+                    else if (naoVoltou != null) CartaoCameraNaoVoltou("A câmera não voltou a funcionar (código $naoVoltou).", { reabrirCamera() }, Modifier.align(Alignment.Center))
+                }
                 if (processandoLenta) Text("Esticando o vídeo (4x)...", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
                 if (modo == Modo.MACRO) Text(if (focoMin > 0f) "Macro: chegue perto (foco no mínimo)" else "Macro: esta lente não informa foco mínimo", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
                 if (modo == Modo.TELA) Text(if (processandoDoc) "Recortando a tela e tirando o moiré..." else "Tela: encha o quadro com a página, sem reflexo", color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp))
@@ -867,7 +1288,21 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     color = Color.White, fontSize = 12.sp, modifier = Modifier.align(Alignment.TopStart).padding(12.dp).clip(RoundedCornerShape(10.dp)).background(Color(0x99000000)).padding(horizontal = 10.dp, vertical = 5.dp)
                 )
                 val nv = novaVersao
-                if (nv != null && avisoAtualizacao) {
+                val pronta = prontaAtualizacao
+                if (pronta != null && !testando) {
+                    // S13: o instalador nunca abre sozinho; terminado o download (e a espera por teste ou câmera por fechar), a atualização fica pronta e o dono toca
+                    Row(
+                        modifier = Modifier.align(Alignment.TopCenter).padding(10.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xE6202020)).padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.SystemUpdate, contentDescription = null, tint = Amarelo)
+                        Column(modifier = Modifier.padding(horizontal = 10.dp)) {
+                            Text("Atualização pronta", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                            Text("Versão ${pronta.nome}", color = Color(0xFFBDBDBD), fontSize = 11.sp)
+                        }
+                        Text("Instalar", color = Amarelo, fontWeight = FontWeight.Bold, fontSize = 13.sp, modifier = Modifier.clickable { Atualizador.instalarPronta(contexto) }.padding(6.dp))
+                    }
+                } else if (nv != null && avisoAtualizacao && !testando) {
                     Row(
                         modifier = Modifier.align(Alignment.TopCenter).padding(10.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xE6202020)).padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -989,7 +1424,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically
             ) {
                 Box(modifier = Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)).background(Color(0xFF222222))
-                    .semantics { contentDescription = "Abrir galeria" }.clickable(onClick = abrirGaleria, role = Role.Button)) {
+                    .semantics { contentDescription = "Abrir galeria" }.clickable(enabled = !testando, onClick = abrirGaleria, role = Role.Button)) {
                     if (ultima != null) AsyncImage(model = ultima, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
                 }
                 val gravando = gravacao != null
@@ -1062,8 +1497,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                     item { Ajuste(Icones.Filtros, "Filtro", filtro, filtro != "Original") { painelAcabamento = true; abaAcabamento = 1; gaveta = false } }
                     item {
                         val nv = novaVersao
-                        Ajuste(Icons.Filled.SystemUpdate, "Atualizar", if (nv != null) "Nova ${nv.nome}" else "Atual ${instalada.first}", nv != null) {
-                            if (nv != null) { gaveta = false; Atualizador.baixarEInstalar(contexto, nv) }
+                        val pr = prontaAtualizacao
+                        Ajuste(Icons.Filled.SystemUpdate, "Atualizar", if (pr != null) "Pronta ${pr.nome}" else if (nv != null) "Nova ${nv.nome}" else "Atual ${instalada.first}", nv != null || pr != null) {
+                            if (pr != null) { gaveta = false; Atualizador.instalarPronta(contexto) }
+                            else if (nv != null) { gaveta = false; Atualizador.baixarEInstalar(contexto, nv) }
                             else escopo.launch {
                                 val v = Atualizador.consultar()
                                 if (v == null) Toast.makeText(contexto, "Não consegui consultar o canal: " + Atualizador.ultimoErro, Toast.LENGTH_LONG).show()
@@ -1072,16 +1509,53 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                             }
                         }
                     }
-                    item { Ajuste(Icons.Filled.CameraRear, "Sensores", "Lentes e concorrência", false) {
-                        gaveta = false
-                        runCatching { Sensores.compartilhar(contexto) }.onFailure {
-                            Toast.makeText(contexto, "Não consegui ler as características das câmeras.", Toast.LENGTH_SHORT).show()
-                        }
-                    } }
+                    item { Ajuste(Icons.Filled.CameraRear, "Sensores", "Relatório e teste duplo", false) { abrirSensores() } }
                     item { Ajuste(Icons.Filled.MoreHoriz, "Mais", "", false) { gaveta = false } }
                 }
             }
         }
+
+        // ---- teste de dois sensores: véu por cima de tudo, depois os diálogos (que são janelas próprias) ----
+        if (testando) VeuDoisSensores(
+            titulo = "Testando dois sensores", aviso = "A prévia fica apagada durante este teste.",
+            // etapa curta seguida de "Não mova o celular."; ao cancelar, o aviso de que a câmera está sendo reaberta
+            fase = if (cancelandoTeste) "Cancelando e reabrindo a câmera…" else (fase?.let { "$it Não mova o celular." } ?: "Não mova o celular."),
+            // configuração, tamanho e etapa interna ficam numa linha secundária, menor
+            tecnico = listOfNotNull(rodadaTeste?.tecnico, rodadaTeste?.etapa?.let { "etapa $it" }).joinToString(" · ").ifEmpty { null },
+            segundos = segundosTeste,
+            botao = if (cancelandoTeste) "Cancelando..." else "Cancelar teste", botaoAtivo = !cancelandoTeste, aoBotao = { cancelarTeste("botao") }
+        ) else if (cameraRetida && !fechamentoPendente) VeuDoisSensores(
+            titulo = "Fechando a câmera…", aviso = "O resultado já saiu; falta o sistema confirmar que a câmera foi liberada.",
+            fase = null, tecnico = null, segundos = null, botao = null, botaoAtivo = false, aoBotao = {}
+        ) else if (devolvendo != null) VeuDoisSensores(
+            titulo = "Devolvendo a câmera...", aviso = null, fase = null, tecnico = null, segundos = null,
+            botao = null, botaoAtivo = false, aoBotao = {}
+        )
+        if (escolhaSensores) DialogoSensores(
+            ultimoResumo = ultimoResumoDois, temUltimoPar = ultimaPastaDois != null, frontal = lente == CameraSelector.LENS_FACING_FRONT,
+            aoTestar = { testarDoisSensores() },
+            aoRelatorio = { escolhaSensores = false; compartilharRelatorioDois(null) },
+            aoVerPar = { escolhaSensores = false; abrirUltimoPar() },
+            aoFechar = { escolhaSensores = false }
+        )
+        // o resultado abre depois que a câmera voltou (a devolução é uma fase do teste); se ela não voltar, ele abre assim
+        // mesmo, com "Reabrir câmera", porque a resposta sobre os sensores não depende disso
+        val resDois = resultadoDois
+        if (resDois != null && !testando && devolvendo == null && !(cameraRetida && !fechamentoPendente)) DialogoResultadoDois(
+            res = resDois, pacote = pacoteDois, carregandoPacote = carregandoPacoteDois, cameraNaoVoltou = cameraNaoVoltou,
+            fechamentoPendente = fechamentoPendente,
+            aoReabrir = { reabrirCamera() }, aoRelatorio = { compartilharRelatorioDois(resDois) },
+            aoCompartilharPar = { pc -> DoisSensores.compartilharPar(contexto, pc) },
+            aoAmpliar = { m -> ampliarDois(m) }, aoApagar = { pasta -> apagarTeste(pasta) },
+            aoFechar = { resultadoDois = null; pacoteDois = null }
+        )
+        if (ultimoParAberto) DialogoUltimoPar(
+            pacote = pacoteUltimo, carregando = carregandoUltimo,
+            aoAmpliar = { m -> ampliarDois(m) }, aoCompartilhar = { pc -> DoisSensores.compartilharPar(contexto, pc) },
+            aoApagar = { pasta -> apagarTeste(pasta) },
+            aoFechar = { ultimoParAberto = false; pacoteUltimo = null }
+        )
+        ampliada?.let { m -> DialogoAmpliarDois(m.rotulo, ampliadaBmp) { ampliada = null; ampliadaBmp = null } }
     }
 }
 

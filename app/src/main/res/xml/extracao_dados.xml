@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+: o par estéreo (files/estereo), a marca/resumo do teste de dois sensores (shared_prefs/dois_sensores.xml) e a
+  fila de telemetria (files/telemetria.jsonl) não vão para o backup em nuvem nem para a transferência entre aparelhos.
+  Só exclusões: o resto do app continua no backup como antes.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="estereo" />
+        <exclude domain="sharedpref" path="dois_sensores.xml" />
+        <exclude domain="file" path="telemetria.jsonl" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="estereo" />
+        <exclude domain="sharedpref" path="dois_sensores.xml" />
+        <exclude domain="file" path="telemetria.jsonl" />
+    </device-transfer>
+</data-extraction-rules>

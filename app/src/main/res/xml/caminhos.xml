@@ -1,5 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Só estas raízes podem virar content:// pelo FileProvider (que não é exportado, mas esta lista é a última barreira):
+  - downloads/: o APK baixado pelo Atualizador;
+  - estereo/: as pastas de rodada do teste de dois sensores (o código ainda confere a lista fechada de arquivos de uma
+    rodada pelo caminho canônico antes de compartilhar);
+  - exportar/: cópias feitas só para compartilhar (hoje, o registro do scanner).
+  O filesDir inteiro NÃO é raiz: telemetria, registro vivo do scanner e miniaturas de pessoas ficam fora do alcance de
+  um erro de seleção de arquivo.
+-->
 <paths>
     <external-files-path name="downloads" path="Download/" />
-    <files-path name="registro" path="." />
+    <files-path name="estereo" path="estereo/" />
+    <files-path name="exportar" path="exportar/" />
 </paths>
