@@ -222,7 +222,7 @@ object Traducao {
      *  - O pedido é uma FOTO: destino e origem fixa são lidos uma vez, aqui, e vão explícitos para a classificação, as
      *    chaves e os motores. Se o dono trocar o idioma no meio, este lote termina no idioma em que começou.
      */
-    fun traduzirLote(ctx: Context, textos: List<String>): Map<String, String> {
+    fun traduzirLote(ctx: Context, textos: List<String>, puladasDoPedido: MutableSet<String>? = null): Map<String, String> {
         val t0 = System.nanoTime()
         val prazoFinal = t0 + PRAZO_MODELO * 1_000_000_000L
         val dest = destino
@@ -234,8 +234,14 @@ object Traducao {
         ultimaOrigem = origem
         ultimoPuladas = textos.count { it in c.pular }
         ultimoUnd = c.und
+        // `ultimoPuladas` é global e o pré-carregamento do modo contínuo o sobrescreve ao mesmo tempo: quem precisa
+        // decidir pelas falas DESTE pedido recebe o conjunto aqui (revisão do Astra, 04/10)
+        puladasDoPedido?.addAll(c.pular)
         // só o dono fixar a origem igual ao destino devolve tudo sem traduzir; a origem automática nunca é igual ao destino
-        if (RegraIdioma.devolveTudoSemTraduzir(fixa, dest)) { textos.forEach { saida[it] = it }; return saida }
+        if (RegraIdioma.devolveTudoSemTraduzir(fixa, dest)) {
+            puladasDoPedido?.addAll(textos)
+            textos.forEach { saida[it] = it }; return saida
+        }
         for (t in textos) if (t in c.pular) saida[t] = t
         val faltando = ArrayList<String>()
         // chaves calculadas uma vez, na mesma ordem de `faltando`, com o destino da foto

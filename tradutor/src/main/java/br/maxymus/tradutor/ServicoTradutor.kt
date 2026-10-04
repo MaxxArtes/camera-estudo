@@ -533,11 +533,12 @@ class ServicoTradutor : AccessibilityService() {
                 if (falas.isEmpty()) null
                 else {
                     val tTrad = System.nanoTime()
-                    val mapa = Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto })
+                    val puladas = HashSet<String>()
+                    val mapa = Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto }, puladas)
                     msTrad = (System.nanoTime() - tTrad) / 1_000_000
                     // o mesmo filtro do Leitor (uteis): fala pulada ou traduzida igual ao original não ganha faixa
                     val uteis = falas.filter { (mapa[it.texto] ?: it.texto) != it.texto }
-                    if (uteis.isEmpty() && Traducao.ultimoPuladas >= falas.size) { tudoNoIdioma = true; null }
+                    if (uteis.isEmpty() && falas.all { it.texto in puladas }) { tudoNoIdioma = true; null }
                     else {
                         // há fala ainda sem tradução útil (o modelo pode chegar depois do prazo): a tela congela com
                         // camada transparente e a revisão congelada a completa quando o cache for corrigido
@@ -554,7 +555,7 @@ class ServicoTradutor : AccessibilityService() {
             trabalhando = false
             if (tudoNoIdioma) {
                 aviso("Esta tela já está no seu idioma.")
-                Telemetria.evento("traduziu", mapOf("falas" to 0, "ms" to ms, "puladas" to Traducao.ultimoPuladas))
+                Telemetria.evento("traduziu", mapOf("falas" to 0, "ms" to ms, "tudo_no_idioma" to true))
                 return@launch
             }
             if (camada == null) { aviso("Não encontrei texto. Mova um pouco a página e tente de novo."); Telemetria.evento("traduziu", mapOf("falas" to 0, "ms" to ms)); return@launch }
