@@ -69,6 +69,12 @@ object Telemetria {
         }
     }
 
+    /**
+     * O que de uma exceção pode ir para a telemetria: só a CLASSE. A mensagem pode trazer pedaço de resposta ou de
+     * fala (um JSONException cita o texto que não conseguiu ler), e fala e resposta nunca saem do aparelho.
+     */
+    fun classe(e: Throwable): String = e::class.java.name
+
     fun agora() = System.nanoTime()
     fun ms(inicio: Long) = (System.nanoTime() - inicio) / 1_000_000
 

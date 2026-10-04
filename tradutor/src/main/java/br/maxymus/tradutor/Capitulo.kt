@@ -56,13 +56,14 @@ object Capitulo {
         val achados = brutas.filter { u -> LIXO.none { lixo -> caminhoDe(u).contains(lixo, true) } }
         Telemetria.evento("capitulo_lista", mapOf("quadros" to achados.size, "brutas" to brutas.size,
             "html_kb" to html.length / 1024, "ms" to (System.nanoTime() - t0) / 1_000_000))
-        // achar endereços e filtrar todos é defeito do filtro, não site desconhecido: isso se registra separado
+        // achar endereços e filtrar todos é defeito do filtro, não site desconhecido: isso se registra separado.
+        // Vai o termo da lista LIXO que derrubou o primeiro endereço, nunca o endereço, que é conteúdo da página.
         if (brutas.isNotEmpty() && achados.isEmpty())
             Telemetria.evento("erro", mapOf("onde" to "capitulo_filtro", "brutas" to brutas.size,
-                "exemplo" to brutas.first().take(90)))
+                "filtro" to (LIXO.firstOrNull { lixo -> caminhoDe(brutas.first()).contains(lixo, true) } ?: "?")))
         achados
     }.getOrElse {
-        Telemetria.evento("erro", mapOf("onde" to "capitulo_html", "msg" to (it.message ?: "").take(90)))
+        Telemetria.evento("erro", mapOf("onde" to "capitulo_html", "msg" to Telemetria.classe(it)))
         emptyList()
     }
 
@@ -81,7 +82,7 @@ object Capitulo {
         tmp.renameTo(destino)
         destino.length().toInt()
     }.getOrElse {
-        Telemetria.evento("erro", mapOf("onde" to "capitulo_quadro", "msg" to (it.message ?: "").take(90))); 0
+        Telemetria.evento("erro", mapOf("onde" to "capitulo_quadro", "msg" to Telemetria.classe(it))); 0
     }
 
     /**

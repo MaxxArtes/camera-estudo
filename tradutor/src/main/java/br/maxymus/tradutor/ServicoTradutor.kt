@@ -81,6 +81,8 @@ class ServicoTradutor : AccessibilityService() {
     private var continuo = false          // sobreposição que acompanha a rolagem, em vez da tela congelada
     private var fechar: View? = null      // o X, janela própria porque a camada não recebe toque
     private var menu: View? = null
+    private var camadaCongelada: ImageView? = null   // a camada traduzida da tela congelada, para trocar quando chega correção do modelo
+    private var jobRevisaoCongelada: kotlinx.coroutines.Job? = null
     private var adiantando = false
     private var bx = 0; private var by = 0
 
@@ -236,7 +238,7 @@ class ServicoTradutor : AccessibilityService() {
             }
         }
         runCatching { janelas.addView(v, p); bolha = v }.onFailure {
-            Telemetria.evento("erro", mapOf("onde" to "mostrar_bolha", "msg" to (it.message ?: it::class.java.simpleName).take(120)))
+            Telemetria.evento("erro", mapOf("onde" to "mostrar_bolha", "msg" to Telemetria.classe(it)))
         }
     }
 
@@ -295,7 +297,7 @@ class ServicoTradutor : AccessibilityService() {
         if (tela == null || !continuo) { trabalhando = false; sobreposicao?.visibility = View.VISIBLE; return }
         val assin = assinaturaDe(tela)
         // tela igual não basta para pular: se o modelo chegou atrasado e melhorou o cache, tem que redesenhar
-        val corr = Traducao.correcoes
+        val corr = Traducao.correcoes.get()
         if (assin == ultimaAssinatura && corr == ultimaCorrecao && sobreposicao != null) {
             trabalhando = false; sobreposicao?.visibility = View.VISIBLE; return
         }
@@ -312,37 +314,73 @@ class ServicoTradutor : AccessibilityService() {
         if (falas.isEmpty()) { trabalhando = false; sobreposicao?.visibility = View.VISIBLE; return }
         val textos = falas.map { it.texto }
         val conhecido = withContext(Dispatchers.Default) { Traducao.soCache(this@ServicoTradutor, textos) }
-        if (conhecido.isNotEmpty() && continuo)
-            mostraCamada(withContext(Dispatchers.Default) { Pintura.camada(tela, falas) { conhecido[it] ?: it } })
+        // Só se pinta o que MUDOU, o mesmo filtro do Leitor (uteis): fala pulada por já estar no idioma do dono, ou
+        // traduzida igual ao original, não ganha faixa. Senão a interface do app em português levaria uma por cima.
+        val uteisConhecido = falas.filter { (conhecido[it.texto] ?: it.texto) != it.texto }
+        if (uteisConhecido.isNotEmpty() && continuo)
+            mostraCamada(withContext(Dispatchers.Default) { Pintura.camada(tela, uteisConhecido) { conhecido[it] ?: it } })
         val tTrad = System.nanoTime()
         val mapa = withContext(Dispatchers.Default) { Traducao.traduzirLote(this@ServicoTradutor, textos) }
         val msT = (System.nanoTime() - tTrad) / 1_000_000
         trabalhando = false
         if (!continuo) return
         val tPint = System.nanoTime()
-        if (mapa != conhecido || conhecido.isEmpty())
-            mostraCamada(withContext(Dispatchers.Default) { Pintura.camada(tela, falas) { mapa[it] ?: it } })
+        val uteis = falas.filter { (mapa[it.texto] ?: it.texto) != it.texto }
+        // Sem nada útil a camada sai vazia, e mesmo assim é posta: ela troca a da tela anterior, que senão ficaria com
+        // as faixas velhas por cima da tela nova (e a tela igual continua sendo reconhecida acima, por haver camada).
+        if (uteisConhecido.isEmpty() || uteis.map { it.texto to mapa[it.texto] } != uteisConhecido.map { it.texto to conhecido[it.texto] })
+            mostraCamada(withContext(Dispatchers.Default) { Pintura.camada(tela, uteis) { mapa[it] ?: it } })
         val msP = (System.nanoTime() - tPint) / 1_000_000
         Telemetria.evento("traduziu", mapOf("modo" to "continuo", "falas" to falas.size,
             "ja_no_cache" to conhecido.size, "caminho" to Traducao.ultimoCaminho,
             "origem" to (Traducao.ultimaOrigem ?: "?"), "modelo" to Traducao.ultimoModelo,
+            "puladas" to Traducao.ultimoPuladas, "und" to Traducao.ultimoUnd, "ms_modelo" to Traducao.ultimoMsModelo,
             "ms_ocr" to msO, "ms_trad" to msT, "ms_pint" to msP, "cache" to Traducao.noCache))
-        agendaRevisao()
+        agendaRevisao(corr)
     }
 
     /**
      * O modelo bom chega atrasado e corrige o cache. Sem isto a tradução rápida ficaria na tela para sempre,
      * porque o laço só redesenha quando a tela MUDA — e o dono está parado, lendo. Então espera-se a correção
      * por até 12 s e redesenha UMA vez quando ela vem.
+     *
+     * `referencia` é o valor de `correcoes` lido ANTES de a tradução começar, e não o de agora: uma correção que chegou no
+     * meio do pedido já conta, em vez de entrar na referência e ficar invisível. Se o desenho estiver ocupado quando ela
+     * for notada, a revisão fica pendente (espera a próxima volta) em vez de se perder.
      */
-    private fun agendaRevisao() {
+    private fun agendaRevisao(referencia: Int) {
         jobRevisao?.cancel()
         jobRevisao = escopo.launch {
-            val partiu = Traducao.correcoes
             repeat(24) {
                 kotlinx.coroutines.delay(500)
                 if (!continuo) return@launch
-                if (Traducao.correcoes != partiu) { desenhaContinuo(); return@launch }
+                if (Traducao.correcoes.get() != referencia && !trabalhando) { desenhaContinuo(); return@launch }
+            }
+        }
+    }
+
+    /**
+     * O mesmo para a tela congelada, que antes nem agendava revisão: o modelo bom chega depois e a camada já mostrada
+     * ficava com a tradução inferior até o dono fechar. Por até 12 s, quando `correcoes` muda em relação a `referencia`
+     * (lida antes de a tradução começar), a camada é refeita a partir do cache e trocada no mesmo ImageView, desde que
+     * a sobreposição ainda seja a mesma. Reaproveita o contador e o filtro `uteis` do modo contínuo.
+     */
+    private fun agendaRevisaoCongelada(tela: Bitmap, falas: List<Falas.Fala>, referencia: Int) {
+        val alvo = camadaCongelada ?: return
+        jobRevisaoCongelada?.cancel()
+        jobRevisaoCongelada = escopo.launch {
+            var vista = referencia
+            repeat(24) {
+                kotlinx.coroutines.delay(500)
+                if (camadaCongelada !== alvo) return@launch
+                val atual = Traducao.correcoes.get()
+                if (atual != vista) {
+                    vista = atual
+                    val mapa = withContext(Dispatchers.Default) { Traducao.soCache(this@ServicoTradutor, falas.map { it.texto }) }
+                    val uteis = falas.filter { (mapa[it.texto] ?: it.texto) != it.texto }
+                    val nova = withContext(Dispatchers.Default) { Pintura.camada(tela, uteis) { mapa[it] ?: it } }
+                    if (camadaCongelada === alvo) alvo.setImageBitmap(nova)
+                }
             }
         }
     }
@@ -485,6 +523,9 @@ class ServicoTradutor : AccessibilityService() {
             // fora as barras do sistema e do navegador: sem isto o app le a barra de endereço e gasta tradução
             val topo = (tela.height * 0.11f).toInt(); val base = (tela.height * 0.96f).toInt()
             val t0 = System.nanoTime()
+            // a referência da revisão é lida ANTES de traduzir: correção que chega no meio do pedido não pode ficar invisível
+            val referencia = Traducao.correcoes.get()
+            var tudoNoIdioma = false
             val camada = withContext(Dispatchers.Default) {
                 val tOcr = System.nanoTime()
                 val falas = Falas.ler(tela, topo, base)
@@ -494,17 +535,32 @@ class ServicoTradutor : AccessibilityService() {
                     val tTrad = System.nanoTime()
                     val mapa = Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto })
                     msTrad = (System.nanoTime() - tTrad) / 1_000_000
-                    val tPint = System.nanoTime()
-                    val c = Pintura.camada(tela, falas) { mapa[it] ?: it }
-                    msPint = (System.nanoTime() - tPint) / 1_000_000
-                    c to falas.size
+                    // o mesmo filtro do Leitor (uteis): fala pulada ou traduzida igual ao original não ganha faixa
+                    val uteis = falas.filter { (mapa[it.texto] ?: it.texto) != it.texto }
+                    if (uteis.isEmpty() && Traducao.ultimoPuladas >= falas.size) { tudoNoIdioma = true; null }
+                    else {
+                        // há fala ainda sem tradução útil (o modelo pode chegar depois do prazo): a tela congela com
+                        // camada transparente e a revisão congelada a completa quando o cache for corrigido
+                        // (revisão do Astra, 03/10)
+                        val tPint = System.nanoTime()
+                        val c = if (uteis.isEmpty()) Bitmap.createBitmap(tela.width, tela.height, Bitmap.Config.ARGB_8888)
+                                else Pintura.camada(tela, uteis) { mapa[it] ?: it }
+                        msPint = (System.nanoTime() - tPint) / 1_000_000
+                        Triple(c, falas.size, falas)
+                    }
                 }
             }
             val ms = (System.nanoTime() - t0) / 1_000_000
             trabalhando = false
+            if (tudoNoIdioma) {
+                aviso("Esta tela já está no seu idioma.")
+                Telemetria.evento("traduziu", mapOf("falas" to 0, "ms" to ms, "puladas" to Traducao.ultimoPuladas))
+                return@launch
+            }
             if (camada == null) { aviso("Não encontrei texto. Mova um pouco a página e tente de novo."); Telemetria.evento("traduziu", mapOf("falas" to 0, "ms" to ms)); return@launch }
-            Telemetria.evento("traduziu", mapOf("falas" to camada.second, "ms" to ms, "cache" to Traducao.noCache, "caminho" to Traducao.ultimoCaminho, "origem" to (Traducao.ultimaOrigem ?: "?"), "online" to Traducao.ultimoOnline, "offline" to Traducao.ultimoOffline, "modelo" to Traducao.ultimoModelo, "ms_ocr" to msOcr, "ms_trad" to msTrad, "ms_pint" to msPint))
+            Telemetria.evento("traduziu", mapOf("falas" to camada.second, "ms" to ms, "cache" to Traducao.noCache, "caminho" to Traducao.ultimoCaminho, "origem" to (Traducao.ultimaOrigem ?: "?"), "online" to Traducao.ultimoOnline, "offline" to Traducao.ultimoOffline, "modelo" to Traducao.ultimoModelo, "puladas" to Traducao.ultimoPuladas, "und" to Traducao.ultimoUnd, "ms_modelo" to Traducao.ultimoMsModelo, "ms_ocr" to msOcr, "ms_trad" to msTrad, "ms_pint" to msPint))
             mostraSobreposicao(tela, camada.first)
+            agendaRevisaoCongelada(tela, camada.third, referencia)
         }
     }
 
@@ -532,7 +588,8 @@ class ServicoTradutor : AccessibilityService() {
         tiraSobreposicao()
         val caixa = FrameLayout(this)
         caixa.addView(ImageView(this).apply { setImageBitmap(tela); scaleType = ImageView.ScaleType.FIT_XY })
-        caixa.addView(ImageView(this).apply { setImageBitmap(camada); scaleType = ImageView.ScaleType.FIT_XY })
+        val imagemCamada = ImageView(this).apply { setImageBitmap(camada); scaleType = ImageView.ScaleType.FIT_XY }
+        caixa.addView(imagemCamada)
         caixa.addView(TextView(this).apply {
             text = "Toque para voltar à página"
             setTextColor(0xFFF5F5F5.toInt()); textSize = 13f
@@ -547,13 +604,16 @@ class ServicoTradutor : AccessibilityService() {
             WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, PixelFormat.OPAQUE)
-        runCatching { janelas.addView(caixa, p); sobreposicao = caixa }
+        runCatching { janelas.addView(caixa, p); sobreposicao = caixa; camadaCongelada = imagemCamada }
         // a bolha precisa ficar POR CIMA da sobreposição; remover e recriar deixava duas na tela
         bolha?.let { b -> runCatching { janelas.removeViewImmediate(b) }; bolha = null }
         mostraBolha()
     }
 
-    private fun tiraSobreposicao() { sobreposicao?.let { runCatching { janelas.removeView(it) } }; sobreposicao = null }
+    private fun tiraSobreposicao() {
+        sobreposicao?.let { runCatching { janelas.removeView(it) } }; sobreposicao = null
+        jobRevisaoCongelada?.cancel(); camadaCongelada = null
+    }
 
     private fun aviso(texto: String) {
         val t = TextView(this).apply {

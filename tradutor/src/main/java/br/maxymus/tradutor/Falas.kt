@@ -33,7 +33,7 @@ object Falas {
         }
         junta(brutas)
     }.getOrElse { e ->
-        Telemetria.evento("erro", mapOf("onde" to "ocr", "msg" to (e.message ?: e::class.java.simpleName).take(120)))
+        Telemetria.evento("erro", mapOf("onde" to "ocr", "msg" to Telemetria.classe(e)))
         emptyList()
     }
 

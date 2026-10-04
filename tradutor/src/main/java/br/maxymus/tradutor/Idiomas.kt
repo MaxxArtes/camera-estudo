@@ -40,18 +40,27 @@ object Idiomas {
     private val gerente by lazy { RemoteModelManager.getInstance() }
     private fun modelo(tag: String) = TranslateRemoteModel.Builder(tag).build()
 
-    /** Tags já baixadas. Bloqueante. */
-    fun baixados(): Set<String> = runCatching {
-        Tasks.await(gerente.getDownloadedModels(TranslateRemoteModel::class.java), 10, TimeUnit.SECONDS)
-            .map { it.language }.toSet()
-    }.getOrDefault(emptySet())
+    /** Tags já baixadas. Bloqueante, espera até 10 s: é para a tela de idiomas, que não tem pressa. */
+    fun baixados(): Set<String> = baixados(10_000L) ?: emptySet()
+
+    /**
+     * O mesmo, com PRAZO: espera no máximo `ateMs` e devolve null quando não deu tempo ou falhou. Quem tem prazo (o lote
+     * de tradução) precisa distinguir "não sei" de "nenhum pacote", senão acusa pacote faltando por causa de lentidão.
+     */
+    fun baixados(ateMs: Long): Set<String>? {
+        if (ateMs <= 0) return null
+        return runCatching {
+            Tasks.await(gerente.getDownloadedModels(TranslateRemoteModel::class.java), ateMs, TimeUnit.MILLISECONDS)
+                .map { it.language }.toSet()
+        }.getOrNull()
+    }
 
     /** Baixa um pacote. Bloqueante, pode demorar. */
     fun baixar(tag: String): Boolean = runCatching {
         Tasks.await(gerente.download(modelo(tag), DownloadConditions.Builder().build()), 15, TimeUnit.MINUTES)
         Telemetria.evento("idioma_baixado", mapOf("idioma" to tag)); true
     }.getOrElse {
-        Telemetria.evento("erro", mapOf("onde" to "idioma_baixar", "idioma" to tag, "msg" to (it.message ?: "").take(90))); false
+        Telemetria.evento("erro", mapOf("onde" to "idioma_baixar", "idioma" to tag, "msg" to Telemetria.classe(it))); false
     }
 
     /** Apaga um pacote para liberar espaço. */
