@@ -120,6 +120,9 @@ object Traducao {
      * mudou, que é o que interessa a quem desenha.
      */
     private fun guardar(chave: String, texto: String, nivel: Int): Gravado {
+        // Máquina e offline devolvem o próprio original quando não sabem traduzir; isso não é tradução e não pode ficar
+        // no cache, senão o leitor recebe o original de volta para sempre. Do modelo, igual ao original é decisão e fica.
+        if (nivel < NIVEL_MODELO && normalizar(texto) == chave.substringAfter('|')) return Gravado(Entrada(texto, nivel), false)
         var mudou = false
         val efetiva = cache.compute(chave) { _, atual ->
             if (atual != null && nivel < atual.nivel) atual
@@ -279,7 +282,7 @@ object Traducao {
      *    cedo quando ela é falsa. Só se PARA de esperar: o futuro compartilhado nunca é cancelado.
      */
     fun traduzirLoteDetalhado(
-        ctx: Context, textos: List<String>, destinoDoPedido: String? = null, ativo: () -> Boolean = { true }
+        ctx: Context, textos: List<String>, destinoDoPedido: String? = null, ignorarCache: Boolean = false, ativo: () -> Boolean = { true }
     ): ResultadoLote {
         val t0 = System.nanoTime()
         val dest = destinoDoPedido ?: destino
@@ -307,6 +310,7 @@ object Traducao {
                 if (t in c.pular || !vistas.add(t)) continue
                 val k = chave(t, dest)
                 if (k in minhas) continue      // outra grafia de uma fala que eu já peço: sai com o resultado dela
+                if (ignorarCache) cache.remove(k)
                 val r = Coordenacao.consultarOuReservar(k, { cache[it] }, emAndamento)
                 val pronta = r.pronta
                 when {
@@ -423,7 +427,7 @@ object Traducao {
         limite: Long, ativo: () -> Boolean, comRede: Boolean = p.comRede, chavesFuturo: List<String> = chaves,
         offlineParalelo: Boolean = false
     ) {
-        if (faltando.isEmpty()) return
+        if (faltando.isEmpty() || !ativo()) return
         val saida = p.saida
         val origem = p.origem
         val dest = p.dest
@@ -447,7 +451,7 @@ object Traducao {
             ex.submit(Runnable { offline.trabalhar(limite, ativo) }).also { ex.shutdown() }
         } else null
         try {
-            if (comRede) {
+            if (comRede && ativo()) {
                 // Os dois caminhos online saem AO MESMO TEMPO. O modelo traduz melhor mas leva de 4 a 7 s; o tradutor
                 // de máquina responde em ~1 s. Em fila, o dono esperava a soma — foi a lentidão que ele sentiu.
                 // Agora espera-se o modelo até PRAZO_MODELO e, se ele não chegar, usa o que a máquina já trouxe.
@@ -456,9 +460,9 @@ object Traducao {
                 // o instante em que o modelo terminou é gravado por ele mesmo: o laço abaixo só olha de 40 em 40 ms
                 val fimModelo = AtomicLong(0L)
                 val fModelo = if (comModelo) piscina.submit<RespostaModelo> {
-                    porModelo(faltando, origem, dest).also { fimModelo.set(System.nanoTime()) }
+                    (if (ativo()) porModelo(faltando, origem, dest) else RespostaModelo(null, null, null)).also { fimModelo.set(System.nanoTime()) }
                 } else null
-                val fMaquina = piscina.submit<String?> { mot.maquina(numerado, origem, dest) }
+                val fMaquina = piscina.submit<String?> { if (ativo()) mot.maquina(numerado, origem, dest) else null }
                 piscina.shutdown()
 
                 /*
@@ -1200,7 +1204,7 @@ internal object Acompanhamento {
 /** Regras do cache em disco do leitor, puras para rodar na JVM. */
 internal object RegraLeitor {
     /** O quadro pintado leva o idioma de destino no nome: trocar o destino não traz de volta o quadro no idioma errado. */
-    fun nomePintado(indice: Int, destino: String) = "${indice}t_$destino.jpg"
+    fun nomePintado(indice: Int, destino: String) = "${indice}c_$destino.jpg"
 
     /**
      * O quadro que está pronto (ou sem texto) foi decidido para OUTRO destino? Então volta para a fila e é repintado.

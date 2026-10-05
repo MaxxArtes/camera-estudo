@@ -45,8 +45,8 @@ internal class LeituraNoLeitor(
         private set
     /** Sem voz pt-BR que sirva: a tela mostra a caixa "Instalar voz". */
     var pedirVoz by mutableStateOf(false)
-    /** "Avançar automaticamente": desligado no início e vale só nesta abertura do leitor. */
-    var avancar by mutableStateOf(false)
+    /** "Avançar automaticamente": ligado no início e vale só nesta abertura do leitor. */
+    var avancar by mutableStateOf(true)
 
     /** A rolagem em andamento é do próprio app (ir até o próximo quadro ou a próxima fala), e essa não interrompe a leitura. */
     var rolandoPeloApp = false
@@ -69,9 +69,6 @@ internal class LeituraNoLeitor(
         if (ativa || voz.lendo) return
         if (leitor.mostrarOriginal) { avisar(AVISO_ORIGINAL, 3_000L); return }
         if (inicial == null || inicial !in leitor.quadros.indices) return
-        val q = leitor.quadros[inicial]
-        // Um novo pedido de ouvir permite recuperar as falas após uma falha de rede.
-        if (q.estado == Leitor.Estado.ERRO_REDE) leitor.tentarDeNovo(q)
         avisar(null)
         primeiro = true
         falaDaVez = -1
@@ -171,14 +168,9 @@ internal class LeituraNoLeitor(
                     return
                 }
                 RegraLeituraCapitulo.Passo.PULAR -> {
-                    // Sem avançar, o quadro escolhido é tudo o que se lê: sem fala, não há o que ouvir.
-                    if (inicial && !avancar) {
-                        avisar("Não há falas traduzidas para ouvir neste quadro.", 3_000L)
-                        voz.parar(RegraVoz.FIM)
-                        return
-                    }
+                    if (leitor.situacaoLeitura(q) == RegraLeituraCapitulo.Situacao.ERRO) voz.pulouErro()
                     // Pula SEM rolar: a tela só anda quando houver o que ler, uma animação só em vez de uma por página vazia.
-                    when (val depois = RegraLeituraCapitulo.depoisDoQuadro(i, total, avancar)) {
+                    when (val depois = RegraLeituraCapitulo.depoisDoQuadro(i, total, true)) {
                         RegraLeituraCapitulo.Depois.Fim -> { voz.parar(RegraVoz.FIM); return }
                         RegraLeituraCapitulo.Depois.FimCapitulo -> { fimDoCapitulo(); return }
                         is RegraLeituraCapitulo.Depois.Proximo -> i = depois.indice
