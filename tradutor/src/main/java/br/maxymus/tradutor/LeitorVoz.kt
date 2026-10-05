@@ -6,10 +6,12 @@ import android.content.Intent
 import android.os.PowerManager
 import android.speech.tts.TextToSpeech
 import androidx.compose.foundation.gestures.animateScrollBy
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -67,6 +69,9 @@ internal class LeituraNoLeitor(
         if (ativa || voz.lendo) return
         if (leitor.mostrarOriginal) { avisar(AVISO_ORIGINAL, 3_000L); return }
         if (inicial == null || inicial !in leitor.quadros.indices) return
+        val q = leitor.quadros[inicial]
+        // Um novo pedido de ouvir permite recuperar as falas após uma falha de rede.
+        if (q.estado == Leitor.Estado.ERRO_REDE) leitor.tentarDeNovo(q)
         avisar(null)
         primeiro = true
         falaDaVez = -1
@@ -207,15 +212,33 @@ internal class LeituraNoLeitor(
      */
     private suspend fun mostrar(i: Int, d: RegraLeituraCapitulo.DadosQuadro, f: RegraLeituraCapitulo.FalaQuadro): Boolean {
         if (lista.layoutInfo.visibleItemsInfo.none { it.index == i } && !rolar { lista.animateScrollToItem(i) }) return false
-        val info = lista.layoutInfo.visibleItemsInfo.firstOrNull { it.index == i } ?: return true
-        val larguraTela = lista.layoutInfo.viewportSize.width
-        val topo = RegraLeituraCapitulo.naTela(f.topo, d.largura, larguraTela, info.offset)
-        val base = RegraLeituraCapitulo.naTela(f.base, d.largura, larguraTela, info.offset)
-        val inicio = lista.layoutInfo.viewportStartOffset + alturaCima
-        val fim = lista.layoutInfo.viewportEndOffset - alturaBaixo
         val margem = (16 * contexto.resources.displayMetrics.density).toInt()
-        val delta = RegraLeituraCapitulo.deslocamento(topo, base, inicio, fim, margem)
-        return delta == 0 || rolar { lista.animateScrollBy(delta.toFloat()) }
+        // O viewport já começa em -contentPadding: somar a barra desconta sua altura só uma vez.
+        fun deslocamento(folga: Int): Int? {
+            val li = lista.layoutInfo
+            val info = li.visibleItemsInfo.firstOrNull { it.index == i } ?: return null
+            val topo = RegraLeituraCapitulo.naTela(f.topo, d.largura, li.viewportSize.width, info.offset)
+            val base = RegraLeituraCapitulo.naTela(f.base, d.largura, li.viewportSize.width, info.offset)
+            return RegraLeituraCapitulo.deslocamento(topo, base,
+                li.viewportStartOffset + alturaCima, li.viewportEndOffset - alturaBaixo, folga)
+        }
+        // Aguarda também a medição das barras quando o aviso de preparo desaparece.
+        withFrameNanos { }
+        val delta = deslocamento(margem)
+        if (delta != null && delta != 0 && !rolar { lista.animateScrollBy(delta.toFloat()) }) return false
+        // No começo e no fim pode faltar a folga pedida. Confere o que realmente rolou e usa o espaço reservado.
+        repeat(3) {
+            withFrameNanos { }
+            val restante = deslocamento(0)
+            if (restante == 0) return true
+            if (!rolar {
+                if (restante == null) lista.scrollToItem(i) else lista.scrollBy(restante.toFloat())
+            }) return false
+        }
+        withFrameNanos { }
+        if (deslocamento(0) == 0) return true
+        interromper(RegraLeituraCapitulo.ERRO_QUADRO)
+        return false
     }
 
     /**

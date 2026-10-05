@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -177,6 +178,7 @@ private fun TelaCapitulo(endereco: String, voltar: () -> Unit) {
         derivedStateOf {
             val li = lista.layoutInfo
             val comBarras = barras || leitura.ativa
+            // O início do viewport inclui o padding negativo; a barra é descontada só uma vez.
             val inicio = li.viewportStartOffset + (if (comBarras) leitura.alturaCima else 0)
             val fim = li.viewportEndOffset - (if (comBarras) leitura.alturaBaixo else 0)
             RegraLeituraCapitulo.quadroInicial(li.visibleItemsInfo.map {
@@ -190,7 +192,10 @@ private fun TelaCapitulo(endereco: String, voltar: () -> Unit) {
         leitor.falhouLista -> NaoReconheci(endereco, voltar)
         else -> Box(Modifier.fillMaxSize().background(Fundo)
             .pointerInput(Unit) { detectTapGestures { barras = !barras } }) {
-            LazyColumn(state = lista, modifier = Modifier.fillMaxSize()) {
+            LazyColumn(state = lista, modifier = Modifier.fillMaxSize(),
+                contentPadding = with(LocalDensity.current) {
+                    PaddingValues(top = leitura.alturaCima.toDp(), bottom = leitura.alturaBaixo.toDp())
+                }) {
                 items(leitor.quadros, key = { it.indice }) { q -> QuadroNaTela(q) { leitor.tentarDeNovo(q) } }
             }
             if (mostrarBarras) {
@@ -231,6 +236,10 @@ private fun QuadroNaTela(q: Leitor.Quadro, tentarDeNovo: () -> Unit) {
             }
             if (q.estado == Leitor.Estado.TRADUZINDO)
                 Etiqueta("Traduzindo…", Modifier.align(Alignment.TopStart))
+            if (q.estado == Leitor.Estado.ERRO_REDE && b != null)
+                TextButton(onClick = tentarDeNovo, modifier = Modifier.align(Alignment.TopStart).padding(8.dp)) {
+                    Text("Tentar novamente", color = Coral, fontSize = 12.sp)
+                }
             if (q.estado == Leitor.Estado.ERRO_TRAD && b != null)
                 Row(Modifier.align(Alignment.TopStart).padding(8.dp)) {
                     Etiqueta("Sem tradução", Modifier)

@@ -24,7 +24,7 @@ internal object RegraLeituraCapitulo {
     )
 
     /** Muda quando o formato do arquivo muda: arquivo de outro formato é ignorado e o quadro é preparado de novo. */
-    const val FORMATO = 1
+    const val FORMATO = 2
 
     /** O arquivo de falas leva o destino no nome, como o quadro pintado (RegraLeitor.nomePintado). */
     fun nomeFalas(indice: Int, destino: String) = "${indice}f_$destino.txt"
@@ -39,7 +39,7 @@ internal object RegraLeituraCapitulo {
      */
     fun escrever(d: DadosQuadro): String = buildString {
         append("falas\t").append(FORMATO).append('\t').append(escapa(d.destino)).append('\t').append(d.versaoTraducao)
-            .append('\t').append(d.largura).append('\t').append(d.altura).append('\n')
+            .append('\t').append(d.largura).append('\t').append(d.altura).append('\t').append(d.falas.size).append('\n')
         for (f in d.falas) {
             append(f.esquerda).append('\t').append(f.topo).append('\t').append(f.direita).append('\t').append(f.base)
                 .append('\t').append(f.alturaLinha).append('\t').append(escapa(f.texto)).append('\n')
@@ -48,19 +48,22 @@ internal object RegraLeituraCapitulo {
 
     /** Lê o que `escrever` gravou. Nulo quando o arquivo é de outro formato, está truncado ou não faz sentido. */
     fun ler(texto: String): DadosQuadro? {
-        val linhas = texto.split('\n').filter { it.isNotEmpty() }
+        if (!texto.endsWith('\n')) return null
+        val linhas = texto.dropLast(1).split('\n')
         val cab = linhas.firstOrNull()?.split('\t') ?: return null
-        if (cab.size != 6 || cab[0] != "falas" || cab[1].toIntOrNull() != FORMATO) return null
+        if (cab.size != 7 || cab[0] != "falas" || cab[1].toIntOrNull() != FORMATO) return null
         val versao = cab[3].toIntOrNull() ?: return null
         val largura = cab[4].toIntOrNull()?.takeIf { it > 0 } ?: return null
         val altura = cab[5].toIntOrNull()?.takeIf { it > 0 } ?: return null
-        val falas = ArrayList<FalaQuadro>(linhas.size - 1)
+        val quantidade = cab[6].toIntOrNull()?.takeIf { it >= 0 } ?: return null
+        if (linhas.size - 1 != quantidade) return null
+        val falas = ArrayList<FalaQuadro>(quantidade)
         for (l in linhas.drop(1)) {
             val c = l.split('\t')
             if (c.size != 6) return null
             val n = c.take(5).map { it.toIntOrNull() ?: return null }
             val t = desescapa(c[5])
-            if (t.isBlank()) continue
+            if (t.isBlank()) return null
             falas += FalaQuadro(t, n[0], n[1], n[2], n[3], n[4])
         }
         return DadosQuadro(desescapa(cab[2]), versao, largura, altura, falas)
