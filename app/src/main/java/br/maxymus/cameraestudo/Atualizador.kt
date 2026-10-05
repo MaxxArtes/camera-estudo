@@ -105,7 +105,7 @@ object Atualizador {
     /** Quanto esperar a rodada (e a câmera dela) terminar antes de publicar "Atualização pronta" com a rodada ainda em curso. */
     private const val ESPERA_RODADA_S = 120
 
-    private fun rodadaOcupada(): Boolean = DoisSensores.ativa != null || DoisSensores.retida != null
+    private fun rodadaOcupada(): Boolean = DoisSensores.ativa != null || DoisSensores.retida != null || Rajada.ativa != null
 
     private fun downloadAtivo(gerente: DownloadManager, id: Long): Boolean = runCatching {
         gerente.query(DownloadManager.Query().setFilterById(id)).use { c ->

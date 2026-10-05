@@ -1,7 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Android até 11: as mesmas exclusões de extracao_dados.xml (par estéreo, marca do teste de dois sensores e fila de telemetria). -->
+<!-- Android até 11: as mesmas exclusões de extracao_dados.xml (par estéreo, rajadas de teste, marca do teste de dois sensores e fila de telemetria). -->
 <full-backup-content>
     <exclude domain="file" path="estereo" />
+    <exclude domain="file" path="rajada" />
+    <exclude domain="file" path="rajada_zip" />
     <exclude domain="sharedpref" path="dois_sensores.xml" />
     <exclude domain="file" path="telemetria.jsonl" />
 </full-backup-content>
