@@ -163,6 +163,7 @@ internal class SessaoLeitura(
         private set
     var lidas = 0
         private set
+    var puladasErro = 0
     private var iniciou = false
     var encerrada = false
         private set
@@ -218,7 +219,7 @@ internal class SessaoLeitura(
     fun encerrar(motivo: String) {
         if (encerrada) return
         encerrada = true
-        registra("ouvir_terminou", mapOf("motivo" to (if (motivo in RegraVoz.MOTIVOS_FIM) motivo else RegraVoz.ERRO), "lidas" to lidas))
+        registra("ouvir_terminou", mapOf("motivo" to (if (motivo in RegraVoz.MOTIVOS_FIM) motivo else RegraVoz.ERRO), "lidas" to lidas, "puladas_erro" to puladasErro))
     }
 }
 
@@ -272,6 +273,9 @@ internal class Voz(
         if (copia.isEmpty()) { semFalas(); return }
         inicia(copia, onde, null)
     }
+
+    /** Quadro com erro pulado durante a leitura: só conta, para a telemetria de fim. */
+    fun pulouErro() { sessao?.let { it.puladasErro++ } }
 
     /**
      * Leitura CONTÍNUA do leitor de capítulo: prepara a voz e pede o foco de duração longa (AUDIOFOCUS_GAIN), e então chama
@@ -331,7 +335,7 @@ internal class Voz(
             tiraReceptores()
             if (preparando) {
                 preparando = false; geracao++
-                Telemetria.evento("ouvir_terminou", mapOf("motivo" to (if (motivo in RegraVoz.MOTIVOS_FIM) motivo else RegraVoz.ERRO), "lidas" to 0))
+                Telemetria.evento("ouvir_terminou", mapOf("motivo" to (if (motivo in RegraVoz.MOTIVOS_FIM) motivo else RegraVoz.ERRO), "lidas" to 0, "puladas_erro" to 0))
                 aoMudar()
             }
             return

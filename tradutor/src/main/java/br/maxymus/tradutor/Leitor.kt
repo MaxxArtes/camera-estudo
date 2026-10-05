@@ -2,6 +2,7 @@ package br.maxymus.tradutor
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.system.Os
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -35,6 +36,7 @@ class Leitor(ctx: Context, val endereco: String) {
         var proporcao by mutableStateOf(0f)
         var imagem by mutableStateOf<Bitmap?>(null)
         var falas = 0
+        @Volatile var ignorarCache = false
         /** destino para o qual o estado PRONTO ou SEM_TEXTO foi decidido; nulo enquanto não se sabe */
         @Volatile var paraDestino: String? = null
         /** as falas traduzidas para a leitura em voz alta, em ordem de leitura; escrito pelo motor, lido pela tela */
@@ -84,7 +86,7 @@ class Leitor(ctx: Context, val endereco: String) {
 
     /**
      * O quadro pintado, POR DESTINO: o nome leva o idioma, e trocar o destino não traz de volta o quadro no idioma errado.
-     * Os arquivos antigos, sem idioma no nome (`<i>t.jpg`), ficam sem uso e saem junto com a pasta do capítulo na
+     * Os arquivos antigos, da camada transparente (`<i>t_<destino>.jpg`) ou sem idioma (`<i>t.jpg`), ficam sem uso e saem junto com a pasta do capítulo na
      * limpeza de limparAntigos, que mantém só os 3 capítulos mais recentes.
      */
     private fun pintado(i: Int, dest: String) = File(pasta, RegraLeitor.nomePintado(i, dest))
@@ -266,24 +268,25 @@ class Leitor(ctx: Context, val endereco: String) {
             q.estado = Estado.SEM_TEXTO
             q.paraDestino = dest
             Telemetria.evento("leitor_quadro", mapOf("i" to i, "kb" to (bruto(i).length() / 1024).toInt(),
-                "ms_ocr" to msOcr, "falas" to 0, "px_w" to original.width, "px_h" to original.height))
+                "ms_ocr" to msOcr, "falas" to 0, "puladas" to 0, "px_w" to original.width, "px_h" to original.height))
             return true
         }
 
         val t2 = System.nanoTime()
         // o pedido leva o MESMO destino que dá nome ao arquivo pintado, e as medidas dele vêm no resultado
-        val r = Traducao.traduzirLoteDetalhado(ctx, falas.map { it.texto }, dest)
+        val r = Traducao.traduzirLoteDetalhado(ctx, falas.map { it.texto }, dest, ignorarCache = q.ignorarCache)
+        q.ignorarCache = false
         val mapa = r.mapa
         val msTrad = (System.nanoTime() - t2) / 1_000_000
         // Fala que voltou igual não é tradução: pintar o texto original com a nossa fonte por cima do balão
         // só estraga o desenho. Então pinta-se apenas o que mudou.
         val uteis = falas.filter { (mapa[it.texto] ?: it.texto) != it.texto }
-        // Nada mudou E havia texto de verdade: aí sim a tradução falhou. A guarda de tamanho existe porque
+        // Nada mudou E havia texto que não foi pulado por já estar no destino: aí sim a tradução falhou. A guarda de tamanho existe porque
         // interjeição curta ("OK", "AH") traduz para ela mesma e não é falha nenhuma.
-        if (uteis.isEmpty() && falas.sumOf { it.texto.length } >= 8) {
+        if (uteis.isEmpty() && falas.filter { it.texto !in r.puladas }.sumOf { it.texto.length } >= 8) {
             q.estado = Estado.ERRO_TRAD                 // o original fica na tela; o dono pede de novo se quiser
             Telemetria.evento("leitor_quadro", mapOf("i" to i, "ms_ocr" to msOcr, "ms_trad" to msTrad,
-                "falas" to falas.size, "traduzidas" to 0, "caminho" to r.caminho,
+                "falas" to falas.size, "puladas" to r.puladas.size, "traduzidas" to 0, "caminho" to r.caminho,
                 "compartilhadas" to r.compartilhadas, "id" to r.idServidor))
             return true
         }
@@ -293,13 +296,19 @@ class Leitor(ctx: Context, val endereco: String) {
             q.estado = Estado.SEM_TEXTO
             q.paraDestino = dest
             Telemetria.evento("leitor_quadro", mapOf("i" to i, "ms_ocr" to msOcr, "ms_trad" to msTrad,
-                "falas" to falas.size, "traduzidas" to 0, "iguais" to true,
+                "falas" to falas.size, "puladas" to r.puladas.size, "traduzidas" to 0, "iguais" to true,
                 "compartilhadas" to r.compartilhadas, "id" to r.idServidor))
             return true
         }
 
         val t3 = System.nanoTime()
         val camada = Pintura.camada(original, uteis) { mapa[it] ?: it }
+        // A camada serve à bolha; no leitor a página precisa conservar o desenho original.
+        val composta = try {
+            original.copy(Bitmap.Config.ARGB_8888, true).also { Canvas(it).drawBitmap(camada, 0f, 0f, null) }
+        } finally {
+            if (camada !== original && camada !== q.imagem) camada.recycle()
+        }
         val msPint = (System.nanoTime() - t3) / 1_000_000
 
         // As falas lidas são as PINTADAS (as que mudaram), com o texto traduzido e a caixa medida no original, em ordem de leitura.
@@ -307,10 +316,10 @@ class Leitor(ctx: Context, val endereco: String) {
             RegraLeituraCapitulo.emOrdemDeLeitura(uteis.map {
                 RegraLeituraCapitulo.FalaQuadro(mapa[it.texto] ?: it.texto, it.caixa.left, it.caixa.top, it.caixa.right, it.caixa.bottom, it.alturaLinha)
             }))
-        runCatching { pintado(i, dest).outputStream().use { s -> camada.compress(Bitmap.CompressFormat.JPEG, 88, s) } }
+        runCatching { pintado(i, dest).outputStream().use { s -> composta.compress(Bitmap.CompressFormat.JPEG, 88, s) } }
         gravarDados(i, dest, dados)
         q.dados = dados
-        q.imagem = camada
+        q.imagem = composta
         q.falas = falas.size
         q.estado = Estado.PRONTO
         q.paraDestino = dest
@@ -318,7 +327,7 @@ class Leitor(ctx: Context, val endereco: String) {
 
         // só números, códigos fixos e o id aleatório do serviço: nenhum texto de fala nem de resposta, nem hash deles
         Telemetria.evento("leitor_quadro", mapOf("i" to i, "kb" to (bruto(i).length() / 1024).toInt(),
-            "ms_ocr" to msOcr, "ms_trad" to msTrad, "ms_pint" to msPint, "falas" to falas.size,
+            "ms_ocr" to msOcr, "ms_trad" to msTrad, "ms_pint" to msPint, "falas" to falas.size, "puladas" to r.puladas.size,
             "traduzidas" to uteis.size, "px_w" to original.width, "px_h" to original.height,
             "caminho" to r.caminho, "cache" to Traducao.noCache,
             "compartilhadas" to r.compartilhadas, "id" to r.idServidor))
@@ -349,6 +358,7 @@ class Leitor(ctx: Context, val endereco: String) {
     /** Pedido explícito do dono num quadro que falhou. */
     fun tentarDeNovo(q: Quadro) {
         // A recuperação das falas mantém a imagem já disponível durante a nova tentativa de rede.
+        if (q.estado == Estado.ERRO_TRAD) q.ignorarCache = true
         if (q.estado == Estado.ERRO_REDE) bruto(q.indice).delete()
         else q.imagem = null
         q.dados = null

@@ -84,6 +84,23 @@ private val Texto2 = Color(0xFFA3A3AA)
  * tradução entra no lugar sem mexer na posição da rolagem — continuidade vale mais que transição bonita.
  */
 class LeitorActivity : ComponentActivity() {
+    companion object {
+        @Volatile private var emPrimeiroPlano = 0
+        val visivel: Boolean get() = emPrimeiroPlano > 0
+    }
+
+    override fun onResume() {
+        super.onResume()
+        emPrimeiroPlano++
+        ServicoTradutor.ativo?.leitorMudou()
+    }
+
+    override fun onPause() {
+        emPrimeiroPlano = (emPrimeiroPlano - 1).coerceAtLeast(0)
+        ServicoTradutor.ativo?.leitorMudou()
+        super.onPause()
+    }
+
     override fun onCreate(estado: Bundle?) {
         super.onCreate(estado)
         Telemetria.iniciar(this)

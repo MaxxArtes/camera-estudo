@@ -176,6 +176,20 @@ class ServicoTradutor : AccessibilityService() {
             .build()
         runCatching { nm.notify(AVISO, n) }
     }
+    /** Pausa a bolha sobre o leitor; ao sair, retoma a escolha que já estava ligada. */
+    fun leitorMudou() {
+        // Fora do contínuo a camada que estava na tela é de outra página: ao voltar do leitor ela fica escondida.
+        sobreposicao?.visibility = if (!LeitorActivity.visivel && continuo) View.VISIBLE else View.INVISIBLE
+        if (!LeitorActivity.visivel && (continuo || preparar)) {
+            jobPreparo = escopo.launch {
+                kotlinx.coroutines.delay(700)
+                if (LeitorActivity.visivel || trabalhando) return@launch
+                ultimaAssinatura = 0L
+                if (continuo) desenhaContinuo() else preparaEmSilencio()
+            }
+        }
+    }
+
     /**
      * Pré-carregamento (pedido do dono, 24/09): enquanto ele rola e LÊ, o app traduz em silêncio o que está na
      * tela e guarda no cache. Como o cache é indexado pelo TEXTO, o trabalho feito agora vale quando ele tocar na
@@ -186,20 +200,20 @@ class ServicoTradutor : AccessibilityService() {
      * que custa quase nada, em vez de refazer o reconhecimento à toa.
      */
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {
-        if (e == null || (!preparar && !continuo)) return
+        if (LeitorActivity.visivel || e == null || (!preparar && !continuo)) return
         if (e.eventType != AccessibilityEvent.TYPE_VIEW_SCROLLED && e.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
         ultimaRolagem = System.currentTimeMillis()
         if (jobPreparo?.isActive == true) return
         jobPreparo = escopo.launch {
             while (System.currentTimeMillis() - ultimaRolagem < 700) kotlinx.coroutines.delay(250)
-            if (trabalhando) return@launch
+            if (LeitorActivity.visivel || trabalhando) return@launch
             if (continuo) desenhaContinuo()
             else if (preparar && sobreposicao == null) preparaEmSilencio()
         }
     }
 
     private suspend fun preparaEmSilencio() {
-        if (!Traducao.temRede(this)) return
+        if (LeitorActivity.visivel || !Traducao.temRede(this)) return
         bolha?.visibility = View.INVISIBLE
         kotlinx.coroutines.delay(90)
         val tela = captura()
@@ -211,7 +225,7 @@ class ServicoTradutor : AccessibilityService() {
         val t0 = System.nanoTime()
         val n = withContext(Dispatchers.Default) {
             val falas = Falas.ler(tela, (tela.height * 0.11f).toInt(), (tela.height * 0.96f).toInt())
-            if (falas.isEmpty()) 0 else { Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto }, ativo = { isActive }); falas.size }
+            if (falas.isEmpty() || LeitorActivity.visivel) 0 else { Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto }, ativo = { isActive && !LeitorActivity.visivel }); falas.size }
         }
         if (n > 0) Telemetria.evento("preparou", mapOf("falas" to n, "ms" to (System.nanoTime() - t0) / 1_000_000, "cache" to Traducao.noCache))
     }
@@ -344,7 +358,7 @@ class ServicoTradutor : AccessibilityService() {
     }
 
     private suspend fun desenhaContinuo() {
-        if (!continuo || trabalhando) return
+        if (LeitorActivity.visivel || !continuo || trabalhando) return
         trabalhando = true
         sobreposicao?.visibility = View.INVISIBLE
         bolha?.visibility = View.INVISIBLE
@@ -356,7 +370,11 @@ class ServicoTradutor : AccessibilityService() {
         fechar?.visibility = View.VISIBLE
         // janela protegida: o aviso sai uma vez por ativação, e o modo contínuo continua ligado
         if (tela == null && cap.protegida && continuo) avisaCapturaProtegida()
-        if (tela == null || !continuo) { trabalhando = false; sobreposicao?.visibility = View.VISIBLE; return }
+        if (tela == null || !continuo || LeitorActivity.visivel) {
+            trabalhando = false
+            sobreposicao?.visibility = if (LeitorActivity.visivel) View.INVISIBLE else View.VISIBLE
+            return
+        }
         val assin = assinaturaDe(tela)
         // tela igual não basta para pular: se o modelo chegou atrasado e melhorou o cache, tem que redesenhar
         val corr = Traducao.correcoes.get()
@@ -378,20 +396,21 @@ class ServicoTradutor : AccessibilityService() {
             if (lidas?.algumTexto == false) suspeitaNoContinuo(tela, topo, base, assin)
             trabalhando = false; sobreposicao?.visibility = View.VISIBLE; return
         }
+        if (LeitorActivity.visivel) { trabalhando = false; return }
         val textos = falas.map { it.texto }
         val conhecido = withContext(Dispatchers.Default) { Traducao.soCache(this@ServicoTradutor, textos) }
         // Só se pinta o que MUDOU, o mesmo filtro do Leitor (uteis): fala pulada por já estar no idioma do dono, ou
         // traduzida igual ao original, não ganha faixa. Senão a interface do app em português levaria uma por cima.
         val uteisConhecido = falas.filter { (conhecido[it.texto] ?: it.texto) != it.texto }
-        if (uteisConhecido.isNotEmpty() && continuo)
+        if (uteisConhecido.isNotEmpty() && continuo && !LeitorActivity.visivel)
             mostraCamada(withContext(Dispatchers.Default) { Pintura.camada(tela, uteisConhecido) { conhecido[it] ?: it } })
         val tTrad = System.nanoTime()
         // as medidas do pedido vêm no resultado dele: pré-carregamento e toque rodam ao mesmo tempo e não se misturam
-        val r = withContext(Dispatchers.Default) { Traducao.traduzirLoteDetalhado(this@ServicoTradutor, textos, ativo = { isActive }) }
+        val r = withContext(Dispatchers.Default) { Traducao.traduzirLoteDetalhado(this@ServicoTradutor, textos, ativo = { isActive && !LeitorActivity.visivel }) }
         val mapa = r.mapa
         val msT = (System.nanoTime() - tTrad) / 1_000_000
         trabalhando = false
-        if (!continuo) return
+        if (!continuo || LeitorActivity.visivel) return
         val tPint = System.nanoTime()
         val uteis = falas.filter { (mapa[it.texto] ?: it.texto) != it.texto }
         // Sem nada útil a camada sai vazia, e mesmo assim é posta: ela troca a da tela anterior, que senão ficaria com
@@ -423,7 +442,7 @@ class ServicoTradutor : AccessibilityService() {
         jobRevisao = escopo.launch {
             repeat(24) {
                 kotlinx.coroutines.delay(500)
-                if (!continuo) return@launch
+                if (!continuo || LeitorActivity.visivel) return@launch
                 if (Traducao.correcoes.get() != referencia && !trabalhando) { desenhaContinuo(); return@launch }
             }
         }
@@ -524,7 +543,7 @@ class ServicoTradutor : AccessibilityService() {
             ultimaAssinatura = assin
             withContext(Dispatchers.Default) {
                 val falas = Falas.ler(tela, (tela.height * 0.11f).toInt(), (tela.height * 0.96f).toInt())
-                if (falas.isNotEmpty()) Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto }, ativo = { isActive })
+                if (falas.isNotEmpty()) Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto }, ativo = { isActive && !LeitorActivity.visivel })
             }
             telas++
             if (!rola(true)) break
@@ -648,7 +667,7 @@ class ServicoTradutor : AccessibilityService() {
                     else {
                         val tTrad = System.nanoTime()
                         // as falas puladas e as medidas são DESTE pedido: o pré-carregamento do contínuo roda ao mesmo tempo
-                        val r = Traducao.traduzirLoteDetalhado(this@ServicoTradutor, falas.map { it.texto }, ativo = { isActive })
+                        val r = Traducao.traduzirLoteDetalhado(this@ServicoTradutor, falas.map { it.texto }, ativo = { isActive && !LeitorActivity.visivel })
                         val mapa = r.mapa
                         msTrad = (System.nanoTime() - tTrad) / 1_000_000
                         // o mesmo filtro do Leitor (uteis): fala pulada ou traduzida igual ao original não ganha faixa
@@ -718,6 +737,7 @@ class ServicoTradutor : AccessibilityService() {
                 val falta = 1_100L - (SystemClock.elapsedRealtime() - ultima)
                 if (falta > 0) kotlinx.coroutines.delay(falta)
             }
+            if (LeitorActivity.visivel) return@withLock Capturada(null)
             kotlinx.coroutines.withTimeoutOrNull(5_000L) {
                 kotlinx.coroutines.suspendCancellableCoroutine<Capturada> { cont ->
                     ultimaCaptura = SystemClock.elapsedRealtime()
@@ -822,7 +842,7 @@ class ServicoTradutor : AccessibilityService() {
         if (!RegraCaptura.suspeita(0, false, fracao)) return
         assinaturaEscuraTratada = assinatura
         val confirmada = confirmaCapturaEscura(comCamada = true)
-        if (!continuo) return
+        if (!continuo || LeitorActivity.visivel) return
         if (confirmada == Confirmacao.PROTEGIDA) avisaCapturaProtegida()
         else registraCapturaEscura(fracao, confirmada == Confirmacao.ESCURA)
     }

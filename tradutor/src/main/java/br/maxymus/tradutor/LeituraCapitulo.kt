@@ -109,14 +109,14 @@ internal object RegraLeituraCapitulo {
     enum class Passo { LER, PULAR, ESPERAR, PARAR_ERRO }
 
     /**
-     * Quadro confirmado sem fala traduzida (sem texto, ou só falas que voltaram iguais) é pulado; quadro com erro NÃO é
-     * pulado: a leitura para em `erro_quadro` e o "Tentar tradução" continua lá. Quadro ainda em preparo espera.
+     * Quadro sem fala traduzida ou com erro é pulado; o "Tentar tradução" continua disponível.
+     * Quadro ainda em preparo espera, inclusive antes da primeira fala.
      */
     fun passo(s: Situacao): Passo = when (s) {
         Situacao.COM_FALAS -> Passo.LER
         Situacao.SEM_FALAS -> Passo.PULAR
         Situacao.PREPARANDO -> Passo.ESPERAR
-        Situacao.ERRO -> Passo.PARAR_ERRO
+        Situacao.ERRO -> Passo.PULAR
     }
 
     /**
