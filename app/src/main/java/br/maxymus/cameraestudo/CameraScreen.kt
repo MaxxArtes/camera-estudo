@@ -308,14 +308,15 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var segundosTeste by remember { mutableIntStateOf(0) }
     // câmera da Camera2 do teste ainda sem o onClosed do sistema (S2/S3): "Fechando a câmera…", sem novo teste e sem religar
     // o CameraX. Nasce da rodada retida, para valer também com a tela recriada no meio do fechamento.
-    var cameraRetida by remember { mutableStateOf(DoisSensores.retida != null) }
+    var cameraRetida by remember { mutableStateOf(DoisSensores.retida?.fecharPedidoEm?.let { it > 0L } == true) }
     var fechamentoPendente by remember { mutableStateOf(DoisSensores.retida?.fechamentoPendente == true) }
 
     // ---- rajada de teste (0.80): a mesma regra, a tela solta e religa o CameraX; Rajada só usa a Camera2 no intervalo ----
-    var rajadaSegura by remember { mutableStateOf(false) }           // Camera2 com a "0": o efeito de ligação só faz unbind
-    var rajadaEmCurso by remember { mutableStateOf(false) }          // véu, tela ligada, obturador e volume travados
+    val rajadaRodada = Rajada.ativa
+    val rajadaSegura = rajadaRodada?.segura == true
+    val rajadaEmCurso = rajadaRodada != null
+    val retidaGlobal = DoisSensores.retida
     var rajadaFase by remember { mutableStateOf<String?>(null) }
-    var rajadaRodada by remember { mutableStateOf<Rajada.Rodada?>(null) }
     var rajadaCancelando by remember { mutableStateOf(false) }
     var dialogoRajada by remember { mutableStateOf(false) }
     var ultimaRajada by remember { mutableStateOf<java.io.File?>(null) }
@@ -417,16 +418,16 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
 
     // (Re)liga a câmera quando muda lente, modo ou proporção, e no fim do teste de dois sensores (experimento, religar) ou
     // da rajada de teste (rajadaSegura).
-    LaunchedEffect(lente, modo, proporcao, capturaRapida, extensao, retratoSoftware, ultraHdrAtivo, rawAtivo, experimento, religar, cameraRetida, rajadaSegura) {
+    LaunchedEffect(lente, modo, proporcao, capturaRapida, extensao, retratoSoftware, ultraHdrAtivo, rawAtivo, experimento, religar, cameraRetida, rajadaSegura, retidaGlobal) {
         ligando = true
         val provider = ProcessCameraProvider.getInstance(contexto).get()
         // teste de dois sensores em curso: a "0" é da Camera2; o CameraX fica solto e o disparo travado (ligando = true)
         if (experimento) { provider.unbindAll(); camera = null; return@LaunchedEffect }
-        if (rajadaSegura) { provider.unbindAll(); camera = null; return@LaunchedEffect }
+        if (Rajada.ativa?.segura == true) { provider.unbindAll(); camera = null; return@LaunchedEffect }
         // S3: sem o onClosed da rodada anterior (rodada órfã de Activity recriada, cão de guarda com a thread presa,
         // cancelamento forçado) NÃO há bind novo, nem depois de esperar, nem por toque do dono: o tempo e o toque não provam
         // que a "0" foi liberada. O efeito abaixo religa sozinho quando o sistema confirma (onClosed).
-        if (cameraRetida) { provider.unbindAll(); camera = null; return@LaunchedEffect }
+        if (cameraRetida || DoisSensores.retida != null) { provider.unbindAll(); camera = null; return@LaunchedEffect }
         @Suppress("DEPRECATION")
         // vídeo grava em 16:9 (Quality.HIGHEST = 1080p); a prévia acompanha para o enquadramento bater com o arquivo (dono, 17/09)
         val preview = Preview.Builder().setTargetAspectRatio(if (modo.video) AspectRatio.RATIO_16_9 else proporcao)
@@ -560,6 +561,9 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     }
     // S2/S3: enquanto a câmera do teste não tiver o onClosed, o véu diz "Fechando a câmera…" (e, passado o prazo, o aviso com
     // "Reabrir câmera"); quando o sistema confirma, o CameraX volta sozinho, com o mesmo vigia da devolução de sempre
+    LaunchedEffect(retidaGlobal, testando, rajadaSegura) {
+        if (retidaGlobal != null && !testando && !rajadaSegura) cameraRetida = true
+    }
     LaunchedEffect(cameraRetida) {
         if (!cameraRetida) return@LaunchedEffect
         val id = DoisSensores.retida?.id ?: ultimaDevolucao ?: "retida"
@@ -1152,6 +1156,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     }
 
     fun reabrirDepoisDaRajada() {
+        if (DoisSensores.retida != null) { reabrirCamera(); return }
         rajadaCameraNaoVoltou = false
         ligando = true   // antes do religar: o efeito só reinicia no próximo quadro
         religar++
@@ -1179,31 +1184,34 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
 
     /**
      * Orquestrador da rajada (Main): solta o CameraX e espera CLOSED, captura pela Camera2 (Rajada.capturar fecha a "0" e
-     * espera o onClosed antes de voltar), religa o CameraX, tira a foto normal e grava. O finally devolve o CameraX e emite
-     * a telemetria em qualquer saída, cancelamento e tela descartada inclusive.
+     * espera o onClosed ou mantém a retenção), religa o CameraX quando liberado, tira a foto normal e grava.
+     * Roda no escopo de Rajada: o finally finaliza mesmo quando a tela é descartada.
      */
-    suspend fun orquestrarRajada(rod: Rajada.Rodada) {
+    suspend fun orquestrarRajada(rod: Rajada.Rodada, infoX: androidx.camera.core.CameraInfo?) {
         var cap: Rajada.Captura? = null
         var res: Rajada.Resultado? = null
         try {
             val tmp = withContext(Dispatchers.IO) { Rajada.prepararTemporaria(contexto, rod) }
             rod.etapa = "soltar"; rajadaFase = "Soltando a câmera."
-            val infoX = camera?.cameraInfo
-            rajadaSegura = true
+            rod.segura = true
             ProcessCameraProvider.getInstance(contexto).get().unbindAll()
             camera = null
             // o unbindAll volta antes de o device fechar (é assíncrono na thread do CameraX)
-            if (infoX != null) withTimeoutOrNull(3_000) { while (infoX.cameraState.value?.type != CameraState.Type.CLOSED) delay(20) }
+            val fechou = infoX != null && withTimeoutOrNull(3_000) {
+                while (infoX.cameraState.value?.type != CameraState.Type.CLOSED) delay(20)
+                true
+            } == true
+            if (!fechou) { res = Rajada.cameraxNaoFechou(rod); return }
             if (rod.cancelada) { res = Rajada.cancelada(rod, null); return }
             val app = contexto.applicationContext
             val c = withContext(Dispatchers.Default) { Rajada.capturar(app, rod) { f -> escopo.launch { if (!rajadaCancelando) rajadaFase = f } } }
             cap = c
-            if (c.resultado != "ok") { res = Rajada.semQuadros(rod, c); return }
-            // a "0" já foi fechada pela Camera2: o CameraX volta e a foto normal sai pelo caminho de sempre
+            if (c.resultado != "ok" && c.resultado != "variou") { res = Rajada.semQuadros(rod, c); return }
+            // Só o onClosed libera o CameraX; sem ele, grava os quadros sem a foto normal.
             rod.etapa = "devolver"; rajadaFase = "Devolvendo a câmera."
             ligando = true
-            rajadaSegura = false
-            val aberta = withTimeoutOrNull(10_000) {
+            rod.segura = false
+            val aberta = DoisSensores.retida == null && withTimeoutOrNull(10_000) {
                 while (!rod.cancelada && (ligando || camera?.cameraInfo?.cameraState?.value?.type != CameraState.Type.OPEN)) delay(50)
                 true
             } == true
@@ -1218,7 +1226,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             res = withContext(Dispatchers.IO) {
                 Rajada.gravar(contexto, rod, c, tmp, normalOk) { n -> escopo.launch { if (!rajadaCancelando) rajadaFase = "Gravando quadro $n de ${Rajada.QUADROS}." } }
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             if (e is CancellationException) throw e
             res = Rajada.falhou(rod, cap, e)
         } finally {
@@ -1227,10 +1235,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 if (res == null) res = Rajada.cancelada(rod, cap)
                 if (res?.pasta == null) Rajada.descartar(contexto, rod)
             }
-            if (rajadaSegura) { ligando = true; rajadaSegura = false }
+            if (rod.segura) { ligando = true; rod.segura = false }
+            cameraRetida = DoisSensores.retida != null
             vigiarVoltaRajada()
-            if (Rajada.ativa === rod) Rajada.ativa = null
-            rajadaEmCurso = false; rajadaFase = null; rajadaRodada = null; rajadaCancelando = false
+            rajadaFase = null; rajadaCancelando = false
             resultadoRajada = res
             res?.pasta?.let { ultimaRajada = it }
         }
@@ -1253,11 +1261,11 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         }
         if (recusa != null) { Toast.makeText(contexto, recusa, Toast.LENGTH_SHORT).show(); return }
         val rod = Rajada.novaRodada()
-        Rajada.ativa = rod
-        rajadaRodada = rod; rajadaEmCurso = true; rajadaCancelando = false; rajadaCameraNaoVoltou = false
+        rajadaCancelando = false; rajadaCameraNaoVoltou = false
         resultadoRajada = null; rajadaFase = "Preparando."
         // UNDISPATCHED: entra no try/finally do orquestrador já dentro deste toque, como no teste de dois sensores
-        escopo.launch(start = CoroutineStart.UNDISPATCHED) { orquestrarRajada(rod) }
+        val infoX = camera?.cameraInfo
+        Rajada.lancar(rod) { orquestrarRajada(rod, infoX) }
     }
 
     /** Botão do véu ou Voltar: a Camera2 confere o pedido entre os passos e fecha a câmera na saída. */
@@ -1324,7 +1332,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             }
         }
         dono.lifecycle.addObserver(observador)
-        onDispose { dono.lifecycle.removeObserver(observador) }
+        onDispose {
+            dono.lifecycle.removeObserver(observador)
+            Rajada.aoParar()
+        }
     }
     LaunchedEffect(testando) { segundosTeste = 0; while (testando) { delay(1000); segundosTeste++ } }
 
@@ -1715,7 +1726,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             tecnico = listOfNotNull(rodadaTeste?.tecnico, rodadaTeste?.etapa?.let { "etapa $it" }).joinToString(" · ").ifEmpty { null },
             segundos = segundosTeste,
             botao = if (cancelandoTeste) "Cancelando..." else "Cancelar teste", botaoAtivo = !cancelandoTeste, aoBotao = { cancelarTeste("botao") }
-        ) else if (rajadaEmCurso) VeuDoisSensores(
+        ) else if (rajadaEmCurso && !cameraRetida) VeuDoisSensores(
             titulo = "Rajada de teste", aviso = "A prévia fica apagada durante a rajada.",
             fase = if (rajadaCancelando) "Cancelando e devolvendo a câmera…"
                 else if (rajadaRodada?.etapa == "gravar") rajadaFase

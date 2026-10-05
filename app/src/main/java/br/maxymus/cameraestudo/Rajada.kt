@@ -25,15 +25,22 @@ import android.os.SystemClock
 import android.util.Size
 import android.view.Surface
 import android.widget.Toast
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -81,22 +88,58 @@ object Rajada {
     private const val NIVEL_PNG = 3               // deflate: sem perda em qualquer nível; 3 é o meio-termo entre tempo e tamanho
 
     /** Rajada em curso (uma por vez no processo). */
-    @Volatile var ativa: Rodada? = null
+    var ativa: Rodada? by mutableStateOf(null)
+        private set
+    private val escopo = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /** A tarefa pertence ao processo; descartar a tela não interrompe o fechamento nem a finalização. */
+    fun lancar(r: Rodada, bloco: suspend () -> Unit) {
+        check(ativa == null && DoisSensores.ativa == null && DoisSensores.retida == null)
+        ativa = r
+        val tarefa = escopo.launch(start = CoroutineStart.UNDISPATCHED) {
+            try { bloco() }
+            catch (x: Throwable) { if (!r.fim.get()) falhou(r, null, x) }
+            finally { if (ativa === r) ativa = null }
+        }
+        // Como no dois sensores, a vigia independe da tela e da thread que conversa com o HAL.
+        escopo.launch {
+            val limite = SystemClock.elapsedRealtime() + 90_000
+            var cancelarEm = 0L
+            while (!tarefa.isCompleted) {
+                if (r.cancelada && cancelarEm == 0L) cancelarEm = SystemClock.elapsedRealtime()
+                if ((cancelarEm != 0L && SystemClock.elapsedRealtime() - cancelarEm >= 5_000) ||
+                    (r.etapa != "gravar" && SystemClock.elapsedRealtime() >= limite)) {
+                    cancelar(r)
+                    tarefa.cancel()
+                    if (!r.fim.get()) cancelada(r, null)
+                    r.segura = false
+                    if (ativa === r) ativa = null
+                    break
+                }
+                delay(50)
+            }
+        }
+    }
 
     private val travaArquivos = Mutex()
 
     class Rodada internal constructor(val id: String) {
         @Volatile var cancelada = false
         @Volatile var etapa = "inicio"
+        var segura by mutableStateOf(true)
+        @Volatile internal var posse: DoisSensores.Rodada? = null
         internal val fim = AtomicBoolean(false)
     }
 
     fun novaRodada(): Rodada = Rodada(java.util.UUID.randomUUID().toString().replace("-", "").take(6))
 
-    fun cancelar(r: Rodada) { r.cancelada = true }
+    fun cancelar(r: Rodada) {
+        synchronized(r) { r.cancelada = true }
+        r.posse?.let { DoisSensores.fecharPorFora(it, "botao") }
+    }
 
     /** ON_STOP: a câmera não fica capturando em segundo plano. Na gravação a câmera já voltou, e a rajada segue. */
-    fun aoParar() { ativa?.let { if (it.etapa != "gravar") it.cancelada = true } }
+    fun aoParar() { ativa?.let { if (it.etapa != "gravar") cancelar(it) } }
 
     // ------------------------------------------------------------------ dados da captura
 
@@ -146,17 +189,22 @@ object Rajada {
     // ------------------------------------------------------------------ captura (Camera2)
 
     /** Estado escrito pelos retornos da câmera (fio "rajada") e lido pela corrotina. */
-    private class Estado {
+    private class Estado(val id: Int = 0) {
         @Volatile var device: CameraDevice? = null
         @Volatile var respondeu = false          // onOpened, onError ou onDisconnected já veio
         @Volatile var desistiu = false           // a captura saiu: um onOpened tardio fecha a câmera na hora
         @Volatile var perdeu: String? = null
         @Volatile var fechou = false
+        @Volatile var tentativa: Estado? = null
+        @Volatile var valida = true
         @Volatile var sessao: CameraCaptureSession? = null
         @Volatile var sessaoFalhou = false
         @Volatile var ae: Int? = null
         @Volatile var af: Int? = null
         @Volatile var foco: Float? = null
+        @Volatile var modoAf: Int? = null
+        @Volatile var lente: Int? = null
+        @Volatile var fase3a = "convergir"
         @Volatile var falhas = 0
         @Volatile var falhaRazao: Int? = null
         @Volatile var erroCopia: String? = null
@@ -190,11 +238,6 @@ object Rajada {
         )
     }
 
-    private fun aeOk(ae: Int?) = ae == CaptureResult.CONTROL_AE_STATE_CONVERGED || ae == CaptureResult.CONTROL_AE_STATE_LOCKED ||
-        ae == CaptureResult.CONTROL_AE_STATE_FLASH_REQUIRED
-
-    private fun afOk(af: Int?) = af == CaptureResult.CONTROL_AF_STATE_PASSIVE_FOCUSED || af == CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED
-
     /** Copia Y inteiro e U/V (com rowStride e pixelStride do aparelho) para a memória, para devolver o buffer à câmera já. */
     private fun copiar(img: Image, chegadaNs: Long): QuadroPixels {
         val w = img.width; val h = img.height
@@ -225,7 +268,7 @@ object Rajada {
         val fim = SystemClock.elapsedRealtime() + maxMs
         while (SystemClock.elapsedRealtime() < fim) {
             if (cond()) return true
-            if (r.cancelada || e.perdeu != null) return false
+            if (r.cancelada || e.perdeu != null || e.erroCopia != null) return false
             delay(10)
         }
         return cond()
@@ -233,7 +276,7 @@ object Rajada {
 
     /**
      * Abre a "0", trava 3A e faz a rajada, da maior resolução YUV para baixo até uma ser aceita. Fecha a câmera e espera o
-     * onClosed (até 3 s) antes de voltar, em qualquer saída, cancelamento da corrotina inclusive. Rodar fora da Main.
+     * onClosed (até 3 s) antes de voltar; sem confirmação, mantém a retenção e o fio vivos. Rodar fora da Main.
      */
     @Suppress("DEPRECATION")
     suspend fun capturar(ctx: Context, r: Rodada, aoFase: (String) -> Unit): Captura {
@@ -243,13 +286,26 @@ object Rajada {
         val e = Estado()
         val travas = Travas()
         val tentativas = ArrayList<Tentativa>()
-        val leitores = ArrayList<ImageReader>()
+        val posse = DoisSensores.Rodada(r.id, ctx.applicationContext).also { r.posse = it; it.fio = fio }
+        fun guarda(bloco: () -> Unit) {
+            try { bloco() } catch (x: Throwable) {
+                r.cancelada = true
+                e.erroCopia = x.javaClass.simpleName
+                // Até a reação à falha é protegida: uma segunda falha não pode escapar pelo callback.
+                try { DoisSensores.fecharPorFora(posse, "fim_da_rodada") } catch (_: Throwable) { }
+            }
+        }
+        fun fecharSessao(sessao: CameraCaptureSession) {
+            guarda { sessao.abortCaptures() }
+            guarda { sessao.close() }
+        }
         var info: InfoCamera? = null
         var pediuAbertura = false
         fun fim(res: String, motivo: String?, classe: String? = null, w: Int = 0, hh: Int = 0, ms: Long? = null, fps: Double? = null): Captura {
-            val qs = synchronized(e.quadros) { ArrayList(e.quadros) }
-            val ms2 = synchronized(e.metas) { e.metas.sortedBy { it.ordem } }
-            return Captura(res, motivo, classe, r.etapa, w, hh, if (res == "ok") qs else emptyList(), ms2, ms, fps, tentativas, info, travas)
+            val atual = e.tentativa ?: e
+            val qs = if (res == "ok" || res == "variou") synchronized(atual.quadros) { ArrayList(atual.quadros) } else emptyList()
+            val ms2 = synchronized(atual.metas) { atual.metas.sortedBy { it.ordem } }
+            return Captura(res, motivo, classe, r.etapa, w, hh, if (res == "ok" || res == "variou") qs else emptyList(), ms2, ms, fps, tentativas, info, travas)
         }
         try {
             r.etapa = "caracteristicas"
@@ -262,150 +318,228 @@ object Rajada {
             val pequeno = inf.tamanhosYuv.filter { it.width.toLong() * it.height <= 1280L * 960 }.maxByOrNull { it.width.toLong() * it.height }
                 ?: inf.tamanhosYuv.last()
             val afModos = c.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES)?.toList().orEmpty()
-            val focoManual = (inf.focoMin ?: 0f) > 0f && CaptureRequest.CONTROL_AF_MODE_OFF in afModos
-            val afContinuo = CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE in afModos
+            val focoManual = CaptureRequest.CONTROL_AF_MODE_OFF in afModos &&
+                CaptureRequest.LENS_FOCUS_DISTANCE in c.availableCaptureRequestKeys
+            val afAuto = CaptureRequest.CONTROL_AF_MODE_AUTO in afModos
+            val fixa = inf.focoMin == 0f
 
             r.etapa = "abrir"; aoFase("Abrindo a câmera.")
-            if (r.cancelada) return fim("cancelado", null)
-            cm.openCamera(LOGICA, object : CameraDevice.StateCallback() {
-                override fun onOpened(camera: CameraDevice) {
+            synchronized(r) {
+                if (r.cancelada) return fim("cancelado", null)
+                DoisSensores.abriu(posse)
+            }
+            try { cm.openCamera(LOGICA, object : CameraDevice.StateCallback() {
+                override fun onOpened(camera: CameraDevice) = guarda {
+                    posse.dispositivo = camera
                     val fechar = synchronized(e) { e.respondeu = true; if (r.cancelada || e.desistiu) true else { e.device = camera; false } }
-                    if (fechar) camera.close()
+                    if (fechar) { DoisSensores.fechando(posse, "onopened_tardio"); camera.close() }
                 }
-                override fun onDisconnected(camera: CameraDevice) { e.perdeu = "desconectada"; e.respondeu = true; camera.close() }
-                override fun onError(camera: CameraDevice, error: Int) { e.perdeu = "erro_$error"; e.respondeu = true; camera.close() }
-                override fun onClosed(camera: CameraDevice) { e.fechou = true }
-            }, h)
+                override fun onDisconnected(camera: CameraDevice) = guarda {
+                    posse.dispositivo = camera; e.perdeu = "desconectada"; e.tentativa?.perdeu = e.perdeu; e.respondeu = true
+                    DoisSensores.fechando(posse, "desconectada"); camera.close()
+                }
+                override fun onError(camera: CameraDevice, error: Int) = guarda {
+                    posse.dispositivo = camera; e.perdeu = "erro_$error"; e.tentativa?.perdeu = e.perdeu; e.respondeu = true
+                    DoisSensores.fechando(posse, "erro_camera"); camera.close()
+                }
+                override fun onClosed(camera: CameraDevice) = guarda {
+                    e.fechou = true; DoisSensores.liberou(posse, "onclosed")
+                }
+            }, h) } catch (x: Throwable) {
+                DoisSensores.liberou(posse, "falha_abertura")
+                throw x
+            }
             pediuAbertura = true
             if (!esperar(3_000, r, e) { e.device != null }) {
                 return if (r.cancelada) fim("cancelado", null) else fim("perdeu_camera", e.perdeu ?: "abrir_prazo")
             }
             val dev = e.device!!
 
-            val prev = object : CameraCaptureSession.CaptureCallback() {
-                override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
-                    e.ae = result.get(CaptureResult.CONTROL_AE_STATE); e.af = result.get(CaptureResult.CONTROL_AF_STATE)
-                    result.get(CaptureResult.LENS_FOCUS_DISTANCE)?.let { e.foco = it }
-                }
-            }
-            val rajadaCb = object : CameraCaptureSession.CaptureCallback() {
-                override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
-                    val m = QuadroMeta(
-                        ordem = request.tag as? Int ?: -1,
-                        ts = result.get(CaptureResult.SENSOR_TIMESTAMP), exp = result.get(CaptureResult.SENSOR_EXPOSURE_TIME),
-                        iso = result.get(CaptureResult.SENSOR_SENSITIVITY), dur = result.get(CaptureResult.SENSOR_FRAME_DURATION),
-                        ois = result.get(CaptureResult.LENS_OPTICAL_STABILIZATION_MODE), nr = result.get(CaptureResult.NOISE_REDUCTION_MODE),
-                        edge = result.get(CaptureResult.EDGE_MODE), ae = result.get(CaptureResult.CONTROL_AE_STATE),
-                        af = result.get(CaptureResult.CONTROL_AF_STATE), foco = result.get(CaptureResult.LENS_FOCUS_DISTANCE)
-                    )
-                    synchronized(e.metas) { e.metas += m }
-                }
-                override fun onCaptureFailed(session: CameraCaptureSession, request: CaptureRequest, failure: CaptureFailure) {
-                    e.falhas++; e.falhaRazao = failure.reason
-                }
-            }
-
-            for (tam in candidatos) {
+            for ((indice, tam) in candidatos.withIndex()) {
                 if (r.cancelada) return fim("cancelado", null)
                 if (e.perdeu != null) return fim("perdeu_camera", e.perdeu)
+                val pai = e
+                val e = Estado(indice + 1)
+                pai.tentativa = e
+                fun guardaTentativa(bloco: () -> Unit) = guarda {
+                    synchronized(e) {
+                        if (e.valida && pai.tentativa?.id == e.id) bloco()
+                    }
+                }
+                val leitores = ArrayList<ImageReader>()
                 val t = Tentativa(tam.width, tam.height).also { tentativas += it }
-                synchronized(e.quadros) { e.quadros.clear() }
-                synchronized(e.metas) { e.metas.clear() }
-                e.falhas = 0; e.falhaRazao = null; e.erroCopia = null; e.sessao = null; e.sessaoFalhou = false
-                r.etapa = "sessao"; aoFase("Preparando ${tam.width}x${tam.height}.")
-                val grande = ImageReader.newInstance(tam.width, tam.height, ImageFormat.YUV_420_888, QUADROS).also { leitores += it }
-                val peq = ImageReader.newInstance(pequeno.width, pequeno.height, ImageFormat.YUV_420_888, 2).also { leitores += it }
-                grande.setOnImageAvailableListener({ rd ->
-                    val chegada = SystemClock.elapsedRealtimeNanos()
-                    try {
-                        rd.acquireNextImage()?.let { img -> try { val q = copiar(img, chegada); synchronized(e.quadros) { e.quadros += q } } finally { img.close() } }
-                    } catch (x: Throwable) { e.erroCopia = x.javaClass.simpleName }
-                }, h)
-                peq.setOnImageAvailableListener({ rd -> try { rd.acquireLatestImage()?.close() } catch (x: Exception) { } }, h)
-                val alvos: List<Surface> = listOf(peq.surface, grande.surface)
                 try {
-                    dev.createCaptureSession(alvos, object : CameraCaptureSession.StateCallback() {
-                        override fun onConfigured(session: CameraCaptureSession) { e.sessao = session }
-                        override fun onConfigureFailed(session: CameraCaptureSession) { e.sessaoFalhou = true }
+                    val prev = object : CameraCaptureSession.CaptureCallback() {
+                        override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) = guardaTentativa {
+                            if (!e.valida || request.tag != e.fase3a) return@guardaTentativa
+                            e.modoAf = result.get(CaptureResult.CONTROL_AF_MODE)
+                            e.lente = result.get(CaptureResult.LENS_STATE)
+                            e.ae = result.get(CaptureResult.CONTROL_AE_STATE); e.af = result.get(CaptureResult.CONTROL_AF_STATE)
+                            result.get(CaptureResult.LENS_FOCUS_DISTANCE)?.let { e.foco = it }
+                        }
+                    }
+                    val rajadaCb = object : CameraCaptureSession.CaptureCallback() {
+                        override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) = guardaTentativa {
+                            if (!e.valida) return@guardaTentativa
+                            val m = QuadroMeta(
+                                ordem = request.tag as? Int ?: -1,
+                                ts = result.get(CaptureResult.SENSOR_TIMESTAMP), exp = result.get(CaptureResult.SENSOR_EXPOSURE_TIME),
+                                iso = result.get(CaptureResult.SENSOR_SENSITIVITY), dur = result.get(CaptureResult.SENSOR_FRAME_DURATION),
+                                ois = result.get(CaptureResult.LENS_OPTICAL_STABILIZATION_MODE), nr = result.get(CaptureResult.NOISE_REDUCTION_MODE),
+                                edge = result.get(CaptureResult.EDGE_MODE), ae = result.get(CaptureResult.CONTROL_AE_STATE),
+                                af = result.get(CaptureResult.CONTROL_AF_STATE), foco = result.get(CaptureResult.LENS_FOCUS_DISTANCE)
+                            )
+                            synchronized(e.metas) {
+                                if (e.valida && m.ordem in 0 until QUADROS && e.metas.none { it.ordem == m.ordem }) e.metas += m
+                            }
+                        }
+                        override fun onCaptureFailed(session: CameraCaptureSession, request: CaptureRequest, failure: CaptureFailure) = guardaTentativa {
+                            if (!e.valida) return@guardaTentativa
+                            e.falhas++; e.falhaRazao = failure.reason
+                        }
+                    }
+
+                    r.etapa = "sessao"; aoFase("Preparando ${tam.width}x${tam.height}.")
+                    val grande = ImageReader.newInstance(tam.width, tam.height, ImageFormat.YUV_420_888, QUADROS).also { leitores += it }
+                    val peq = ImageReader.newInstance(pequeno.width, pequeno.height, ImageFormat.YUV_420_888, 2).also { leitores += it }
+                    grande.setOnImageAvailableListener({ rd ->
+                        guardaTentativa {
+                            if (!e.valida) return@guardaTentativa
+                            val chegada = SystemClock.elapsedRealtimeNanos()
+                            rd.acquireNextImage()?.let { img ->
+                                try {
+                                    val q = copiar(img, chegada)
+                                    synchronized(e.quadros) {
+                                        if (e.quadros.size < QUADROS && e.quadros.none { it.ts == q.ts }) e.quadros += q
+                                    }
+                                } finally { img.close() }
+                            }
+                        }
                     }, h)
-                } catch (x: IllegalArgumentException) { t.desfecho = "sessao:${x.javaClass.simpleName}"; continue }
-                esperar(3_000, r, e) { e.sessao != null || e.sessaoFalhou }
-                val sess = e.sessao
-                if (sess == null) {
+                    peq.setOnImageAvailableListener({ rd -> guardaTentativa { if (e.valida) rd.acquireLatestImage()?.close() } }, h)
+                    val alvos: List<Surface> = listOf(peq.surface, grande.surface)
+                    try {
+                        dev.createCaptureSession(alvos, object : CameraCaptureSession.StateCallback() {
+                            override fun onConfigured(session: CameraCaptureSession) = guarda {
+                                synchronized(e) { if (!e.valida || r.cancelada) session.close() else e.sessao = session }
+                            }
+                            override fun onConfigureFailed(session: CameraCaptureSession) = guarda {
+                                synchronized(e) { if (e.valida) e.sessaoFalhou = true }
+                                session.close()
+                            }
+                        }, h)
+                    } catch (x: IllegalArgumentException) { t.desfecho = "sessao:${x.javaClass.simpleName}"; continue }
+                    esperar(3_000, r, e) { e.sessao != null || e.sessaoFalhou }
+                    val sess = e.sessao
+                    if (sess == null) {
+                        if (r.cancelada) return fim("cancelado", null)
+                        if (e.perdeu != null) return fim("perdeu_camera", e.perdeu)
+                        t.desfecho = if (e.sessaoFalhou) "configure_failed" else "sessao_prazo"
+                        continue
+                    }
+
+                    // 3A: converge com o fluxo pequeno, depois trava AE (CONTROL_AE_LOCK) e fixa o foco onde o AF parou
+                    r.etapa = "3a"; aoFase("Medindo luz e foco.")
+                    val t3a = SystemClock.elapsedRealtime()
+                    val pv = dev.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
+                    pv.addTarget(peq.surface)
+                    pv.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                    pv.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                    if (!inf.aeLockDisp || (!afAuto && !(fixa && focoManual))) return fim("sem_convergencia", "controles_indisponiveis")
+                    pv.set(CaptureRequest.CONTROL_AF_MODE, if (afAuto) CaptureRequest.CONTROL_AF_MODE_AUTO else CaptureRequest.CONTROL_AF_MODE_OFF)
+                    if (fixa && focoManual) pv.set(CaptureRequest.LENS_FOCUS_DISTANCE, 0f)
+                    pv.setTag(e.fase3a)
+                    sess.setRepeatingRequest(pv.build(), prev, h)
+                    if (afAuto) {
+                        pv.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_START)
+                        sess.capture(pv.build(), prev, h)
+                        pv.set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE)
+                    }
+                    val convergiu = esperar(4_000, r, e) { synchronized(e) {
+                        e.ae == CaptureResult.CONTROL_AE_STATE_CONVERGED &&
+                            (fixa || e.af == CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED)
+                    } }
+                    travas.aeConvergiu = e.ae == CaptureResult.CONTROL_AE_STATE_CONVERGED
+                    travas.afConvergiu = fixa || e.af == CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED
+                    if (r.cancelada) return fim("cancelado", null)
+                    if (!convergiu) return fim("sem_convergencia", "convergencia_prazo")
+                    val foco = if (focoManual) e.foco?.takeIf { it.isFinite() && it >= 0f } ?: if (fixa) 0f else null else null
+                    pv.set(CaptureRequest.CONTROL_AE_LOCK, true)
+                    if (foco != null) {
+                        pv.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+                        pv.set(CaptureRequest.LENS_FOCUS_DISTANCE, foco)
+                    }
+                    synchronized(e) { e.fase3a = "travar"; e.ae = null }
+                    pv.setTag(e.fase3a)
+                    sess.setRepeatingRequest(pv.build(), prev, h)
+                    val travou = esperar(1_500, r, e) { synchronized(e) {
+                        e.ae == CaptureResult.CONTROL_AE_STATE_LOCKED &&
+                            if (foco != null) e.modoAf == CaptureResult.CONTROL_AF_MODE_OFF && e.foco == foco &&
+                                (fixa || e.lente == CaptureResult.LENS_STATE_STATIONARY)
+                            else e.modoAf == CaptureResult.CONTROL_AF_MODE_AUTO && e.af == CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED
+                    } }
+                    travas.aeTravado = travou
+                    travas.afFixo = travou
+                    travas.focoDioptrias = foco
+                    travas.ms3a = SystemClock.elapsedRealtime() - t3a
+                    if (r.cancelada) return fim("cancelado", null)
+                    if (!travou) return fim("sem_convergencia", "trava_prazo")
+
+                    // a rajada: os mesmos controles nos QUADROS pedidos; exposição e ISO ficam com o AE travado
+                    r.etapa = "rajada"; aoFase("Rajada de $QUADROS fotos.")
+                    val pedidos = (0 until QUADROS).map { i ->
+                        dev.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
+                            addTarget(grande.surface)
+                            set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                            set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                            if (inf.aeLockDisp) set(CaptureRequest.CONTROL_AE_LOCK, true)
+                            if (foco != null) {
+                                set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+                                set(CaptureRequest.LENS_FOCUS_DISTANCE, foco)
+                            } else set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
+                            set(CaptureRequest.CONTROL_AF_TRIGGER, CaptureRequest.CONTROL_AF_TRIGGER_IDLE)
+                            setTag(i)
+                        }.build()
+                    }
+                    val tBurst = SystemClock.elapsedRealtimeNanos()
+                    try { sess.captureBurst(pedidos, rajadaCb, h) }
+                    catch (x: IllegalArgumentException) { t.desfecho = "requisicao:${x.javaClass.simpleName}"; continue }
+                    esperar(PRAZO_QUADROS_MS, r, e) {
+                        val nq = synchronized(e.quadros) { e.quadros.size }
+                        val nm = synchronized(e.metas) { e.metas.size }
+                        (nq >= QUADROS && nm >= QUADROS) || e.falhas > 0 || e.erroCopia != null
+                    }
                     if (r.cancelada) return fim("cancelado", null)
                     if (e.perdeu != null) return fim("perdeu_camera", e.perdeu)
-                    t.desfecho = if (e.sessaoFalhou) "configure_failed" else "sessao_prazo"
-                    continue
-                }
-
-                // 3A: converge com o fluxo pequeno, depois trava AE (CONTROL_AE_LOCK) e fixa o foco onde o AF parou
-                r.etapa = "3a"; aoFase("Medindo luz e foco.")
-                val t3a = SystemClock.elapsedRealtime()
-                val pv = dev.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW)
-                pv.addTarget(peq.surface)
-                pv.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                pv.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-                if (afContinuo) pv.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                e.ae = null; e.af = null
-                sess.setRepeatingRequest(pv.build(), prev, h)
-                travas.aeConvergiu = esperar(4_000, r, e) { aeOk(e.ae) && (!afContinuo || afOk(e.af)) } || aeOk(e.ae)
-                travas.afConvergiu = !afContinuo || afOk(e.af)
-                if (r.cancelada) return fim("cancelado", null)
-                if (e.perdeu != null) return fim("perdeu_camera", e.perdeu)
-                val focoLido = e.foco
-                val foco: Float? = if (focoManual && focoLido != null) focoLido else null
-                if (inf.aeLockDisp) pv.set(CaptureRequest.CONTROL_AE_LOCK, true)
-                if (foco != null) {
-                    pv.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
-                    pv.set(CaptureRequest.LENS_FOCUS_DISTANCE, foco)
-                    travas.afFixo = true; travas.focoDioptrias = foco
-                }
-                sess.setRepeatingRequest(pv.build(), prev, h)
-                if (inf.aeLockDisp) travas.aeTravado = esperar(1_500, r, e) { e.ae == CaptureResult.CONTROL_AE_STATE_LOCKED }
-                travas.ms3a = SystemClock.elapsedRealtime() - t3a
-                if (r.cancelada) return fim("cancelado", null)
-                if (e.perdeu != null) return fim("perdeu_camera", e.perdeu)
-
-                // a rajada: os mesmos controles nos QUADROS pedidos; exposição e ISO ficam com o AE travado
-                r.etapa = "rajada"; aoFase("Rajada de $QUADROS fotos.")
-                val pedidos = (0 until QUADROS).map { i ->
-                    dev.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply {
-                        addTarget(grande.surface)
-                        set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
-                        set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
-                        if (inf.aeLockDisp) set(CaptureRequest.CONTROL_AE_LOCK, true)
-                        if (foco != null) {
-                            set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
-                            set(CaptureRequest.LENS_FOCUS_DISTANCE, foco)
-                        } else if (afContinuo) set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE)
-                        setTag(i)
-                    }.build()
-                }
-                val tBurst = SystemClock.elapsedRealtimeNanos()
-                try { sess.captureBurst(pedidos, rajadaCb, h) }
-                catch (x: IllegalArgumentException) { t.desfecho = "requisicao:${x.javaClass.simpleName}"; fecharSessao(sess); continue }
-                esperar(PRAZO_QUADROS_MS, r, e) {
+                    e.erroCopia?.let { cl -> t.desfecho = "copia:$cl"; return fim("erro", "copia", cl, tam.width, tam.height) }
                     val nq = synchronized(e.quadros) { e.quadros.size }
                     val nm = synchronized(e.metas) { e.metas.size }
-                    (nq >= QUADROS && nm >= QUADROS) || e.falhas > 0 || e.erroCopia != null
+                    val metas = synchronized(e.metas) { e.metas.toList() }
+                    val carimbos = synchronized(e.quadros) { e.quadros.map { it.ts }.toSet() }
+                    val pareados = metas.size == QUADROS && metas.mapNotNull { it.ts }.toSet() == carimbos
+                    if (nq == QUADROS && nm == QUADROS && pareados && e.falhas == 0) {
+                        t.desfecho = "ok"
+                        val qs = synchronized(e.quadros) { e.quadros.sortedBy { it.ts } }
+                        val msTotal = (qs.maxOf { it.chegadaNs } - tBurst) / 1_000_000
+                        val tsMetas = synchronized(e.metas) { e.metas.mapNotNull { it.ts } }.sorted()
+                        val fps = if (tsMetas.size >= 2 && tsMetas.last() > tsMetas.first()) (tsMetas.size - 1) * 1e9 / (tsMetas.last() - tsMetas.first()) else null
+                        guarda { sess.stopRepeating() }
+                        if (r.cancelada) return fim("cancelado", null)
+                        val iguais = metas.all { it.exp != null && it.iso != null } &&
+                            metas.map { it.exp }.distinct().size == 1 && metas.map { it.iso }.distinct().size == 1
+                        t.desfecho = if (iguais) "ok" else "variou"
+                        return fim(t.desfecho, if (iguais) null else "exposicao_iso_divergentes_ou_ausentes", null, tam.width, tam.height, msTotal, fps)
+                    }
+                    // esta resolução não entregou: anota, solta a sessão e tenta a próxima
+                    t.desfecho = if (e.falhas > 0) "falhas:${e.falhas}:${e.falhaRazao}" else "incompleto:$nq:$nm"
+                } finally {
+                    // Invalida antes de soltar superfícies: retornos antigos nunca entram na próxima tentativa.
+                    val sessao = synchronized(e) { e.valida = false; e.sessao }
+                    sessao?.let { fecharSessao(it) }
+                    for (leitor in leitores) guarda { leitor.close() }
+                    synchronized(e.quadros) { e.quadros.clear() }
+                    synchronized(e.metas) { e.metas.clear() }
                 }
-                if (r.cancelada) return fim("cancelado", null)
-                if (e.perdeu != null) return fim("perdeu_camera", e.perdeu)
-                e.erroCopia?.let { cl -> t.desfecho = "copia:$cl"; return fim("erro", "copia", cl, tam.width, tam.height) }
-                val nq = synchronized(e.quadros) { e.quadros.size }
-                val nm = synchronized(e.metas) { e.metas.size }
-                if (nq >= QUADROS && nm >= QUADROS && e.falhas == 0) {
-                    t.desfecho = "ok"
-                    val qs = synchronized(e.quadros) { e.quadros.sortedBy { it.ts } }
-                    val msTotal = (qs.maxOf { it.chegadaNs } - tBurst) / 1_000_000
-                    val tsMetas = synchronized(e.metas) { e.metas.mapNotNull { it.ts } }.sorted()
-                    val fps = if (tsMetas.size >= 2 && tsMetas.last() > tsMetas.first()) (tsMetas.size - 1) * 1e9 / (tsMetas.last() - tsMetas.first()) else null
-                    try { sess.stopRepeating() } catch (x: Exception) { }
-                    return fim("ok", null, null, tam.width, tam.height, msTotal, fps)
-                }
-                // esta resolução não entregou: anota, solta a sessão e tenta a próxima
-                t.desfecho = if (e.falhas > 0) "falhas:${e.falhas}:${e.falhaRazao}" else "incompleto:$nq:$nm"
-                fecharSessao(sess)
             }
             return fim("recusou_resolucao", tentativas.lastOrNull()?.desfecho)
         } catch (x: CancellationException) {
@@ -425,24 +559,18 @@ object Rajada {
         } catch (x: OutOfMemoryError) {
             synchronized(e.quadros) { e.quadros.clear() }
             return fim("erro", "memoria", x.javaClass.simpleName)
+        } catch (x: Throwable) {
+            return fim("erro", null, x.javaClass.simpleName)
         } finally {
             withContext(NonCancellable) {
-                val d = synchronized(e) { e.desistiu = true; e.device }
-                val t0 = SystemClock.elapsedRealtime()
-                if (d != null) try { d.close() } catch (x: Exception) { }
-                // abertura sem resposta ainda: o fio fica vivo um pouco para o onOpened tardio fechar a câmera
-                else if (pediuAbertura) while (!e.respondeu && SystemClock.elapsedRealtime() - t0 < 2_000) delay(10)
-                if (d != null || e.respondeu) while (!e.fechou && SystemClock.elapsedRealtime() - t0 < 3_000) delay(10)
-                // leitores só depois do device: fechar a superfície com a sessão viva gera erro de buffer no HAL
-                for (l in leitores) try { l.close() } catch (x: Exception) { }
-                fio.quitSafely()
+                synchronized(e) { e.desistiu = true }
+                DoisSensores.fecharPorFora(posse, "fim_da_rodada")
+                val limite = SystemClock.elapsedRealtime() + 3_000
+                while (pediuAbertura && !posse.liberada && SystemClock.elapsedRealtime() < limite) delay(10)
+                posse.execucaoTerminou = true
+                DoisSensores.encerrarFio(posse)
             }
         }
-    }
-
-    private fun fecharSessao(s: CameraCaptureSession) {
-        try { s.abortCaptures() } catch (x: Exception) { }
-        try { s.close() } catch (x: Exception) { }
     }
 
     // ------------------------------------------------------------------ resultado e telemetria
@@ -450,6 +578,7 @@ object Rajada {
     /** Telemetria do fim, uma vez por rodada, pelo esquema fechado do DoisSensores (só números e códigos). */
     private fun emitir(r: Rodada, res: Resultado, cap: Captura?, msGravar: Long?) {
         if (!r.fim.compareAndSet(false, true)) return
+        r.posse?.fim?.set(true)
         DoisSensores.ev("rajada_teste", linkedMapOf(
             "rodada" to r.id, "resultado" to res.resultado, "classe" to res.classe, "etapa" to (cap?.etapa ?: r.etapa),
             "quadros" to res.quadros, "ms_total" to res.msTotal, "fps" to res.fps, "largura" to res.largura, "altura" to res.altura,
@@ -463,7 +592,7 @@ object Rajada {
     private fun resultadoDe(r: Rodada, resultado: String, classe: String?, cap: Captura?, normal: Boolean, pasta: File?): Resultado {
         val m0 = cap?.metas?.firstOrNull()
         val maior = cap?.info?.tamanhosYuv?.firstOrNull()
-        val ok = resultado == "ok"
+        val ok = resultado == "ok" || resultado == "variou"
         return Resultado(
             r.id, resultado, classe, if (ok) cap?.quadros?.size ?: 0 else 0, if (ok) cap?.msTotal else null, if (ok) cap?.fps else null,
             if (ok) cap?.w else null, if (ok) cap?.h else null, maior?.width, maior?.height,
@@ -474,6 +603,9 @@ object Rajada {
     /** Saída sem quadros para gravar (recusa, perda, cancelamento, erro): emite e devolve o resultado. */
     fun semQuadros(r: Rodada, cap: Captura): Resultado =
         resultadoDe(r, cap.resultado, cap.classe, cap, false, null).also { emitir(r, it, cap, null) }
+
+    fun cameraxNaoFechou(r: Rodada): Resultado =
+        resultadoDe(r, "camerax_nao_fechou", null, null, false, null).also { emitir(r, it, null, null) }
 
     fun cancelada(r: Rodada, cap: Captura?): Resultado =
         resultadoDe(r, "cancelado", null, cap, false, null).also { emitir(r, it, cap, null) }
@@ -567,7 +699,7 @@ object Rajada {
                 pasta = destino
                 podar(ctx)
             }
-            return resultadoDe(r, "ok", null, cap, temNormal, pasta).also { emitir(r, it, cap, SystemClock.elapsedRealtime() - t0) }
+            return resultadoDe(r, cap.resultado, null, cap, temNormal, pasta).also { emitir(r, it, cap, SystemClock.elapsedRealtime() - t0) }
         } catch (x: CancellationException) {
             throw x
         } catch (x: Cancelada) {
@@ -605,9 +737,10 @@ object Rajada {
         val tent = JSONArray()
         for (t in cap.tentativas) tent.put(JSONObject().poe("largura", t.w).poe("altura", t.h).poe("desfecho", t.desfecho))
         val tv = cap.travas
-        val expIguais = pares.mapNotNull { it.third?.exp }.distinct().size <= 1
-        val isoIguais = pares.mapNotNull { it.third?.iso }.distinct().size <= 1
+        val expIguais = pares.all { it.third?.exp != null } && pares.map { it.third?.exp }.distinct().size == 1
+        val isoIguais = pares.all { it.third?.iso != null } && pares.map { it.third?.iso }.distinct().size == 1
         return JSONObject()
+            .poe("resultado", cap.resultado).poe("motivo", cap.motivo)
             .poe("formato_meta", 1).poe("app", "camera-estudo").poe("versao_app", BuildConfig.VERSION_NAME).poe("rodada", r.id)
             .poe("quando", SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSSZ", Locale.US).format(Date()))
             .poe("modelo", Build.MANUFACTURER + " " + Build.MODEL).poe("android", Build.VERSION.SDK_INT)

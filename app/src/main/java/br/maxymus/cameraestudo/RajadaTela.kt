@@ -99,7 +99,8 @@ internal fun DialogoResultadoRajada(
         title = { Text("Rajada de teste", color = Color.White, fontSize = 22.sp) },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                if (res.resultado == "ok") {
+                if (res.resultado == "ok" || res.resultado == "variou") {
+                    if (res.resultado == "variou") Text("Exposição ou ISO variaram; quadros salvos para análise.", color = CoralRaj, fontSize = 15.sp)
                     val fps = res.fps?.let { "%.1f fps".format(it) } ?: "fps ?"
                     Text("${res.quadros} quadros em ${res.msTotal ?: "?"} ms ($fps)", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     Text("Resolução: ${res.largura}x${res.altura}", color = Color.White, fontSize = 15.sp, modifier = Modifier.padding(top = 8.dp))
@@ -112,6 +113,8 @@ internal fun DialogoResultadoRajada(
                         color = CinzaRaj, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
                 } else {
                     Text(when (res.resultado) {
+                        "camerax_nao_fechou" -> "A câmera do app não confirmou o fechamento. A rajada não começou."
+                        "sem_convergencia" -> "Luz ou foco não convergiram e travaram no prazo. Nada foi capturado."
                         "recusou_resolucao" -> "A câmera não aceitou a rajada em nenhuma resolução tentada."
                         "perdeu_camera" -> "O sistema tirou a câmera do app no meio da rajada."
                         "cancelado" -> "Rajada cancelada. Nada foi salvo."

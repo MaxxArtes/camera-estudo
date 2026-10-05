@@ -30,6 +30,9 @@ import android.util.SizeF
 import android.view.SurfaceHolder
 import android.widget.Toast
 import androidx.annotation.RequiresApi
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.content.FileProvider
 import androidx.exifinterface.media.ExifInterface
 import kotlinx.coroutines.CancellationException
@@ -206,7 +209,7 @@ object DoisSensores {
      * Rodada cuja Camera2 abriu (ou está abrindo) e ainda não teve o onClosed. Daqui saem os dois bloqueios: nenhum teste
      * novo e nenhum bind do CameraX enquanto ela existir. Independe de `ativa`: o resultado pode fechar antes da câmera.
      */
-    @Volatile var retida: Rodada? = null
+    var retida: Rodada? by mutableStateOf(null)
         private set
 
     fun novaRodada(ctx: Context): Rodada =
@@ -236,7 +239,7 @@ object DoisSensores {
         if (r.liberada) return
         fechando(r, gatilho)
         val d = r.dispositivo ?: return
-        escopo.launch { try { d.close() } catch (e: Exception) { } }
+        escopo.launch { try { d.close() } catch (e: Throwable) { } }
     }
 
     /**
@@ -1593,7 +1596,7 @@ object DoisSensores {
         "erro:dois_arquivos" to mapOf("onde" to conj("dois_arquivos"), "acao" to conj("limpar"), "classe" to CLASSE),
         // rajada de teste (0.80, Rajada.kt): só números e códigos, também aqui
         "rajada_teste" to mapOf(
-            "rodada" to RODADA, "resultado" to conj("ok", "recusou_resolucao", "perdeu_camera", "cancelado", "erro"), "classe" to CLASSE,
+            "rodada" to RODADA, "resultado" to conj("ok", "recusou_resolucao", "perdeu_camera", "cancelado", "erro", "camerax_nao_fechou", "sem_convergencia", "variou"), "classe" to CLASSE,
             "etapa" to conj("inicio", "soltar", "caracteristicas", "abrir", "sessao", "3a", "rajada", "devolver", "normal", "gravar"),
             "quadros" to NUM, "ms_total" to NUM, "fps" to NUM, "largura" to NUM, "altura" to NUM, "largura_max" to NUM, "altura_max" to NUM,
             "tentativas" to NUM, "exp_ns" to NUM, "iso" to NUM, "ois" to NUM, "nr" to NUM, "edge" to NUM, "ae_travado" to BOOL, "af_fixo" to BOOL,
