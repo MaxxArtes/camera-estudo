@@ -27,7 +27,8 @@ internal object RegraVoz {
     const val SAIDA_AUDIO = "saida_audio"
     const val TELA_DESLIGADA = "tela_desligada"
     const val ERRO = "erro"
-    val MOTIVOS_FIM: Set<String> = setOf(FIM, PARAR, TOQUE_BOLHA, TELA_FECHADA, FOCO_AUDIO, SAIDA_AUDIO, TELA_DESLIGADA, ERRO)
+    val MOTIVOS_FIM: Set<String> = setOf(FIM, PARAR, TOQUE_BOLHA, TELA_FECHADA, FOCO_AUDIO, SAIDA_AUDIO, TELA_DESLIGADA, ERRO,
+        RegraLeituraCapitulo.FIM_CAPITULO, RegraLeituraCapitulo.ROLAGEM, RegraLeituraCapitulo.ORIGINAL, RegraLeituraCapitulo.ERRO_QUADRO)
 
     /** Os códigos de `ouvir_indisponivel`. */
     const val SEM_VOZ = "sem_voz"
@@ -35,9 +36,10 @@ internal object RegraVoz {
     const val SEM_FALAS = "sem_falas"
     val MOTIVOS_INDISPONIVEL: Set<String> = setOf(SEM_VOZ, IDIOMA_DESTINO, SEM_FALAS)
 
-    /** De onde veio o pedido de leitura: do menu da bolha ou do botão da tela congelada. */
+    /** De onde veio o pedido de leitura: do menu da bolha, do botão da tela congelada ou do leitor de capítulo. */
     const val BOLHA = "bolha"
     const val CONGELADA = "congelada"
+    const val LEITOR = "leitor"
 
     /** A leitura é só em português nesta versão: a voz escolhida é pt-BR e o texto lido é o traduzido para o destino. */
     fun destinoServe(destino: String) = destino == "pt"
@@ -139,20 +141,24 @@ internal object RegraVoz {
 
 /**
  * Uma sessão de leitura, sem Android: a fila de pedaços, a contagem das falas lidas e a telemetria. A fila é a CÓPIA do
- * momento em que a leitura começou (os pedaços são montados no construtor): correção tardia de tradução não a muda. Cada
- * fala vira um ou mais pedaços (texto acima do limite do motor é dividido) e o motor fala UM pedaço por vez. Os ids levam a
- * geração, e quem chama ignora o que não for desta sessão. `ouvir_iniciou` sai uma vez, quando a primeira fala COMEÇA, e
+ * momento em que a leitura começou (os pedaços são montados no construtor): correção tardia de tradução não a muda. No
+ * leitor de capítulo a sessão é CONTÍNUA: as falas entram com `acrescentar`, também copiadas, e a sessão (com um só
+ * ouvir_iniciou e um só ouvir_terminou) atravessa os quadros. Cada fala vira um ou mais pedaços (texto acima do limite do
+ * motor é dividido) e o motor fala UM pedaço por vez. Os ids levam a geração, e quem chama ignora o que não for desta sessão. `ouvir_iniciou` sai uma vez, quando a primeira fala COMEÇA, e
  * `ouvir_terminou` uma vez, no fim; ambos só com números e códigos fixos, nunca texto, URL, nome de app nem hash.
  */
 internal class SessaoLeitura(
-    falas: List<String>, maxEntrada: Int, onde: String, val geracao: Int,
+    falas: List<String>, private val maxEntrada: Int, onde: String, val geracao: Int,
     private val registra: (tipo: String, campos: Map<String, Any?>) -> Unit
 ) {
     class Peca(val texto: String, val ultimaDaFala: Boolean)
 
-    val pecas: List<Peca>
-    val totalFalas: Int
-    private val onde: String = if (onde == RegraVoz.BOLHA || onde == RegraVoz.CONGELADA) onde else RegraVoz.CONGELADA
+    private val montadas = ArrayList<Peca>()
+    val pecas: List<Peca> get() = montadas
+    var totalFalas = 0
+        private set
+    private val onde: String =
+        if (onde == RegraVoz.BOLHA || onde == RegraVoz.CONGELADA || onde == RegraVoz.LEITOR) onde else RegraVoz.CONGELADA
     var proxima = 0
         private set
     var lidas = 0
@@ -162,7 +168,10 @@ internal class SessaoLeitura(
         private set
 
     init {
-        val montadas = ArrayList<Peca>()
+        monta(falas)
+    }
+
+    private fun monta(falas: List<String>): Int {
         var n = 0
         for (f in falas.toList()) {
             val partes = RegraVoz.dividir(f, maxEntrada)
@@ -170,9 +179,15 @@ internal class SessaoLeitura(
             n++
             partes.forEachIndexed { i, p -> montadas += Peca(p, i == partes.lastIndex) }
         }
-        pecas = montadas
-        totalFalas = n
+        totalFalas += n
+        return n
     }
+
+    /**
+     * Põe no fim da fila as falas de mais um quadro (sessão contínua do leitor), copiadas agora. Devolve quantas falas
+     * entraram; sessão encerrada não aceita nada. O que já foi lido e a ordem do que falta não mudam.
+     */
+    fun acrescentar(falas: List<String>): Int = if (encerrada) 0 else monta(falas)
 
     fun pecaAtual(): Peca? = if (encerrada) null else pecas.getOrNull(proxima)
 
@@ -215,9 +230,9 @@ internal class SessaoLeitura(
  *
  *  - antes de cada leitura confere que o motor padrão e a voz continuam os mesmos; se a voz mudou, escolhe de novo, e sem voz
  *    que sirva pede ao serviço a caixa "Instalar voz" (`semVoz`) e NÃO lê sozinho quando o dono volta;
- *  - áudio: conteúdo de fala, foco transitório que permite baixar o dos outros (AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK). Foco
- *    negado, não começa. QUALQUER perda de foco, inclusive a transitória, para a leitura e não retoma sozinha. O foco é
- *    liberado ao parar ou terminar. Volume e saída de áudio nunca são tocados;
+ *  - áudio: conteúdo de fala, foco transitório que permite baixar o dos outros (AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK); na
+ *    leitura contínua do capítulo, foco de duração longa (AUDIOFOCUS_GAIN). Foco negado, não começa. QUALQUER perda de foco,
+ *    inclusive a transitória, para a leitura e não retoma sozinha. O foco é liberado ao parar ou terminar. Volume e saída de áudio nunca são tocados;
  *  - fone: ACTION_AUDIO_BECOMING_NOISY para a leitura, e ACTION_SCREEN_OFF também;
  *  - UM pedaço por vez. "Parar" sobe a geração, e callback de geração velha é ignorado;
  *  - tudo roda na thread principal; os callbacks do motor são postados para ela.
@@ -236,6 +251,10 @@ internal class Voz(
     private var geracao = 0
     private var preparando = false
     private var sessao: SessaoLeitura? = null
+    /** Na leitura contínua (leitor de capítulo): quem fornece as falas do próximo quadro; nulo na leitura de uma tela só. */
+    private var pedeMais: ((token: Int) -> Unit)? = null
+    /** Leitura contínua com a fila vazia, esperando as falas do próximo quadro. */
+    private var esperando = false
     private var pedidoFoco: AudioFocusRequest? = null
     private var receptor: BroadcastReceiver? = null
 
@@ -251,6 +270,34 @@ internal class Voz(
         if (!destinoPermite()) return
         val copia = textos.filter { it.isNotBlank() }
         if (copia.isEmpty()) { semFalas(); return }
+        inicia(copia, onde, null)
+    }
+
+    /**
+     * Leitura CONTÍNUA do leitor de capítulo: prepara a voz e pede o foco de duração longa (AUDIOFOCUS_GAIN), e então chama
+     * `pede(token)` sempre que a fila esvazia. Quem lê responde com `acrescentar(token, falas)` ou com `parar(motivo)`; o
+     * token é a geração da sessão, e resposta de sessão que já parou é ignorada. Nada acontece se já há leitura.
+     */
+    fun ouvirContinuo(onde: String, pede: (token: Int) -> Unit) {
+        if (lendo) return
+        if (!destinoPermite()) return
+        inicia(emptyList(), onde, pede)
+    }
+
+    /**
+     * As falas do próximo quadro, na ordem de leitura, para a leitura contínua que está esperando. Devolve se elas entraram
+     * na fila; token velho, sessão que não espera ou lista sem fala não entram (quem chama decide pular ou parar).
+     */
+    fun acrescentar(token: Int, textos: List<String>): Boolean {
+        val s = sessao ?: return false
+        if (!esperando || token != geracao || s.geracao != geracao) return false
+        if (s.acrescentar(textos.filter { it.isNotBlank() }) == 0) return false
+        esperando = false
+        fala(s)
+        return true
+    }
+
+    private fun inicia(copia: List<String>, onde: String, pede: ((Int) -> Unit)?) {
         preparando = true
         val minha = ++geracao
         // os motivos de parada também valem enquanto o motor prepara
@@ -259,7 +306,7 @@ internal class Voz(
         garantirMotor { ok ->
             if (geracao != minha || !preparando) return@garantirMotor      // pararam enquanto a voz preparava
             if (!ok) { preparando = false; tiraReceptores(); falhaSemVoz(); aoMudar(); return@garantirMotor }
-            comeca(copia, onde, minha)
+            comeca(copia, onde, minha, pede)
         }
     }
 
@@ -387,13 +434,13 @@ internal class Voz(
 
     // ---------------- a leitura ----------------
 
-    private fun comeca(textos: List<String>, onde: String, minha: Int) {
+    private fun comeca(textos: List<String>, onde: String, minha: Int, pede: ((Int) -> Unit)?) {
         // o limite do motor vale como ele informa; só um valor sem sentido (zero ou negativo) cai no padrão
         val maximo = runCatching { TextToSpeech.getMaxSpeechInputLength() }.getOrDefault(MAX_ENTRADA_PADRAO).takeIf { it > 0 } ?: MAX_ENTRADA_PADRAO
         if (geracao != minha) { preparando = false; tiraReceptores(); return }
         val s = SessaoLeitura(textos, maximo, onde, minha) { tipo, campos -> Telemetria.evento(tipo, campos) }
-        if (s.pecas.isEmpty()) { preparando = false; tiraReceptores(); semFalas(); aoMudar(); return }
-        if (!pedeFoco()) {
+        if (s.pecas.isEmpty() && pede == null) { preparando = false; tiraReceptores(); semFalas(); aoMudar(); return }
+        if (!pedeFoco(longo = pede != null)) {
             preparando = false
             // foco negado: não começa. A sessão existiu, então o fim é registrado, sem nunca ter havido início
             tiraReceptores()
@@ -403,10 +450,18 @@ internal class Voz(
             return
         }
         sessao = s
+        pedeMais = pede
         preparando = false
         primeiroAviso()
         aoMudar()
-        fala(s)
+        if (s.pecas.isEmpty()) pedeProximo(s) else fala(s)
+    }
+
+    /** Leitura contínua com a fila vazia: espera as falas do próximo quadro. */
+    private fun pedeProximo(s: SessaoLeitura) {
+        val pede = pedeMais ?: run { encerra(s, RegraVoz.FIM); return }
+        esperando = true
+        pede(s.geracao)
     }
 
     private fun fala(s: SessaoLeitura) {
@@ -419,7 +474,7 @@ internal class Voz(
     }
 
     private fun encerra(s: SessaoLeitura, motivo: String) {
-        if (sessao === s) sessao = null
+        if (sessao === s) { sessao = null; pedeMais = null; esperando = false }
         geracao++
         runCatching { tts?.stop() }
         soltaFoco()
@@ -440,7 +495,7 @@ internal class Voz(
         override fun onDone(utteranceId: String?) {
             principal.post {
                 val s = sessaoDoId(utteranceId) ?: return@post
-                if (s.aoTerminar(utteranceId)) fala(s) else if (s.pecaAtual() == null) encerra(s, RegraVoz.FIM)
+                if (s.aoTerminar(utteranceId)) fala(s) else if (s.pecaAtual() == null) pedeProximo(s)
             }
         }
         @Suppress("OVERRIDE_DEPRECATION")
@@ -456,9 +511,11 @@ internal class Voz(
             mudanca == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) parar(RegraVoz.FOCO_AUDIO)
     }
 
-    private fun pedeFoco(): Boolean {
+    /** `longo`: capítulo contínuo, foco de duração longa (AUDIOFOCUS_GAIN); senão o transitório que deixa baixar o dos outros. */
+    private fun pedeFoco(longo: Boolean): Boolean {
         val am = contexto.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return false
-        val pedido = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+        val tipo = if (longo) AudioManager.AUDIOFOCUS_GAIN else AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+        val pedido = AudioFocusRequest.Builder(tipo)
             .setAudioAttributes(atributosDeFala())
             .setOnAudioFocusChangeListener(ouvinteFoco, principal)
             .build()
