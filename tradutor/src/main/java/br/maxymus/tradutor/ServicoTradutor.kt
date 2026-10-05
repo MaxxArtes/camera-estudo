@@ -16,9 +16,11 @@ import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.core.graphics.drawable.toDrawable
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
@@ -49,6 +51,9 @@ class ServicoTradutor : AccessibilityService() {
         private const val CANAL = "tradutor"
         private const val AVISO = 1
     }
+
+    /** O que a tela congelada precisa depois de traduzir: a camada, as falas (para a revisão) e as medidas do pedido. */
+    private class Congelada(val camada: Bitmap, val falas: List<Falas.Fala>, val resultado: ResultadoLote)
 
     /** Recebe os toques da notificação fixa. */
     private val receptor = object : android.content.BroadcastReceiver() {
@@ -103,6 +108,9 @@ class ServicoTradutor : AccessibilityService() {
         fechar?.let { runCatching { janelas.removeView(it) } }; fechar = null
         runCatching { unregisterReceiver(receptor) }
         runCatching { (getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager).cancel(AVISO) }
+        // serviço destruído: as esperas de toque e de pré-carregamento param (ativo = false nos laços), sem cancelar os
+        // futuros compartilhados do coordenador, que terminam pelo próprio prazo
+        escopo.cancel()
         super.onDestroy()
     }
 
@@ -172,7 +180,7 @@ class ServicoTradutor : AccessibilityService() {
         val t0 = System.nanoTime()
         val n = withContext(Dispatchers.Default) {
             val falas = Falas.ler(tela, (tela.height * 0.11f).toInt(), (tela.height * 0.96f).toInt())
-            if (falas.isEmpty()) 0 else { Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto }); falas.size }
+            if (falas.isEmpty()) 0 else { Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto }, ativo = { isActive }); falas.size }
         }
         if (n > 0) Telemetria.evento("preparou", mapOf("falas" to n, "ms" to (System.nanoTime() - t0) / 1_000_000, "cache" to Traducao.noCache))
     }
@@ -320,7 +328,9 @@ class ServicoTradutor : AccessibilityService() {
         if (uteisConhecido.isNotEmpty() && continuo)
             mostraCamada(withContext(Dispatchers.Default) { Pintura.camada(tela, uteisConhecido) { conhecido[it] ?: it } })
         val tTrad = System.nanoTime()
-        val mapa = withContext(Dispatchers.Default) { Traducao.traduzirLote(this@ServicoTradutor, textos) }
+        // as medidas do pedido vêm no resultado dele: pré-carregamento e toque rodam ao mesmo tempo e não se misturam
+        val r = withContext(Dispatchers.Default) { Traducao.traduzirLoteDetalhado(this@ServicoTradutor, textos, ativo = { isActive }) }
+        val mapa = r.mapa
         val msT = (System.nanoTime() - tTrad) / 1_000_000
         trabalhando = false
         if (!continuo) return
@@ -331,10 +341,12 @@ class ServicoTradutor : AccessibilityService() {
         if (uteisConhecido.isEmpty() || uteis.map { it.texto to mapa[it.texto] } != uteisConhecido.map { it.texto to conhecido[it.texto] })
             mostraCamada(withContext(Dispatchers.Default) { Pintura.camada(tela, uteis) { mapa[it] ?: it } })
         val msP = (System.nanoTime() - tPint) / 1_000_000
+        // só números, códigos fixos e o id aleatório do serviço: nenhum texto de fala nem de resposta, nem hash deles
         Telemetria.evento("traduziu", mapOf("modo" to "continuo", "falas" to falas.size,
-            "ja_no_cache" to conhecido.size, "caminho" to Traducao.ultimoCaminho,
-            "origem" to (Traducao.ultimaOrigem ?: "?"), "modelo" to Traducao.ultimoModelo,
-            "puladas" to Traducao.ultimoPuladas, "und" to Traducao.ultimoUnd, "ms_modelo" to Traducao.ultimoMsModelo,
+            "ja_no_cache" to conhecido.size, "caminho" to r.caminho,
+            "origem" to r.origem, "modelo" to (r.modelo ?: "-"),
+            "puladas" to falas.count { it.texto in r.puladas }, "und" to r.und, "ms_modelo" to r.msModelo,
+            "compartilhadas" to r.compartilhadas, "id" to r.idServidor,
             "ms_ocr" to msO, "ms_trad" to msT, "ms_pint" to msP, "cache" to Traducao.noCache))
         agendaRevisao(corr)
     }
@@ -442,7 +454,7 @@ class ServicoTradutor : AccessibilityService() {
             ultimaAssinatura = assin
             withContext(Dispatchers.Default) {
                 val falas = Falas.ler(tela, (tela.height * 0.11f).toInt(), (tela.height * 0.96f).toInt())
-                if (falas.isNotEmpty()) Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto })
+                if (falas.isNotEmpty()) Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto }, ativo = { isActive })
             }
             telas++
             if (!rola(true)) break
@@ -513,55 +525,71 @@ class ServicoTradutor : AccessibilityService() {
         if (continuo) encerraContinuo()   // as duas camadas não podem existir juntas
         trabalhando = true
         escopo.launch {
-            // A captura pega a tela inteira, inclusive a bolha. Mudar o alfa NAO basta: a janela so some depois de
-            // desenhar o proximo quadro. Sem esta espera a bolha aparece congelada dentro da propria traducao.
-            bolha?.visibility = View.INVISIBLE
-            kotlinx.coroutines.delay(90)
-            val tela = captura()
-            bolha?.visibility = View.VISIBLE
-            if (tela == null) { trabalhando = false; aviso("Não consegui capturar a tela."); return@launch }
-            // fora as barras do sistema e do navegador: sem isto o app le a barra de endereço e gasta tradução
-            val topo = (tela.height * 0.11f).toInt(); val base = (tela.height * 0.96f).toInt()
-            val t0 = System.nanoTime()
-            // a referência da revisão é lida ANTES de traduzir: correção que chega no meio do pedido não pode ficar invisível
-            val referencia = Traducao.correcoes.get()
-            var tudoNoIdioma = false
-            val camada = withContext(Dispatchers.Default) {
-                val tOcr = System.nanoTime()
-                val falas = Falas.ler(tela, topo, base)
-                msOcr = (System.nanoTime() - tOcr) / 1_000_000
-                if (falas.isEmpty()) null
-                else {
-                    val tTrad = System.nanoTime()
-                    val puladas = HashSet<String>()
-                    val mapa = Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto }, puladas)
-                    msTrad = (System.nanoTime() - tTrad) / 1_000_000
-                    // o mesmo filtro do Leitor (uteis): fala pulada ou traduzida igual ao original não ganha faixa
-                    val uteis = falas.filter { (mapa[it.texto] ?: it.texto) != it.texto }
-                    if (uteis.isEmpty() && falas.all { it.texto in puladas }) { tudoNoIdioma = true; null }
+            // trabalhando volta a false de qualquer jeito: corrotina cancelada ou exceção no meio não podem deixar o serviço
+            // recusando os toques seguintes. O caminho normal solta mais cedo; a liberação é uma vez só, para o finally não
+            // atropelar um toque novo que já começou depois da soltura antecipada.
+            var liberou = false
+            fun libera() { if (!liberou) { liberou = true; trabalhando = false } }
+            try {
+                // A captura pega a tela inteira, inclusive a bolha. Mudar o alfa NAO basta: a janela so some depois de
+                // desenhar o proximo quadro. Sem esta espera a bolha aparece congelada dentro da propria traducao.
+                bolha?.visibility = View.INVISIBLE
+                kotlinx.coroutines.delay(90)
+                val tela = captura()
+                bolha?.visibility = View.VISIBLE
+                if (tela == null) { libera(); aviso("Não consegui capturar a tela."); return@launch }
+                // fora as barras do sistema e do navegador: sem isto o app le a barra de endereço e gasta tradução
+                val topo = (tela.height * 0.11f).toInt(); val base = (tela.height * 0.96f).toInt()
+                val t0 = System.nanoTime()
+                // a referência da revisão é lida ANTES de traduzir: correção que chega no meio do pedido não pode ficar invisível
+                val referencia = Traducao.correcoes.get()
+                var tudoNoIdioma = false
+                val camada = withContext(Dispatchers.Default) {
+                    val tOcr = System.nanoTime()
+                    val falas = Falas.ler(tela, topo, base)
+                    msOcr = (System.nanoTime() - tOcr) / 1_000_000
+                    if (falas.isEmpty()) null
                     else {
-                        // há fala ainda sem tradução útil (o modelo pode chegar depois do prazo): a tela congela com
-                        // camada transparente e a revisão congelada a completa quando o cache for corrigido
-                        // (revisão do Astra, 03/10)
-                        val tPint = System.nanoTime()
-                        val c = if (uteis.isEmpty()) Bitmap.createBitmap(tela.width, tela.height, Bitmap.Config.ARGB_8888)
-                                else Pintura.camada(tela, uteis) { mapa[it] ?: it }
-                        msPint = (System.nanoTime() - tPint) / 1_000_000
-                        Triple(c, falas.size, falas)
+                        val tTrad = System.nanoTime()
+                        // as falas puladas e as medidas são DESTE pedido: o pré-carregamento do contínuo roda ao mesmo tempo
+                        val r = Traducao.traduzirLoteDetalhado(this@ServicoTradutor, falas.map { it.texto }, ativo = { isActive })
+                        val mapa = r.mapa
+                        msTrad = (System.nanoTime() - tTrad) / 1_000_000
+                        // o mesmo filtro do Leitor (uteis): fala pulada ou traduzida igual ao original não ganha faixa
+                        val uteis = falas.filter { (mapa[it.texto] ?: it.texto) != it.texto }
+                        if (uteis.isEmpty() && falas.all { it.texto in r.puladas }) { tudoNoIdioma = true; null }
+                        else {
+                            // há fala ainda sem tradução útil (o modelo pode chegar depois do prazo): a tela congela com
+                            // camada transparente e a revisão congelada a completa quando o cache for corrigido
+                            // (revisão do Astra, 03/10)
+                            val tPint = System.nanoTime()
+                            val c = if (uteis.isEmpty()) Bitmap.createBitmap(tela.width, tela.height, Bitmap.Config.ARGB_8888)
+                                    else Pintura.camada(tela, uteis) { mapa[it] ?: it }
+                            msPint = (System.nanoTime() - tPint) / 1_000_000
+                            Congelada(c, falas, r)
+                        }
                     }
                 }
+                val ms = (System.nanoTime() - t0) / 1_000_000
+                libera()
+                if (tudoNoIdioma) {
+                    aviso("Esta tela já está no seu idioma.")
+                    Telemetria.evento("traduziu", mapOf("falas" to 0, "ms" to ms, "tudo_no_idioma" to true))
+                    return@launch
+                }
+                if (camada == null) { aviso("Não encontrei texto. Mova um pouco a página e tente de novo."); Telemetria.evento("traduziu", mapOf("falas" to 0, "ms" to ms)); return@launch }
+                val r = camada.resultado
+                // só números, códigos fixos e o id aleatório do serviço: nenhum texto de fala nem de resposta, nem hash deles
+                Telemetria.evento("traduziu", mapOf("falas" to camada.falas.size, "ms" to ms, "cache" to Traducao.noCache,
+                    "caminho" to r.caminho, "origem" to r.origem, "online" to r.online, "offline" to r.offline,
+                    "modelo" to (r.modelo ?: "-"), "puladas" to camada.falas.count { it.texto in r.puladas }, "und" to r.und,
+                    "ms_modelo" to r.msModelo, "compartilhadas" to r.compartilhadas, "id" to r.idServidor,
+                    "ms_ocr" to msOcr, "ms_trad" to msTrad, "ms_pint" to msPint))
+                mostraSobreposicao(tela, camada.camada)
+                agendaRevisaoCongelada(tela, camada.falas, referencia)
+            } finally {
+                libera()
             }
-            val ms = (System.nanoTime() - t0) / 1_000_000
-            trabalhando = false
-            if (tudoNoIdioma) {
-                aviso("Esta tela já está no seu idioma.")
-                Telemetria.evento("traduziu", mapOf("falas" to 0, "ms" to ms, "tudo_no_idioma" to true))
-                return@launch
-            }
-            if (camada == null) { aviso("Não encontrei texto. Mova um pouco a página e tente de novo."); Telemetria.evento("traduziu", mapOf("falas" to 0, "ms" to ms)); return@launch }
-            Telemetria.evento("traduziu", mapOf("falas" to camada.second, "ms" to ms, "cache" to Traducao.noCache, "caminho" to Traducao.ultimoCaminho, "origem" to (Traducao.ultimaOrigem ?: "?"), "online" to Traducao.ultimoOnline, "offline" to Traducao.ultimoOffline, "modelo" to Traducao.ultimoModelo, "puladas" to Traducao.ultimoPuladas, "und" to Traducao.ultimoUnd, "ms_modelo" to Traducao.ultimoMsModelo, "ms_ocr" to msOcr, "ms_trad" to msTrad, "ms_pint" to msPint))
-            mostraSobreposicao(tela, camada.first)
-            agendaRevisaoCongelada(tela, camada.third, referencia)
         }
     }
 

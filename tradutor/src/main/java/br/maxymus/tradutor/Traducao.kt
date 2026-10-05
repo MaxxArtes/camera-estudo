@@ -16,6 +16,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -35,9 +36,10 @@ import java.util.concurrent.atomic.AtomicLong
  * idioma da interface e deixava a fala estrangeira sem tradução.
  *
  * O cache é indexado pelo TEXTO reconhecido, nunca pela imagem: rolar três pixels muda o recorte e o cache nunca
- * acertaria. A chave é normalizada porque o OCR troca "I" por "l" de um quadro para outro. Ela leva o DESTINO mas
- * não a origem detectada: a detecção oscilava (en, sk, pt para o mesmo texto) e fragmentava o cache, e a mesma
- * fala era traduzida de novo.
+ * acertaria. A chave é normalizada (normalizarFala) porque o OCR varia maiúscula, pontuação e espaço de um quadro para
+ * outro, mas sem juntar palavras diferentes. Ela leva o DESTINO mas não a origem detectada: a detecção oscilava (en, sk,
+ * pt para o mesmo texto) e fragmentava o cache, e a mesma fala era traduzida de novo. O mesmo texto pedido por dois
+ * pedidos ao mesmo tempo é traduzido uma vez só (emAndamento).
  */
 object Traducao {
     @Volatile var destino: String = TranslateLanguage.PORTUGUESE
@@ -53,8 +55,6 @@ object Traducao {
         ctx.getSharedPreferences("tradutor", Context.MODE_PRIVATE).edit()
             .putString("destino", destino).putString("origem", origemFixa).apply()
     }
-    @Volatile var ultimaOrigem: String? = null
-    @Volatile var ultimoCaminho: String = "-"
     /**
      * Sobe quando o modelo chega atrasado e MUDA o texto do cache. Quem desenha usa isto para redesenhar uma vez.
      * É AtomicInteger porque a Thread da correção tardia e quem lê rodam em threads diferentes e `++` em volátil perde
@@ -78,6 +78,15 @@ object Traducao {
     private const val NIVEL_MODELO = 2
 
     private val cache = ConcurrentHashMap<String, Entrada>()
+
+    /**
+     * O que está sendo pedido AGORA, por chave do cache. O pré-carregamento do modo contínuo e o toque podiam pedir a
+     * mesma fala ao mesmo tempo: o cache só era consultado antes e o trabalho em andamento não ficava registrado, então a
+     * rede recebia o pedido repetido e a cota era gasta duas vezes. Agora quem chega primeiro registra o futuro da fala
+     * (Coordenacao.consultarOuReservar, na mesma seção curta da consulta ao cache, sem rede dentro) e os outros esperam
+     * por ele, no máximo até o PRÓPRIO prazo. Quem decide a fala completa o futuro e o tira do mapa (Coordenacao.concluir).
+     */
+    private val emAndamento = ConcurrentHashMap<String, CompletableFuture<Entrada?>>()
     private val tradutores = ConcurrentHashMap<String, Translator>()
     private val identificador by lazy { LanguageIdentification.getClient() }
 
@@ -94,7 +103,8 @@ object Traducao {
      */
     private val historico = HistoricoOrigem()
 
-    private fun normalizar(s: String) = s.lowercase().filter { it.isLetterOrDigit() }
+    /** A mesma normalização para a chave do cache e para o LRU de idioma (ver normalizarFala). */
+    private fun normalizar(s: String) = normalizarFala(s)
 
     /** O destino vem de quem chama, da foto do pedido: a chave não pode mudar porque o dono trocou o idioma no meio. */
     private fun chave(s: String, dest: String) = dest + "|" + normalizar(s)
@@ -178,6 +188,14 @@ object Traducao {
         c != null && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) && c.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
     }.getOrDefault(false)
 
+    /**
+     * Os motores que o LOTE chama para falar com o mundo de fora: verificação de rede, tradutor de máquina e ML Kit. São
+     * trocáveis porque na JVM do harness não existe nenhum dos três e o teste precisa mandar em quem responde e quando; em
+     * produção ficam sempre os reais. Cada pedido lê o conjunto uma vez, ao nascer (Pedido.mot), para não misturar motores
+     * no caminho. A tradução de uma fala só (`traduzir`) continua chamando os reais.
+     */
+    @Volatile internal var motores = Motores(::temRede, ::porRede, ::local)
+
     private fun tradutorLocal(origem: String, dest: String): Translator? = runCatching {
         val de = TranslateLanguage.fromLanguageTag(origem) ?: return null
         tradutores.getOrPut(de + dest) {
@@ -200,13 +218,43 @@ object Traducao {
         Tasks.await(t.downloadModelIfNeeded(DownloadConditions.Builder().requireWifi().build()), 1, TimeUnit.SECONDS); true
     }.getOrDefault(false)
 
-    @Volatile var ultimoOnline = 0
-    @Volatile var ultimoOffline = 0
-    /** Telemetria do último lote: falas puladas por já estarem no idioma de destino, e falas sem idioma decidido. */
-    @Volatile var ultimoPuladas = 0
-    @Volatile var ultimoUnd = 0
-    /** Telemetria do último lote: ms do início do lote até a resposta do modelo, ou -1 se ela não veio dentro da espera. */
-    @Volatile var ultimoMsModelo = -1L
+    /**
+     * O estado de UM pedido de tradução. Tudo o que antes eram campos globais `ultimo*` mora aqui, e por isso dois pedidos
+     * ao mesmo tempo (o pré-carregamento do modo contínuo e o toque) não misturam as medidas um do outro. Mais de uma
+     * thread escreve aqui (o laço das próprias falas, o acompanhamento das alheias e as recuperações), então o mapa é
+     * concorrente e os contadores são atômicos; o resultado devolve uma CÓPIA do mapa.
+     */
+    private class Pedido(val t0: Long, val dest: String, val origem: String) {
+        /** o único prazo do pedido: nada espera nem abre tempo novo depois dele */
+        val prazoFinal = t0 + PRAZO_MODELO * 1_000_000_000L
+        val mot = motores
+        val saida: MutableMap<String, String> = ConcurrentHashMap()
+        @Volatile var comRede = false
+        @Volatile var semMaquina = false
+        val online = AtomicInteger(0)
+        val offline = AtomicInteger(0)
+        @Volatile var msModelo = -1L
+        @Volatile var modelo: String? = null
+        @Volatile var idServidor: String? = null
+        val compartilhadas = AtomicInteger(0)
+    }
+
+    private fun resultado(p: Pedido, puladas: Set<String>, und: Int) = ResultadoLote(
+        HashMap(p.saida), puladas, und, p.origem, SaneaTelemetria.caminho(p.online.get(), p.offline.get()), p.modelo, p.msModelo,
+        p.online.get(), p.offline.get(), p.compartilhadas.get(), p.idServidor
+    )
+
+    /**
+     * Quem só quer o mapa das traduções. Preenche, se pedido, o conjunto das falas puladas DESTE pedido (o contador global
+     * de puladas era sobrescrito pelo pré-carregamento ao mesmo tempo; revisão do Astra, 04/10).
+     */
+    fun traduzirLote(
+        ctx: Context, textos: List<String>, puladasDoPedido: MutableSet<String>? = null, ativo: () -> Boolean = { true }
+    ): Map<String, String> {
+        val r = traduzirLoteDetalhado(ctx, textos, ativo = ativo)
+        puladasDoPedido?.addAll(r.puladas)
+        return r.mapa
+    }
 
     /**
      * Traduz a tela INTEIRA numa requisição só, numerando as falas. Medido em 23/09: o serviço devolve a
@@ -216,154 +264,305 @@ object Traducao {
      * As falas que já estão no idioma de destino (classificar) voltam como estão, sem tradução; só as outras seguem
      * para cache, rede e local.
      *
-     * Duas regras da revisão do Astra (03/10):
+     * Regras da revisão do Astra:
      *  - UM prazo absoluto, prazoFinal = início + PRAZO_MODELO, vale para tudo: o laço de espera, a espera extra pela
      *    máquina e o offline (o paralelo e o de fechamento). Nada abre tempo novo depois dele.
      *  - O pedido é uma FOTO: destino e origem fixa são lidos uma vez, aqui, e vão explícitos para a classificação, as
-     *    chaves e os motores. Se o dono trocar o idioma no meio, este lote termina no idioma em que começou.
+     *    chaves e os motores. Se o dono trocar o idioma no meio, este lote termina no idioma em que começou. Quem
+     *    precisa de exatidão (o leitor dá nome de arquivo com o destino) passa o seu em `destinoDoPedido`.
+     *  - Fala que outro pedido já está traduzindo NÃO vai de novo à rede: este pedido acompanha o futuro dele JUNTO com as
+     *    próprias falas (acompanharAlheias), e não depois delas. Dentro dos mesmos 9 s fica reservada uma janela de
+     *    JANELA_RECUPERACAO_MS: a espera pelo trabalho alheio acaba em prazoFinal menos a janela, as próprias falas de um
+     *    pedido misto também, e a fala cujo futuro falhou (ou não veio) é recuperada nessa janela (recuperar).
+     *  - As medidas voltam no ResultadoLote DESTE pedido; não há campo global.
+     *  - `ativo` é a pergunta "ainda vale a pena esperar?" (o toque liga ao isActive da corrotina). Os laços de espera saem
+     *    cedo quando ela é falsa. Só se PARA de esperar: o futuro compartilhado nunca é cancelado.
      */
-    fun traduzirLote(ctx: Context, textos: List<String>, puladasDoPedido: MutableSet<String>? = null): Map<String, String> {
+    fun traduzirLoteDetalhado(
+        ctx: Context, textos: List<String>, destinoDoPedido: String? = null, ativo: () -> Boolean = { true }
+    ): ResultadoLote {
         val t0 = System.nanoTime()
-        val prazoFinal = t0 + PRAZO_MODELO * 1_000_000_000L
-        val dest = destino
+        val dest = destinoDoPedido ?: destino
         val fixa = origemFixa
-        ultimoOnline = 0; ultimoOffline = 0; ultimoMsModelo = -1L
-        val saida = HashMap<String, String>()
         val c = classificar(textos, dest, fixa)
-        val origem = c.origem
-        ultimaOrigem = origem
-        ultimoPuladas = textos.count { it in c.pular }
-        ultimoUnd = c.und
-        // `ultimoPuladas` é global e o pré-carregamento do modo contínuo o sobrescreve ao mesmo tempo: quem precisa
-        // decidir pelas falas DESTE pedido recebe o conjunto aqui (revisão do Astra, 04/10)
-        puladasDoPedido?.addAll(c.pular)
+        val p = Pedido(t0, dest, c.origem)
         // só o dono fixar a origem igual ao destino devolve tudo sem traduzir; a origem automática nunca é igual ao destino
         if (RegraIdioma.devolveTudoSemTraduzir(fixa, dest)) {
-            puladasDoPedido?.addAll(textos)
-            textos.forEach { saida[it] = it }; return saida
+            textos.forEach { p.saida[it] = it }
+            return resultado(p, textos.toSet(), c.und)
         }
-        for (t in textos) if (t in c.pular) saida[t] = t
+        for (t in textos) if (t in c.pular) p.saida[t] = t
+        // As falas deste pedido, repartidas: as que EU peço (`faltando`, com a chave e o futuro que registrei, na mesma
+        // ordem) e as que outro pedido já está traduzindo (`alheias`). A consulta ao cache e o registro do futuro de cada
+        // fala são uma seção só (Coordenacao.consultarOuReservar), curta e sem rede dentro.
         val faltando = ArrayList<String>()
-        // chaves calculadas uma vez, na mesma ordem de `faltando`, com o destino da foto
         val chaves = ArrayList<String>()
-        for (t in textos) {
-            if (t in c.pular || t in faltando) continue
-            val k = chave(t, dest)
-            val ja = cache[k]
-            if (ja != null) saida[t] = ja.texto else { faltando += t; chaves += k }
+        val futuros = ArrayList<CompletableFuture<Entrada?>?>()
+        val alheias = ArrayList<Acompanhamento.Item<Entrada>>()
+        val minhas = HashMap<String, Int>()
+        val vistas = HashSet<String>()
+        // o registro também está no try: o que ficou registrado até qualquer falha sai com null no finally
+        try {
+            for (t in textos) {
+                if (t in c.pular || !vistas.add(t)) continue
+                val k = chave(t, dest)
+                if (k in minhas) continue      // outra grafia de uma fala que eu já peço: sai com o resultado dela
+                val r = Coordenacao.consultarOuReservar(k, { cache[it] }, emAndamento)
+                val pronta = r.pronta
+                when {
+                    pronta != null -> p.saida[t] = pronta.texto
+                    r.minha -> { minhas[k] = faltando.size; faltando += t; chaves += k; futuros += r.futuro }
+                    else -> alheias += Acompanhamento.Item(t, k, r.futuro!!)
+                }
+            }
+            if (faltando.isEmpty() && alheias.isEmpty()) return resultado(p, c.pular, c.und)
+            p.comRede = p.mot.temRede(ctx)
+            p.semMaquina = System.currentTimeMillis() < maquinaEsgotadaAte
+            // Com fala de outro pedido no lote, as próprias também param na janela de recuperação: o laço delas não pode
+            // consumir o tempo que as alheias têm para ser recuperadas.
+            val limiteProprio = RegraEspera.limiteProprio(p.prazoFinal, JANELA_RECUPERACAO_MS, alheias.isNotEmpty())
+            if (faltando.isEmpty()) acompanharAlheias(p, alheias, ativo)
+            else {
+                // O acompanhamento das alheias roda JUNTO com as próprias falas, numa thread de apoio do pedido: o laço das
+                // próprias bloqueia em etapas longas (espera extra da máquina, fechamento offline) e a sondagem pararia nelas.
+                val apoio = if (alheias.isEmpty()) null else Thread { runCatching { acompanharAlheias(p, alheias, ativo) } }
+                    .also { it.isDaemon = true; it.start() }
+                executar(p, faltando, chaves, futuros, comModelo = true, limite = limiteProprio, ativo = ativo)
+                apoio?.let { runCatching { it.join(RegraEspera.restanteMs(System.nanoTime(), p.prazoFinal) + 50) } }
+            }
+        } finally {
+            // nada fica registrado para sempre: o que não foi decidido sai com null e libera a fala para nova tentativa
+            for (i in faltando.indices) futuros[i]?.let { Coordenacao.concluir(chaves[i], it, emAndamento) { null } }
         }
-        if (faltando.isEmpty()) return saida
-        // O offline do lote, dividido entre o paralelo (fLocal) e o fechamento: cada fala é tentada UMA vez só, por quem
-        // pegar primeiro, e o que sai fica em offline.feitas à medida que sai.
-        val offline = OfflineLote(faltando.size) { i, prazo -> local(faltando[i], origem, dest, prazo) }
-        val comRede = temRede(ctx)
-        val semMaquina = System.currentTimeMillis() < maquinaEsgotadaAte
-        // Sem a máquina (cota acabada), quem faz o papel de resposta rápida é o ML Kit no aparelho, pedido do dono em
-        // 01/10. Ele corre em paralelo e o modelo, chegando depois, corrige o cache. Para de pegar fala nova quando o
-        // prazo final vence ou o lote termina (offline.encerrar), em vez de seguir traduzindo para ninguém.
-        val fLocal = if (comRede && semMaquina) java.util.concurrent.Executors.newSingleThreadExecutor().let { ex ->
-            ex.submit(Runnable { offline.trabalhar(prazoFinal) }).also { ex.shutdown() }
-        } else null
-        if (comRede) {
-            // Os dois caminhos online saem AO MESMO TEMPO. O modelo traduz melhor mas leva de 4 a 7 s; o tradutor
-            // de máquina responde em ~1 s. Em fila, o dono esperava a soma — foi a lentidão que ele sentiu.
-            // Agora espera-se o modelo até PRAZO_MODELO e, se ele não chegar, usa o que a máquina já trouxe.
-            val piscina = java.util.concurrent.Executors.newFixedThreadPool(2)
-            val numerado = faltando.mapIndexed { i, t -> "${i + 1}. $t" }.joinToString("\n")
-            // o instante em que o modelo terminou é gravado por ele mesmo: o laço abaixo só olha de 40 em 40 ms
-            val fimModelo = AtomicLong(0L)
-            val fModelo = piscina.submit<List<String>?> { porModelo(faltando, origem, dest).also { fimModelo.set(System.nanoTime()) } }
-            val fMaquina = piscina.submit<String?> { porRede(numerado, origem, dest) }
-            piscina.shutdown()
+        // a alheia que ninguém resolveu nem recuperou fica no original
+        for (a in alheias) if (a.texto !in p.saida) p.saida[a.texto] = a.texto
+        // outras grafias da mesma fala neste pedido saem com o resultado da que foi pedida
+        for (t in textos) if (t !in p.saida) minhas[chave(t, dest)]?.let { p.saida[t] = p.saida[faltando[it]] ?: t }
+        return resultado(p, c.pular, c.und)
+    }
 
-            /*
-             * O MODELO MANDA quando responde dentro de PREFERE_MODELO_MS; a máquina e o local são a reserva.
-             * Medido na bancada em 27/09, com o serviço e a rede de verdade:
-             *
-             *     nosso serviço com modelo de linguagem .... 9,05 s
-             *     tradutor de máquina ..................... 0,24 a 0,41 s
-             *
-             * O código antigo esperava o MODELO por 9 s antes de sequer olhar o resultado da máquina, que já
-             * estava na mão desde os 300 ms. A tela ficava parada 9 s com a tradução disponível — foi essa a
-             * lentidão. A telemetria mostrou 9,1 s no percentil 90 de 399 preparos, e o servidor acusando
-             * "broken pipe" porque o app desistia no mesmo segundo em que a resposta saía. Por isso o laço passou
-             * a devolver o que chegasse primeiro, e o modelo, chegando atrasado, corrigia o cache.
-             *
-             * Em 03/10 o nosso serviço passou a responder em ~0,4 s (mediana 373 ms, p90 583 ms no servidor). Mostrar
-             * a máquina primeiro e trocar pelo modelo meio segundo depois é uma troca visível sem ganho nenhum.
-             * Então o laço (a decisão de sair está em RegraEspera.sair):
-             *   - modelo chegou com resultado: usa e sai;
-             *   - máquina ou local já chegaram: continua esperando o modelo até PREFERE_MODELO_MS desde o início do
-             *     lote e depois sai com o que tem (o modelo, chegando depois, ainda corrige o cache);
-             *   - modelo terminou sem resultado: não segura nada, aceita a máquina ou o local assim que chegarem.
-             * O teto do lote é o prazoFinal.
-             */
-            var doModelo: List<String>? = null
-            var daMaquina: Map<Int, String>? = null
-            var reservaLocal = false
-            var modeloVisto = false
-            var maquinaVista = false
-            var localVisto = fLocal == null
-            val prefere = t0 + PREFERE_MODELO_MS * 1_000_000L
-            while (true) {
-                if (!modeloVisto && fModelo.isDone) { modeloVisto = true; doModelo = runCatching { fModelo.get() }.getOrNull() }
-                if (!maquinaVista && fMaquina.isDone) {
-                    maquinaVista = true
-                    daMaquina = runCatching { fMaquina.get() }.getOrNull()?.let { numeradas(it, faltando.size) }
-                }
-                if (!localVisto && fLocal != null && fLocal.isDone) {
-                    localVisto = true
-                    reservaLocal = offline.feitas.size >= faltando.size * 0.6
-                }
-                // modeloVisto aqui quer dizer modelo sem resultado, porque com resultado a decisão já é sair
-                if (RegraEspera.sair(System.nanoTime(), prefere, prazoFinal, doModelo != null, modeloVisto,
-                        daMaquina != null || reservaLocal, maquinaVista, localVisto)) break
-                runCatching { Thread.sleep(RegraEspera.passoMs(System.nanoTime(), prazoFinal)) }
-            }
-            if (doModelo != null) {
-                val fim = fimModelo.get().takeIf { it != 0L } ?: System.nanoTime()
-                ultimoMsModelo = (fim - t0) / 1_000_000L
-            } else {
-                // não cancela: deixa o modelo terminar em segundo plano e CORRIGIR o cache, e avisa quem desenha.
-                // Resposta válida igual ao original também vale (nível 2): ela pode desfazer uma alteração da máquina.
-                Thread {
-                    runCatching { fModelo.get(40, TimeUnit.SECONDS) }.getOrNull()?.let { tarde ->
-                        var mudou = false
-                        for (i in faltando.indices) RegraIdioma.respostaDoModelo(tarde.getOrNull(i))?.let {
-                            if (guardar(chaves[i], it, NIVEL_MODELO).mudou) mudou = true
-                        }
-                        if (mudou) correcoes.incrementAndGet()
+    /**
+     * Acompanha as falas que OUTRO pedido traduz, JUNTO com as próprias do pedido (não depois delas). Sonda os futuros
+     * dele com isDone, nunca os cancela, e termina no máximo em prazoFinal menos JANELA_RECUPERACAO_MS. O futuro que
+     * termina com null (falha) tem a recuperação disparada NA HORA, sem esperar os demais; os que ainda não terminaram no
+     * limite entram na recuperação com o tempo que sobra até o prazoFinal. As recuperações rodam em threads próprias.
+     */
+    private fun acompanharAlheias(p: Pedido, alheias: List<Acompanhamento.Item<Entrada>>, ativo: () -> Boolean) {
+        val recuperacoes = ArrayList<java.util.concurrent.Future<*>>()
+        var pool: java.util.concurrent.ExecutorService? = null
+        fun dispara(itens: List<Acompanhamento.Item<Entrada>>) {
+            val ex = pool ?: java.util.concurrent.Executors.newCachedThreadPool().also { pool = it }
+            recuperacoes += ex.submit(Runnable { recuperar(p, itens, ativo) })
+        }
+        try {
+            Acompanhamento.rodar(
+                Acompanhamento.Alheias(alheias), RegraEspera.limiteAlheias(p.prazoFinal, JANELA_RECUPERACAO_MS), p.prazoFinal,
+                { System.nanoTime() }, ativo,
+                aoTerminar = { prontos ->
+                    val falhas = ArrayList<Acompanhamento.Item<Entrada>>()
+                    for (x in prontos) {
+                        val e = x.entrada
+                        if (e != null) { p.saida[x.item.texto] = e.texto; p.compartilhadas.incrementAndGet() } else falhas += x.item
                     }
-                }.start()
-            }
-            doModelo?.let { r ->
-                for ((i, t) in faltando.withIndex()) RegraIdioma.respostaDoModelo(r.getOrNull(i))?.let {
-                    saida[t] = guardar(chaves[i], it, NIVEL_MODELO).entrada.texto; ultimoOnline++
+                    if (falhas.isNotEmpty()) dispara(falhas)
+                },
+                aoVencer = { itens -> dispara(itens) },
+                recuperando = { recuperacoes.any { !it.isDone } },
+                dorme = { ms -> runCatching { Thread.sleep(ms) } }
+            )
+        } finally {
+            pool?.shutdown()
+        }
+    }
+
+    /**
+     * A recuperação de falas cujo futuro alheio falhou ou não veio a tempo (Coordenacao.recuperar): confere o tempo (menos
+     * de RegraRecuperacao.REDE_MIN_MS, nada de rede), refaz a consulta ao cache, reserva "rec|" + chave para que UM
+     * consumidor recupere cada fala, e o dono tenta máquina e offline AO MESMO TEMPO, com o mesmo prazo e o mesmo `ativo`
+     * (o que entregar primeiro serve), nunca o modelo (já foi tentado para ela). Quem não é dono espera o dono ou
+     * reaproveita o que ele achou. Roda numa thread própria, disparada assim que a falha é vista.
+     */
+    private fun recuperar(p: Pedido, itens: List<Acompanhamento.Item<Entrada>>, ativo: () -> Boolean) {
+        val grupos = itens.groupBy { it.chave }
+        val r = Coordenacao.recuperar(
+            grupos.keys.toList(), emAndamento, { cache[it] },
+            { RegraEspera.restanteMs(System.nanoTime(), p.prazoFinal) },
+            { f -> Coordenacao.esperar(f, RegraEspera.restanteMs(System.nanoTime(), p.prazoFinal), ativo) }
+        ) { minhas, futurosRec, plano ->
+            val textos = minhas.map { grupos.getValue(it).first().texto }
+            executar(p, textos, minhas, futurosRec, comModelo = false, limite = p.prazoFinal, ativo = ativo,
+                comRede = p.comRede && plano == RegraRecuperacao.Plano.REDE,
+                chavesFuturo = minhas.map { Coordenacao.PREFIXO_RECUPERACAO + it },
+                offlineParalelo = true)
+        }
+        for ((k, e) in r.reaproveitadas) for (item in grupos.getValue(k)) {
+            p.saida[item.texto] = e.texto; p.compartilhadas.incrementAndGet()
+        }
+        // outras grafias da mesma chave, que este pedido recuperou, saem com o resultado da primeira
+        for (k in r.minhas) {
+            val g = grupos.getValue(k)
+            val base = p.saida[g.first().texto] ?: continue
+            for (extra in g.drop(1)) p.saida[extra.texto] = base
+        }
+    }
+
+    /**
+     * O caminho de uma lista de falas que ESTE pedido traduz: modelo e máquina em paralelo, o ML Kit em paralelo quando a
+     * máquina está sem cota (ou na recuperação), e o fechamento offline do que sobrar. `futuros[i]` é o futuro da fala i
+     * que este pedido registrou em emAndamento, ou nulo quando a fala não foi registrada (a recuperação de uma fala alheia,
+     * cujo futuro é da chave "rec|"): cada fala decidida completa o seu futuro com a entrada que ficou de fato no cache, e
+     * a que fica no original o completa com null. `comModelo` é falso na recuperação, em que o modelo já foi tentado.
+     * `limite` é até onde este caminho espera (o prazo final, ou a janela de recuperação antes dele num pedido misto),
+     * `ativo` faz os laços saírem cedo, `comRede` deixa a recuperação com pouco tempo fora da rede, `chavesFuturo` são as
+     * chaves de emAndamento dos futuros (a de recuperação, "rec|" + chave, não é a do cache) e `offlineParalelo` põe o
+     * ML Kit para trabalhar desde o início, ao lado da máquina, mesmo com a cota dela viva.
+     */
+    private fun executar(
+        p: Pedido, faltando: List<String>, chaves: List<String>,
+        futuros: List<CompletableFuture<Entrada?>?>, comModelo: Boolean,
+        limite: Long, ativo: () -> Boolean, comRede: Boolean = p.comRede, chavesFuturo: List<String> = chaves,
+        offlineParalelo: Boolean = false
+    ) {
+        if (faltando.isEmpty()) return
+        val saida = p.saida
+        val origem = p.origem
+        val dest = p.dest
+        val mot = p.mot
+        // Fecha uma fala: grava no cache, completa o futuro (se a fala é minha) com a entrada que ficou de fato e o tira do
+        // mapa. Devolve o texto que vale, que é o do modelo se ele já tinha gravado.
+        fun fecha(i: Int, texto: String, nivel: Int): String {
+            val futuro = futuros[i] ?: return guardar(chaves[i], texto, nivel).entrada.texto
+            return Coordenacao.concluir(chavesFuturo[i], futuro, emAndamento) { guardar(chaves[i], texto, nivel).entrada }?.texto ?: texto
+        }
+        // O offline, dividido entre o paralelo (fLocal) e o fechamento: cada fala é tentada UMA vez só, por quem pegar
+        // primeiro, e o que sai fica em offline.feitas à medida que sai.
+        val offline = OfflineLote(faltando.size) { i, prazo -> mot.local(faltando[i], origem, dest, prazo) }
+        // Sem a máquina (cota acabada), quem faz o papel de resposta rápida é o ML Kit no aparelho, pedido do dono em
+        // 01/10. Ele corre em paralelo e o modelo, chegando depois, corrige o cache. Na recuperação (`offlineParalelo`) ele
+        // também sai junto com a máquina, com o mesmo limite e o mesmo `ativo`: o tempo já foi gasto antes, e esperar o
+        // MyMemory até o prazo final deixava o offline sem tempo para tentar (revisão do Astra, 04/10). Quem entregar
+        // primeiro serve, e o nível do cache impede o offline de pisar numa tradução melhor. Para de pegar fala nova quando o
+        // limite vence ou o lote termina (offline.encerrar), em vez de seguir traduzindo para ninguém.
+        val fLocal = if (comRede && (p.semMaquina || offlineParalelo)) java.util.concurrent.Executors.newSingleThreadExecutor().let { ex ->
+            ex.submit(Runnable { offline.trabalhar(limite, ativo) }).also { ex.shutdown() }
+        } else null
+        try {
+            if (comRede) {
+                // Os dois caminhos online saem AO MESMO TEMPO. O modelo traduz melhor mas leva de 4 a 7 s; o tradutor
+                // de máquina responde em ~1 s. Em fila, o dono esperava a soma — foi a lentidão que ele sentiu.
+                // Agora espera-se o modelo até PRAZO_MODELO e, se ele não chegar, usa o que a máquina já trouxe.
+                val piscina = java.util.concurrent.Executors.newFixedThreadPool(2)
+                val numerado = faltando.mapIndexed { i, t -> "${i + 1}. $t" }.joinToString("\n")
+                // o instante em que o modelo terminou é gravado por ele mesmo: o laço abaixo só olha de 40 em 40 ms
+                val fimModelo = AtomicLong(0L)
+                val fModelo = if (comModelo) piscina.submit<RespostaModelo> {
+                    porModelo(faltando, origem, dest).also { fimModelo.set(System.nanoTime()) }
+                } else null
+                val fMaquina = piscina.submit<String?> { mot.maquina(numerado, origem, dest) }
+                piscina.shutdown()
+
+                /*
+                 * O MODELO MANDA quando responde dentro de PREFERE_MODELO_MS; a máquina e o local são a reserva.
+                 * Medido na bancada em 27/09, com o serviço e a rede de verdade:
+                 *
+                 *     nosso serviço com modelo de linguagem .... 9,05 s
+                 *     tradutor de máquina ..................... 0,24 a 0,41 s
+                 *
+                 * O código antigo esperava o MODELO por 9 s antes de sequer olhar o resultado da máquina, que já
+                 * estava na mão desde os 300 ms. A tela ficava parada 9 s com a tradução disponível — foi essa a
+                 * lentidão. A telemetria mostrou 9,1 s no percentil 90 de 399 preparos, e o servidor acusando
+                 * "broken pipe" porque o app desistia no mesmo segundo em que a resposta saía. Por isso o laço passou
+                 * a devolver o que chegasse primeiro, e o modelo, chegando atrasado, corrigia o cache.
+                 *
+                 * Em 03/10 o nosso serviço passou a responder em ~0,4 s (mediana 373 ms, p90 583 ms no servidor). Mostrar
+                 * a máquina primeiro e trocar pelo modelo meio segundo depois é uma troca visível sem ganho nenhum.
+                 * Então o laço (a decisão de sair está em RegraEspera.sair):
+                 *   - modelo chegou com resultado: usa e sai;
+                 *   - máquina ou local já chegaram: continua esperando o modelo até PREFERE_MODELO_MS desde o início do
+                 *     lote e depois sai com o que tem (o modelo, chegando depois, ainda corrige o cache);
+                 *   - modelo terminou sem resultado: não segura nada, aceita a máquina ou o local assim que chegarem.
+                 * O teto é o `limite`. Sem modelo neste caminho (recuperação), ele conta como terminado sem resultado, e a
+                 * máquina e o local disputam: o que entregar primeiro encerra a espera.
+                 */
+                var resposta: RespostaModelo? = null
+                var doModelo: List<String>? = null
+                var daMaquina: Map<Int, String>? = null
+                var reservaLocal = false
+                var modeloVisto = fModelo == null
+                var maquinaVista = false
+                var localVisto = fLocal == null
+                val prefere = p.t0 + PREFERE_MODELO_MS * 1_000_000L
+                while (true) {
+                    if (!modeloVisto && fModelo != null && fModelo.isDone) {
+                        modeloVisto = true
+                        resposta = runCatching { fModelo.get() }.getOrNull()
+                        doModelo = resposta?.falas
+                    }
+                    if (!maquinaVista && fMaquina.isDone) {
+                        maquinaVista = true
+                        daMaquina = runCatching { fMaquina.get() }.getOrNull()?.let { numeradas(it, faltando.size) }
+                    }
+                    if (!localVisto && fLocal != null && fLocal.isDone) {
+                        localVisto = true
+                        reservaLocal = offline.feitas.size >= faltando.size * 0.6
+                    }
+                    // modeloVisto aqui quer dizer modelo sem resultado, porque com resultado a decisão já é sair
+                    if (!ativo() || RegraEspera.sair(System.nanoTime(), prefere, limite, doModelo != null, modeloVisto,
+                            daMaquina != null || reservaLocal, maquinaVista, localVisto)) break
+                    runCatching { Thread.sleep(RegraEspera.passoMs(System.nanoTime(), limite)) }
+                }
+                if (resposta != null) { p.modelo = resposta.modelo; p.idServidor = resposta.id }
+                if (doModelo != null) {
+                    val fim = fimModelo.get().takeIf { it != 0L } ?: System.nanoTime()
+                    p.msModelo = (fim - p.t0) / 1_000_000L
+                } else if (fModelo != null) {
+                    // não cancela: deixa o modelo terminar em segundo plano e CORRIGIR o cache, e avisa quem desenha.
+                    // Resposta válida igual ao original também vale (nível 2): ela pode desfazer uma alteração da máquina.
+                    // Esta Thread só grava no cache: os futuros das falas já foram completados e não são tocados aqui.
+                    Thread {
+                        runCatching { fModelo.get(40, TimeUnit.SECONDS) }.getOrNull()?.falas?.let { tarde ->
+                            var mudou = false
+                            for (i in faltando.indices) RegraIdioma.respostaDoModelo(tarde.getOrNull(i))?.let {
+                                if (guardar(chaves[i], it, NIVEL_MODELO).mudou) mudou = true
+                            }
+                            if (mudou) correcoes.incrementAndGet()
+                        }
+                    }.start()
+                }
+                doModelo?.let { r ->
+                    for ((i, t) in faltando.withIndex()) RegraIdioma.respostaDoModelo(r.getOrNull(i))?.let {
+                        saida[t] = fecha(i, it, NIVEL_MODELO); p.online.incrementAndGet()
+                    }
+                }
+                if (!p.semMaquina && ativo() && faltando.any { it !in saida }) {
+                    // a espera extra pela máquina nunca passa do que sobrou do limite, e não existe quando o offline paralelo
+                    // já entregou: a máquina atrasada não segura o lote, e se ela já chegou entra aqui do mesmo jeito
+                    val resta = if (reservaLocal) 0L else RegraEspera.esperaMaquinaMs(System.nanoTime(), limite, 6_000L)
+                    val linhas = daMaquina ?: Coordenacao.esperarFuturo(fMaquina, resta, ativo)?.let { numeradas(it, faltando.size) }
+                    if (linhas != null) for ((i, t) in faltando.withIndex())
+                        if (t !in saida) linhas[i]?.let { saida[t] = fecha(i, it, NIVEL_MAQUINA); p.online.incrementAndGet() }
                 }
             }
-            if (!semMaquina && faltando.any { it !in saida }) {
-                // a espera extra pela máquina nunca passa do que sobrou do prazo final
-                val resta = RegraEspera.esperaMaquinaMs(System.nanoTime(), prazoFinal, 6_000L)
-                val linhas = daMaquina ?: runCatching { fMaquina.get(resta, TimeUnit.MILLISECONDS) }.getOrNull()?.let { numeradas(it, faltando.size) }
-                if (linhas != null) for ((i, t) in faltando.withIndex())
-                    if (t !in saida) linhas[i]?.let { saida[t] = guardar(chaves[i], it, NIVEL_MAQUINA).entrada.texto; ultimoOnline++ }
+            // Fechamento offline do que ainda falta. Teto: o MENOR entre o limite e TETO_OFFLINE_MS a partir de agora,
+            // para todas as falas juntas e não por fala. Reaproveita o que o paralelo já traduziu e só pega as falas que
+            // ninguém pegou, sem repetir; o que não couber fica no original.
+            if (ativo() && faltando.any { it !in saida }) {
+                val limiteOffline = RegraEspera.limiteOffline(System.nanoTime(), limite, TETO_OFFLINE_MS)
+                offline.trabalhar(limiteOffline, ativo) { faltando[it] !in saida }
+                fLocal?.let { Coordenacao.esperarFuturo(it, RegraEspera.restanteMs(System.nanoTime(), limiteOffline), ativo) }
+                for ((i, t) in faltando.withIndex()) if (t !in saida) {
+                    val l = offline.feitas[i]
+                    if (l != null) { saida[t] = fecha(i, l, NIVEL_OFFLINE); p.offline.incrementAndGet() }
+                }
             }
-        }
-        // Fechamento offline do que ainda falta. Teto: o MENOR entre o prazo final do lote e TETO_OFFLINE_MS a partir de
-        // agora, para todas as falas juntas e não por fala. Reaproveita o que o paralelo já traduziu e só pega as falas
-        // que ninguém pegou, sem repetir; o que não couber fica no original.
-        if (faltando.any { it !in saida }) {
-            val limiteOffline = RegraEspera.limiteOffline(System.nanoTime(), prazoFinal, TETO_OFFLINE_MS)
-            offline.trabalhar(limiteOffline) { faltando[it] !in saida }
-            fLocal?.let { runCatching { it.get(RegraEspera.restanteMs(System.nanoTime(), limiteOffline), TimeUnit.MILLISECONDS) } }
+            // A que ninguém decidiu fica no original, e o futuro dela sai com null: quem esperava cai no caminho dele.
             for ((i, t) in faltando.withIndex()) if (t !in saida) {
-                val l = offline.feitas[i]
-                if (l != null) { saida[t] = guardar(chaves[i], l, NIVEL_OFFLINE).entrada.texto; ultimoOffline++ } else saida[t] = t
+                saida[t] = t
+                futuros[i]?.let { Coordenacao.concluir(chavesFuturo[i], it, emAndamento) { null } }
             }
+        } finally {
+            offline.encerrar()
         }
-        offline.encerrar()
-        ultimoCaminho = when { ultimoOnline > 0 && ultimoOffline == 0 -> "online"; ultimoOnline == 0 && ultimoOffline > 0 -> "offline"; ultimoOnline > 0 -> "misto"; else -> "cache" }
-        return saida
     }
 
     /**
@@ -397,14 +596,12 @@ object Traducao {
         val fixa = origemFixa
         val c = classificar(listOf(texto), dest, fixa)
         val origem = c.origem
-        ultimaOrigem = origem
         if (texto in c.pular || RegraIdioma.devolveTudoSemTraduzir(fixa, dest)) return texto
         if (normalizar(texto).isEmpty()) return texto
         val k = chave(texto, dest)
         cache[k]?.let { return it.texto }
         val online = if (temRede(ctx)) porRede(texto, origem, dest) else null
         val r = online ?: local(texto, origem, dest, prazoFinal) ?: texto
-        ultimoCaminho = if (online != null) "online" else "offline"
         return if (r != texto) guardar(k, r, if (online != null) NIVEL_MAQUINA else NIVEL_OFFLINE).entrada.texto else r
     }
 
@@ -414,8 +611,8 @@ object Traducao {
      * instalado fora da loja e qualquer um consegue abrir e ler o que está dentro.
      * Medido em 23/09: acerta "Você é o Sr. Seonghyeon Han?", que os outros dois caminhos erravam.
      */
-    private fun porModelo(falas: List<String>, origem: String, dest: String): List<String>? {
-        if (BuildConfig.TRADUTOR_TOKEN.isEmpty() || falas.isEmpty()) return null
+    private fun porModelo(falas: List<String>, origem: String, dest: String): RespostaModelo {
+        if (BuildConfig.TRADUTOR_TOKEN.isEmpty() || falas.isEmpty()) return RespostaModelo(null, null, null)
         return runCatching {
             val corpo = JSONObject().put("de", origem).put("para", Idiomas.nomeCheio(dest))
                 .put("falas", org.json.JSONArray(falas)).toString().toByteArray()
@@ -426,16 +623,27 @@ object Traducao {
                 setRequestProperty("Content-Type", "application/json")
             }
             con.outputStream.use { it.write(corpo) }
-            if (con.responseCode != 200) { ultimoModelo = "http " + con.responseCode; return null }
+            if (con.responseCode != 200) return@runCatching RespostaModelo(null, "http " + con.responseCode, idDoErro(con.errorStream))
             val j = JSONObject(con.inputStream.bufferedReader().use { it.readText() })
-            // o nome do modelo vem da resposta e vai para a telemetria: só passa se parecer nome de modelo
-            ultimoModelo = SaneaTelemetria.modelo(j.optString("modelo", "?"))
             val a = j.getJSONArray("falas")
-            List(a.length()) { a.getString(it) }
-        }.getOrElse { ultimoModelo = "falhou"; null }
+            // o nome do modelo e o id vêm da resposta e vão para a telemetria: só passam se tiverem a cara de nome e de id
+            RespostaModelo(List(a.length()) { a.getString(it) }, SaneaTelemetria.modelo(j.optString("modelo", "?")),
+                SaneaTelemetria.idServidor(j.optString("id", "")))
+        }.getOrElse { RespostaModelo(null, "falhou", null) }
     }
 
-    @Volatile var ultimoModelo: String = "-"
+    /** O id que o serviço põe também na resposta de erro, para casar o pedido com o registro dele. Nada além do id sai daqui. */
+    private fun idDoErro(fluxo: java.io.InputStream?): String? = runCatching {
+        fluxo?.bufferedReader()?.use { it.readText().take(4096) }
+            ?.let { SaneaTelemetria.idServidor(JSONObject(it).optString("id", "")) }
+    }.getOrNull()
+
+    /**
+     * O que o nosso serviço respondeu neste pedido. `falas` nulo é pedido sem tradução; `modelo` diz o que houve ("http
+     * 503", "falhou" ou o nome do modelo) e é nulo quando o serviço nem foi chamado; `id` é o aleatório do serviço.
+     */
+    private class RespostaModelo(val falas: List<String>?, val modelo: String?, val id: String?)
+
     /**
      * teto do lote INTEIRO, em segundos, contado do início: o prazo final (prazoFinal) em que o laço de espera, a espera
      * extra pela máquina e o offline têm que ter parado. Em 27/09 o modelo levava 4 a 7 s.
@@ -447,6 +655,13 @@ object Traducao {
      * tardia trocar depois. Se o modelo falhou, nada espera.
      */
     const val PREFERE_MODELO_MS = 1200L
+    /**
+     * Janela reservada, DENTRO dos mesmos 9 s do prazo final, para recuperar a fala cujo futuro alheio falhou ou não veio.
+     * A espera pelo trabalho de outro pedido acaba em prazoFinal menos esta janela, e as próprias falas de um pedido misto
+     * também, para que nenhuma das duas consuma o tempo da recuperação. Foi a revisão do Astra de 04/10: esperar tudo
+     * primeiro e recuperar depois podia devolver o original com o pacote offline à mão.
+     */
+    const val JANELA_RECUPERACAO_MS = 2500L
     /** teto da classificação por idioma do lote inteiro, em ms; as falas que não couberem ficam indeterminadas */
     private const val PRAZO_CLASSIFICA_MS = 400L
     /** teto TOTAL, em ms, do offline de fechamento: vale o MENOR entre ele e o que resta do prazo final do lote */
@@ -666,7 +881,27 @@ internal object RegraEspera {
 
     /** Quanto a espera extra pela máquina pode durar: o que sobra do prazo final, no máximo `maxMs`. */
     fun esperaMaquinaMs(agora: Long, prazoFinal: Long, maxMs: Long): Long = restanteMs(agora, prazoFinal).coerceAtMost(maxMs)
+
+    /** Até onde se espera pelo trabalho de OUTRO pedido: o prazo final menos a janela de recuperação, nunca depois dele. */
+    fun limiteAlheias(prazoFinal: Long, janelaMs: Long): Long = prazoFinal - janelaMs * 1_000_000L
+
+    /**
+     * Até onde as PRÓPRIAS falas esperam. Num pedido misto, com fala de outro pedido no lote, é o mesmo limite das alheias:
+     * o laço do próprio pedido não pode consumir a janela em que as alheias são recuperadas. Sem alheias, é o prazo final.
+     */
+    fun limiteProprio(prazoFinal: Long, janelaMs: Long, temAlheias: Boolean): Long =
+        if (temAlheias) limiteAlheias(prazoFinal, janelaMs) else prazoFinal
 }
+
+/**
+ * Os três motores que o lote chama: se há rede, o tradutor de máquina (uma requisição para todas as falas numeradas) e o
+ * ML Kit no aparelho (uma fala, com o prazo em System.nanoTime). Ver Traducao.motores.
+ */
+internal class Motores(
+    val temRede: (Context) -> Boolean,
+    val maquina: (texto: String, origem: String, dest: String) -> String?,
+    val local: (texto: String, origem: String, dest: String, prazo: Long) -> String?
+)
 
 /**
  * O offline de UM lote, dividido entre quem quiser trabalhar nele (o paralelo `fLocal` e o fechamento). Cada fala é
@@ -681,9 +916,13 @@ internal class OfflineLote(private val quantas: Int, private val traduz: (indice
 
     fun encerrar() { encerrado = true }
 
-    /** `precisa` deixa quem chama pular falas que já estão resolvidas; a fala pulada também conta como pega. */
-    fun trabalhar(prazo: Long, precisa: (Int) -> Boolean = { true }) {
-        while (!encerrado && System.nanoTime() < prazo) {
+    /**
+     * `ativo` faz quem trabalha parar de pegar fala nova quando o pedido deixa de valer a pena. `precisa` deixa quem chama
+     * pular falas que já estão resolvidas; a fala pulada também conta como pega. (`precisa` é o último parâmetro para o
+     * lambda final continuar sendo ele.)
+     */
+    fun trabalhar(prazo: Long, ativo: () -> Boolean = { true }, precisa: (Int) -> Boolean = { true }) {
+        while (!encerrado && ativo() && System.nanoTime() < prazo) {
             val i = proximo.getAndIncrement()
             if (i >= quantas) return
             if (!precisa(i)) continue
@@ -693,12 +932,267 @@ internal class OfflineLote(private val quantas: Int, private val traduz: (indice
     }
 }
 
+/**
+ * O resultado de UM pedido de tradução, com as medidas do próprio pedido: nada aqui é global, então dois pedidos ao mesmo
+ * tempo não misturam os números um do outro. `puladas` são as falas que já estavam no idioma de destino, `und` conta as
+ * indeterminadas, `origem` é a origem do pedido e `caminho` diz de onde veio a tradução ("online", "offline", "misto" ou
+ * "cache"). `modelo` é o que o nosso serviço respondeu ("http 503", "falhou" ou o nome do modelo), nulo se ele não foi
+ * chamado, e `msModelo` o tempo até a resposta dele, -1 se ela não veio dentro da espera. `compartilhadas` conta as falas
+ * que vieram do trabalho de outro pedido e `idServidor` é o id aleatório que o serviço põe na resposta, sem relação com o
+ * texto; os dois podem ir para a telemetria, o texto não.
+ */
+class ResultadoLote(
+    val mapa: Map<String, String>, val puladas: Set<String>, val und: Int, val origem: String,
+    val caminho: String, val modelo: String?, val msModelo: Long, val online: Int, val offline: Int,
+    val compartilhadas: Int, val idServidor: String?
+)
+
+/**
+ * Normaliza uma fala para chave de cache e de detecção de idioma: minúsculas, e toda sequência de caracteres que não é
+ * letra nem dígito vira UM espaço, sem espaço nas pontas. Antes se tirava espaço e pontuação, e "a nice" e "an ice"
+ * viravam a mesma chave. O que o OCR varia de um quadro para outro (maiúscula, pontuação, espaço repetido) continua igual:
+ * "Hey,   you!" e "hey you". "I can't!" ("i can t") e "I cant" ("i cant") deixam de ser iguais, o que é aceitável.
+ */
+internal fun normalizarFala(s: String): String {
+    val baixa = s.lowercase()
+    val sb = StringBuilder(baixa.length)
+    var separador = false
+    var i = 0
+    while (i < baixa.length) {
+        val cp = baixa.codePointAt(i)
+        i += Character.charCount(cp)
+        if (Character.isLetterOrDigit(cp)) {
+            if (separador && sb.isNotEmpty()) sb.append(' ')
+            sb.appendCodePoint(cp)
+            separador = false
+        } else separador = true
+    }
+    return sb.toString()
+}
+
+/**
+ * O coordenador de pedidos em andamento, sem rede nem Android: consulta o cache e reserva a chave na MESMA seção curta,
+ * e conclui (grava, completa o futuro e o tira do mapa) na mesma trava. Sem isso, entre a consulta ao cache e o registro
+ * o dono da fala podia terminar e sair do mapa, e o segundo pedido registrava de novo e pedia à rede outra vez. Dentro
+ * da trava só há cache e mapa em memória; a rede roda fora.
+ */
+internal object Coordenacao {
+    private val trava = Any()
+
+    /**
+     * Resultado de consultar o cache e, se faltar, reservar a chave: `pronta` é a entrada que já estava no cache; senão
+     * `futuro` é o da chave, e `minha` diz se fui eu que o registrei (então eu peço) ou se é de outro pedido (então espero).
+     */
+    class Reserva<E : Any>(val pronta: E?, val futuro: CompletableFuture<E?>?, val minha: Boolean)
+
+    fun <E : Any> consultarOuReservar(
+        chave: String, cache: (String) -> E?, mapa: ConcurrentHashMap<String, CompletableFuture<E?>>
+    ): Reserva<E> = synchronized(trava) {
+        val pronta = cache(chave)
+        if (pronta != null) return@synchronized Reserva(pronta, null, false)
+        val novo = CompletableFuture<E?>()
+        val existente = mapa.putIfAbsent(chave, novo)
+        if (existente != null) Reserva(null, existente, false) else Reserva(null, novo, true)
+    }
+
+    /**
+     * Decide a fala: `gravar` escreve no cache e devolve a entrada que ficou de fato (ou null na falha); o futuro é
+     * completado com ela e removido do mapa. A remoção é `remove(chave, futuro)`, que só tira o MESMO futuro: um pedido
+     * atrasado não leva embora o registro de um mais novo. Completar com null libera a fala para nova tentativa, e quem
+     * esperava cai no caminho dele. Completar de novo um futuro já completo não faz nada.
+     */
+    fun <E : Any> concluir(
+        chave: String, futuro: CompletableFuture<E?>, mapa: ConcurrentHashMap<String, CompletableFuture<E?>>, gravar: () -> E?
+    ): E? = synchronized(trava) {
+        var entrada: E? = null
+        try { entrada = gravar() } finally { futuro.complete(entrada); mapa.remove(chave, futuro) }
+        entrada
+    }
+
+    /** Prefixo da chave de recuperação: a de cada fala é reservada à parte, na mesma tabela do coordenador. */
+    const val PREFIXO_RECUPERACAO = "rec|"
+
+    /**
+     * O que a recuperação devolveu: as entradas que este consumidor só reaproveitou (achadas no cache ou obtidas de quem
+     * recuperou primeiro) e as chaves que ele mesmo recuperou.
+     */
+    class Recuperado<E : Any>(val reaproveitadas: Map<String, E>, val minhas: List<String>)
+
+    /**
+     * A recuperação de falas cujo futuro alheio falhou ou não veio a tempo, com as guardas que evitam gasto à toa:
+     *  1. confere o tempo que resta (RegraRecuperacao.plano): sem tempo nada é reservado nem pedido; com menos de
+     *     RegraRecuperacao.REDE_MIN_MS só o offline; senão rede e offline;
+     *  2. consulta de novo o cache, porque outro pedido pode ter preenchido, na mesma trava da reserva;
+     *  3. reserva "rec|" + chave com putIfAbsent: UM consumidor recupera cada fala. Quem não consegue a reserva espera o
+     *     dono (`esperarAlheio`, no prazo de quem espera) e reaproveita o que ele achou, em vez de repetir a recuperação;
+     *  4. o dono tenta (`tentar`, com os futuros "rec|" dele, que a tentativa completa fala a fala), e ao fim o que sobrar
+     *     é concluído com o que está no cache, ou com null, o que libera a chave para uma nova tentativa depois.
+     * `tentar` nunca recebe o modelo de volta: a recuperação é só máquina e offline.
+     */
+    fun <E : Any> recuperar(
+        chaves: List<String>, mapa: ConcurrentHashMap<String, CompletableFuture<E?>>, cache: (String) -> E?,
+        restanteMs: () -> Long, esperarAlheio: (CompletableFuture<E?>) -> E?,
+        tentar: (minhas: List<String>, futuros: List<CompletableFuture<E?>>, plano: RegraRecuperacao.Plano) -> Unit
+    ): Recuperado<E> {
+        val reaproveitadas = LinkedHashMap<String, E>()
+        val plano = RegraRecuperacao.plano(restanteMs())
+        if (plano == RegraRecuperacao.Plano.NADA) {
+            // sem tempo não se reserva nem se pede nada; o cache, que é de graça, ainda vale uma olhada
+            for (k in chaves) cache(k)?.let { reaproveitadas[k] = it }
+            return Recuperado(reaproveitadas, emptyList())
+        }
+        val minhas = ArrayList<String>()
+        val meusFuturos = ArrayList<CompletableFuture<E?>>()
+        val alheios = LinkedHashMap<String, CompletableFuture<E?>>()
+        for (k in chaves) {
+            // a chave da recuperação é própria: o futuro da chave original já saiu do mapa com a falha
+            val r = consultarOuReservar(PREFIXO_RECUPERACAO + k, { cache(k) }, mapa)
+            val pronta = r.pronta
+            when {
+                pronta != null -> reaproveitadas[k] = pronta
+                r.minha -> { minhas += k; meusFuturos += r.futuro!! }
+                else -> alheios[k] = r.futuro!!
+            }
+        }
+        try {
+            if (minhas.isNotEmpty()) tentar(minhas, meusFuturos, plano)
+        } finally {
+            for (i in minhas.indices) concluir(PREFIXO_RECUPERACAO + minhas[i], meusFuturos[i], mapa) { cache(minhas[i]) }
+        }
+        for ((k, f) in alheios) esperarAlheio(f)?.let { reaproveitadas[k] = it }
+        return Recuperado(reaproveitadas, minhas)
+    }
+
+    /**
+     * Espera o futuro de outro pedido por NO MÁXIMO `ateMs` (o que resta do prazo de quem espera), saindo antes se `ativo()`
+     * virar falso. Null em falha, em prazo vencido ou em desistência.
+     */
+    fun <E : Any> esperar(futuro: CompletableFuture<E?>, ateMs: Long, ativo: () -> Boolean = { true }): E? =
+        esperarFuturo(futuro, ateMs, ativo)
+
+    /**
+     * Espera um futuro até `ateMs`, em passos de até 50 ms, para poder sair antes quando `ativo()` virar falso. Só PARA de
+     * esperar: o futuro NUNCA é cancelado, porque é compartilhado com outros pedidos. Por isso não se usa
+     * CompletableFuture.await(), que cancela o futuro quando a corrotina de quem espera é cancelada, nem orTimeout, que o
+     * completaria com erro. O get com prazo só lança TimeoutException e deixa o futuro como está.
+     */
+    fun <T> esperarFuturo(f: java.util.concurrent.Future<T>, ateMs: Long, ativo: () -> Boolean = { true }): T? {
+        val fim = System.nanoTime() + maxOf(0L, ateMs) * 1_000_000L
+        while (true) {
+            if (f.isDone) return runCatching { f.get() }.getOrNull()
+            val resta = (fim - System.nanoTime()) / 1_000_000L
+            if (resta <= 0 || !ativo()) return null
+            try { return f.get(minOf(resta, 50L), TimeUnit.MILLISECONDS) }
+            catch (_: java.util.concurrent.TimeoutException) { /* segue esperando, em passo curto */ }
+            catch (_: Exception) { return null }
+        }
+    }
+}
+
+/**
+ * O que a recuperação pode usar, conforme o tempo que resta até o prazo final. A rede só vale com folga: uma resposta que
+ * chega depois do prazo é descartada, e mesmo assim gasta a cota do MyMemory.
+ */
+internal object RegraRecuperacao {
+    /** Com menos que isto até o prazo final, nada de rede; sobra o offline, se o pacote já estiver pronto. */
+    const val REDE_MIN_MS = 800L
+
+    /** NADA: sem tempo. SO_OFFLINE: menos de REDE_MIN_MS. REDE: máquina e offline. */
+    enum class Plano { NADA, SO_OFFLINE, REDE }
+
+    fun plano(restanteMs: Long): Plano = when {
+        restanteMs <= 0 -> Plano.NADA
+        restanteMs < REDE_MIN_MS -> Plano.SO_OFFLINE
+        else -> Plano.REDE
+    }
+}
+
+/**
+ * O acompanhamento, pelo próprio pedido, das falas que OUTRO pedido traduz. Sem Android nem rede, com relógio e sono
+ * injetáveis, para rodar na JVM com CompletableFuture. As regras:
+ *  - roda JUNTO com as próprias falas do pedido, e não depois delas (quem chama o põe numa thread de apoio);
+ *  - sonda os futuros com isDone, a cada passo, e nunca os cancela: só PARA de esperar;
+ *  - termina de esperar no máximo em `limite`, que é prazoFinal menos a janela de recuperação;
+ *  - o futuro que termina com null (falha) é entregue NA HORA a `aoTerminar`, sem esperar os demais;
+ *  - no `limite`, o que ainda não terminou é entregue a `aoVencer`, para ser recuperado com o tempo que sobra até prazoFinal;
+ *  - depois disso só se espera as recuperações em andamento (`recuperando`), e nunca além de prazoFinal.
+ */
+internal object Acompanhamento {
+    class Item<E : Any>(val texto: String, val chave: String, val futuro: CompletableFuture<E?>)
+
+    /** Uma fala alheia que terminou: com a entrada, ou com null (falha, ou futuro completado com erro). */
+    class Terminou<E : Any>(val item: Item<E>, val entrada: E?)
+
+    /** Quem ainda não terminou. Sondar não espera nada e não cancela nada. */
+    class Alheias<E : Any>(itens: List<Item<E>>) {
+        private val pendentes = ArrayList(itens)
+        val restantes: Int get() = pendentes.size
+
+        /** Os que terminaram desde a última sondagem, na ordem da lista, com a entrada ou com null. */
+        fun sondar(): List<Terminou<E>> {
+            val prontos = ArrayList<Terminou<E>>()
+            val it = pendentes.iterator()
+            while (it.hasNext()) {
+                val item = it.next()
+                if (!item.futuro.isDone) continue
+                it.remove()
+                prontos += Terminou(item, runCatching { item.futuro.get() }.getOrNull())
+            }
+            return prontos
+        }
+
+        /** Os que ainda não terminaram quando o limite chegou: saem da espera e quem chama os recupera. */
+        fun vencidos(): List<Item<E>> = ArrayList(pendentes).also { pendentes.clear() }
+    }
+
+    fun <E : Any> rodar(
+        alheias: Alheias<E>, limite: Long, prazoFinal: Long, agora: () -> Long, ativo: () -> Boolean,
+        aoTerminar: (List<Terminou<E>>) -> Unit, aoVencer: (List<Item<E>>) -> Unit,
+        recuperando: () -> Boolean, dorme: (Long) -> Unit
+    ) {
+        while (ativo()) {
+            val t = agora()
+            val prontos = alheias.sondar()
+            if (prontos.isNotEmpty()) aoTerminar(prontos)
+            if (t >= limite && alheias.restantes > 0) aoVencer(alheias.vencidos())
+            if (alheias.restantes == 0 && !recuperando()) return
+            if (t >= prazoFinal) return
+            dorme(RegraEspera.passoMs(t, prazoFinal))
+        }
+    }
+}
+
+/** Regras do cache em disco do leitor, puras para rodar na JVM. */
+internal object RegraLeitor {
+    /** O quadro pintado leva o idioma de destino no nome: trocar o destino não traz de volta o quadro no idioma errado. */
+    fun nomePintado(indice: Int, destino: String) = "${indice}t_$destino.jpg"
+
+    /**
+     * O quadro que está pronto (ou sem texto) foi decidido para OUTRO destino? Então volta para a fila e é repintado.
+     * Com o original na tela não há o que refazer, e quadro sem etiqueta de destino (nunca traduzido) não conta.
+     */
+    fun defasado(pronto: Boolean, semTexto: Boolean, paraDestino: String?, destino: String, mostrarOriginal: Boolean) =
+        !mostrarOriginal && (pronto || semTexto) && paraDestino != null && paraDestino != destino
+}
+
 /** O que da telemetria vem de resposta ou de texto vira código fixo: fala e conteúdo de resposta nunca saem do aparelho. */
 internal object SaneaTelemetria {
     private val NOME_MODELO = Regex("^[A-Za-z0-9._:/-]{1,60}$")
+    private val ID_SERVIDOR = Regex("^[A-Za-z0-9_-]{4,40}$")
 
     /** Nome de modelo só se parecer nome de modelo (letras, dígitos e . _ : / -); texto livre vira "?". */
     fun modelo(s: String): String = if (NOME_MODELO.matches(s)) s else "?"
+
+    /** O id aleatório do serviço só passa se tiver a cara de id (letras, dígitos, _ e -); qualquer outra coisa vira null. */
+    fun idServidor(s: String): String? = if (ID_SERVIDOR.matches(s)) s else null
+
+    /** De onde veio a tradução do pedido: só online, só offline, os dois, ou nada pedido (cache ou compartilhada). */
+    fun caminho(online: Int, offline: Int): String = when {
+        online > 0 && offline == 0 -> "online"
+        online == 0 && offline > 0 -> "offline"
+        online > 0 -> "misto"
+        else -> "cache"
+    }
 
     fun http(codigo: Int): String = "http_$codigo"
 
