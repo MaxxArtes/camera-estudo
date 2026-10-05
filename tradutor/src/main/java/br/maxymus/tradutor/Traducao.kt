@@ -751,11 +751,20 @@ internal class Classificacao(
  *  - VOTA no idioma mais provável quando a confiança é de pelo menos 0,50 e ele não é "und" nem o destino, com peso
  *    igual ao número de letras (no máximo PESO_MAX por fala, para um texto longo não calar os outros).
  *  - Fora isso, indeterminada.
+ *  - Só vota um idioma PLAUSÍVEL como origem de quadrinho (IDIOMAS_PLAUSIVEIS). Fala cujo melhor candidato está fora
+ *    do conjunto ("zu", "sk", "gl" e "ca" fora da família) é indeterminada, como acima: a telemetria da 0.25 (04/10)
+ *    mostrou frases curtas de interface em português decididas como "gl", "ca", "es" e até "zu".
+ * FAMÍLIA DO PORTUGUÊS (só com destino "pt"): o galego escrito é quase igual ao português e galego não é conteúdo
+ * provável para o dono, então a confiança de "pt" e de "gl" da fala é somada numa só, "pt". Com "pt" (ou "gl") entre os
+ * candidatos com pelo menos 0,20, a confiança dos vizinhos "es", "ca" e "it" entra na mesma soma: o identificador troca
+ * frase curta de interface em português por espanhol ou catalão. Sem "pt" nem "gl" entre os candidatos, o vizinho segue
+ * como idioma próprio (um mangá em espanhol continua sendo espanhol). Depois da soma vale a regra de pular de sempre,
+ * com a margem medida sobre o melhor candidato de FORA da família.
  * A origem do lote é o idioma de mais peso. Sem votos, vale o idioma do texto das indeterminadas juntas (textoJunto)
- * quando o identificador tem pelo menos 0,50 de confiança nele e ele não é "und" nem o destino; sem isso, o histórico
- * deste destino (a última origem que veio de votos com ele) e, sem histórico, "en". A origem pelo texto junto não conta
- * como voto (deVotos = false). NENHUMA origem automática é igual ao destino: o histórico igual ao destino é ignorado
- * e, com destino "en", o chute final é "und" (origem desconhecida) em vez de "en".
+ * quando o identificador tem pelo menos 0,50 de confiança nele e ele é plausível, não é "und" nem o destino; sem isso, o
+ * histórico deste destino (a última origem que veio de votos com ele) e, sem histórico, "en". A origem pelo texto junto
+ * não conta como voto (deVotos = false). NENHUMA origem automática é igual ao destino: o histórico igual ao destino é
+ * ignorado e, com destino "en", o chute final é "und" (origem desconhecida) em vez de "en".
  * Com `origemFixa` o dono já escolheu: nada é pulado e a origem é a dele, mesmo igual ao destino.
  */
 internal object RegraIdioma {
@@ -772,6 +781,28 @@ internal object RegraIdioma {
     private const val CONF_VOTO = 0.50
     /** 0,9f - 0,6f dá 0,29999995 em float: sem esta folga a margem de 0,30 escrita em decimal falharia por arredondamento */
     private const val FOLGA = 1e-7
+    /** confiança mínima de "pt" (ou "gl") para os vizinhos entrarem na família do português */
+    private const val CONF_FAMILIA = 0.20
+    /** idiomas que confundem com o português em frase curta; só entram na família com "pt" ou "gl" entre os candidatos */
+    private val VIZINHOS_DO_PORTUGUES = setOf("es", "ca", "it")
+    /** origens plausíveis de quadrinho: só estas votam na origem da tela (ver acima) */
+    val IDIOMAS_PLAUSIVEIS: Set<String> = setOf("en", "ja", "ko", "zh", "es", "fr", "de", "it", "ru", "id", "th", "vi", "tl", "pt")
+
+    /**
+     * Com destino "pt", soma numa só confiança de "pt" a de "pt" e "gl" da fala e, havendo "pt" ou "gl" com pelo menos
+     * CONF_FAMILIA, também a dos vizinhos "es", "ca" e "it". A soma fica no lugar do primeiro membro da família e nunca
+     * passa de 1. Com outro destino, ou sem "pt" nem "gl" entre os candidatos, a lista volta como veio.
+     */
+    fun familiaDoPortugues(candidatos: List<CandidatoIdioma>, destino: String): List<CandidatoIdioma> {
+        if (destino != "pt") return candidatos
+        val doPortugues = { c: CandidatoIdioma -> c.idioma == "pt" || c.idioma == "gl" }
+        if (candidatos.none(doPortugues)) return candidatos
+        val vizinhosEntram = candidatos.any { doPortugues(it) && it.confianca.toDouble() >= CONF_FAMILIA - FOLGA }
+        val familia = candidatos.filter { doPortugues(it) || (vizinhosEntram && it.idioma in VIZINHOS_DO_PORTUGUES) }
+        val soma = minOf(1.0, familia.sumOf { it.confianca.toDouble() }).toFloat()
+        val primeiro = familia.first()
+        return candidatos.mapNotNull { c -> if (c === primeiro) CandidatoIdioma("pt", soma) else if (c in familia) null else c }
+    }
 
     /** Letras da fala, com o peso de cada caractere (ver acima). Conta por ponto de código, para não partir par substituto. */
     fun letras(t: String): Int {
@@ -804,12 +835,16 @@ internal object RegraIdioma {
     /** Resposta válida do modelo para uma fala: qualquer texto não vazio, INCLUSIVE igual ao original (ele preservou de propósito). */
     fun respostaDoModelo(resposta: String?): String? = resposta?.takeIf { it.isNotBlank() }
 
-    /** `historico` é a última origem boa DESTE destino (HistoricoOrigem.de), se houver. */
+    /**
+     * `historico` é a última origem boa DESTE destino (HistoricoOrigem.de), se houver. Os candidatos chegam crus, como o
+     * identificador devolveu, e a família do português é somada aqui, uma vez, para a fala e para o texto junto.
+     */
     fun decidir(
-        textos: List<String>, candidatos: Map<String, List<CandidatoIdioma>>, destino: String,
+        textos: List<String>, candidatosCrus: Map<String, List<CandidatoIdioma>>, destino: String,
         origemFixa: String, historico: String?
     ): Classificacao {
         if (origemFixa.isNotBlank()) return Classificacao(emptySet(), origemFixa, 0)
+        val candidatos = candidatosCrus.mapValues { familiaDoPortugues(it.value, destino) }
         val pular = HashSet<String>()
         val pesos = LinkedHashMap<String, Int>()      // em ordem de leitura, para o empate cair na fala que veio primeiro
         val indeterminadas = ArrayList<String>()
@@ -821,14 +856,14 @@ internal object RegraIdioma {
             val conf1 = primeiro.confianca.toDouble()
             val conf2 = ordem.getOrNull(1)?.confianca?.toDouble() ?: 0.0
             if (primeiro.idioma == destino && conf1 >= CONF_PULAR && conf1 - conf2 >= MARGEM_PULAR - FOLGA) pular += t
-            else if (conf1 >= CONF_VOTO && primeiro.idioma != "und" && primeiro.idioma != destino)
+            else if (conf1 >= CONF_VOTO && primeiro.idioma != "und" && primeiro.idioma != destino && primeiro.idioma in IDIOMAS_PLAUSIVEIS)
                 pesos[primeiro.idioma] = (pesos[primeiro.idioma] ?: 0) + minOf(n, PESO_MAX)
             else indeterminadas += t
         }
         val votada = pesos.maxByOrNull { it.value }?.key
         if (votada != null) return Classificacao(pular, votada, indeterminadas.size, true, indeterminadas)
         val junto = if (indeterminadas.isEmpty()) null else candidatos[textoJunto(indeterminadas)]?.maxByOrNull { it.confianca }
-        val doJunto = if (junto != null && junto.confianca.toDouble() >= CONF_VOTO && junto.idioma != "und" && junto.idioma != destino) junto.idioma else null
+        val doJunto = if (junto != null && junto.confianca.toDouble() >= CONF_VOTO && junto.idioma != "und" && junto.idioma in IDIOMAS_PLAUSIVEIS && junto.idioma != destino) junto.idioma else null
         val padrao = historico?.takeIf { it != destino } ?: origemPadrao(destino)
         return Classificacao(pular, doJunto ?: padrao, indeterminadas.size, false, indeterminadas)
     }

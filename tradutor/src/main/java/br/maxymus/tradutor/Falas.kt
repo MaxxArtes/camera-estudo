@@ -19,22 +19,32 @@ import kotlin.math.min
 object Falas {
     class Fala(val texto: String, val caixa: Rect, val alturaLinha: Int)
 
+    class Leitura(val falas: List<Fala>, val algumTexto: Boolean)
+
     private val leitor by lazy { TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS) }
 
     /** Bloqueante (chamar fora da principal). `topo` e `base` recortam a área útil, fora das barras do sistema. */
-    fun ler(b: Bitmap, topo: Int, base: Int): List<Fala> = runCatching {
+    fun ler(b: Bitmap, topo: Int, base: Int): List<Fala> = lerOuNulo(b, topo, base)?.falas.orEmpty()
+
+    /**
+     * Como `ler`, mas devolve NULO quando o reconhecimento FALHOU (erro ou tempo): algumTexto indica texto no conteúdo
+     * ANTES dos filtros de tradução, e nulo que não se sabe. Quem diagnostica captura escura precisa dessa diferença.
+     */
+    fun lerOuNulo(b: Bitmap, topo: Int, base: Int): Leitura? = runCatching<Leitura?> {
         val r = com.google.android.gms.tasks.Tasks.await(leitor.process(InputImage.fromBitmap(b, 0)), 20, java.util.concurrent.TimeUnit.SECONDS)
         val brutas = ArrayList<Fala>()
+        var algumTexto = false
         for (bloco in r.textBlocks) for (linha in bloco.lines) {
             val c = linha.boundingBox ?: continue
             if (c.top < topo || c.bottom > base) continue
+            if (linha.text.isNotBlank()) algumTexto = true
             if (linha.text.trim().length < 2) continue
             brutas += Fala(linha.text.trim(), Rect(c), max(1, c.height()))
         }
-        junta(brutas)
+        Leitura(junta(brutas), algumTexto)
     }.getOrElse { e ->
         Telemetria.evento("erro", mapOf("onde" to "ocr", "msg" to Telemetria.classe(e)))
-        emptyList()
+        null
     }
 
     private fun junta(entrada: List<Fala>): List<Fala> {
