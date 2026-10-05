@@ -1,6 +1,15 @@
 {
   "releases": [
     {
+      "versao": "0.80",
+      "build": 94,
+      "tag": "v0.80-build94",
+      "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.80-build94.apk",
+      "mudou": [
+        "Camera 0.80: rajada de teste (fase A)"
+      ]
+    },
+    {
       "versao": "0.79",
       "build": 93,
       "tag": "v0.79-build93",
@@ -739,11 +748,11 @@
       ]
     }
   ],
-  "versionName": "0.79",
-  "versionCode": 79,
-  "build": 93,
+  "versionName": "0.80",
+  "versionCode": 80,
+  "build": 94,
   "apk": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo.apk",
-  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.79-build93.apk",
+  "apkVersao": "https://pub-520120b0b03b4d3f8c94c5c9ba10d569.r2.dev/camera-estudo/camera-estudo-v0.80-build94.apk",
   "github": "https://github.com/MaxxArtes/camera-estudo/releases/download/ultimo/camera-estudo.apk",
-  "publicadoEm": "2026-10-03T00:04:12Z"
+  "publicadoEm": "2026-10-05T17:49:13Z"
 }
