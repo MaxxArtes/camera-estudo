@@ -379,7 +379,7 @@ class ServicoTradutor : AccessibilityService() {
         // tela igual não basta para pular: se o modelo chegou atrasado e melhorou o cache, tem que redesenhar
         val corr = Traducao.correcoes.get()
         if (assin == ultimaAssinatura && corr == ultimaCorrecao && sobreposicao != null) {
-            trabalhando = false; sobreposicao?.visibility = View.VISIBLE; return
+            trabalhando = false; reexibeSobreposicao(); return
         }
         ultimaAssinatura = assin
         ultimaCorrecao = corr
@@ -394,7 +394,7 @@ class ServicoTradutor : AccessibilityService() {
         if (falas.isEmpty()) {
             // OCR que rodou e não achou texto: se a imagem é quase toda preta, pode ser página escura ou captura bloqueada
             if (lidas?.algumTexto == false) suspeitaNoContinuo(tela, topo, base, assin)
-            trabalhando = false; sobreposicao?.visibility = View.VISIBLE; return
+            trabalhando = false; reexibeSobreposicao(); return
         }
         if (LeitorActivity.visivel) { trabalhando = false; return }
         val textos = falas.map { it.texto }
@@ -485,10 +485,21 @@ class ServicoTradutor : AccessibilityService() {
     }
 
     /** Camada que NÃO recebe toque: a página continua rolando por baixo. */
+    /**
+     * A camada nunca aparece por cima do leitor do próprio app. Conferir antes de cada suspensão não basta: o leitor pode
+     * abrir durante a pintura. Aqui a conferência é no instante de mostrar, no fio principal, o mesmo do onResume.
+     */
+    private fun reexibeSobreposicao() {
+        sobreposicao?.visibility = if (LeitorActivity.visivel) View.INVISIBLE else View.VISIBLE
+    }
+
     private fun mostraCamada(camada: Bitmap) {
         val alvo = sobreposicao as? ImageView
-        if (alvo != null) { alvo.setImageBitmap(camada); alvo.visibility = View.VISIBLE; return }
-        val v = ImageView(this).apply { setImageBitmap(camada); scaleType = ImageView.ScaleType.FIT_XY }
+        if (alvo != null) { alvo.setImageBitmap(camada); reexibeSobreposicao(); return }
+        val v = ImageView(this).apply {
+            setImageBitmap(camada); scaleType = ImageView.ScaleType.FIT_XY
+            if (LeitorActivity.visivel) visibility = View.INVISIBLE
+        }
         val p = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
