@@ -35,7 +35,9 @@ class Leitor(ctx: Context, val endereco: String) {
         var imagem by mutableStateOf<Bitmap?>(null)
         var falas = 0
         /** destino para o qual o estado PRONTO ou SEM_TEXTO foi decidido; nulo enquanto não se sabe */
-        var paraDestino: String? = null
+        @Volatile var paraDestino: String? = null
+        /** as falas traduzidas para a leitura em voz alta, em ordem de leitura; escrito pelo motor, lido pela tela */
+        @Volatile internal var dados: RegraLeituraCapitulo.DadosQuadro? = null
     }
 
     companion object {
@@ -66,7 +68,9 @@ class Leitor(ctx: Context, val endereco: String) {
     var falhouLista by mutableStateOf(false)
     var mostrarOriginal by mutableStateOf(false)
     /** índice do quadro no topo da tela; a interface escreve aqui e os dois motores leem */
-    var visivel = 0
+    @Volatile var visivel = 0
+    /** o quadro que a leitura em voz alta espera (-1 sem leitura): os dois motores o põem na frente da fila */
+    @Volatile var alvoLeitura = -1
 
     private val contados = HashSet<Int>()
     private var totalFalas = 0
@@ -83,6 +87,27 @@ class Leitor(ctx: Context, val endereco: String) {
      * limpeza de limparAntigos, que mantém só os 3 capítulos mais recentes.
      */
     private fun pintado(i: Int, dest: String) = File(pasta, RegraLeitor.nomePintado(i, dest))
+
+    /**
+     * As falas traduzidas do quadro pintado (RegraLeituraCapitulo.escrever), no mesmo diretório e com a mesma limpeza do
+     * capítulo. É cache: fica fora do backup (o app não faz backup) e nunca vai para log nem telemetria.
+     */
+    private fun falasArq(i: Int, dest: String) = File(pasta, RegraLeituraCapitulo.nomeFalas(i, dest))
+
+    /** Os dados de leitura gravados para o destino, ou nulo (não existe, outro formato ou outro destino). */
+    private fun lerDados(i: Int, dest: String): RegraLeituraCapitulo.DadosQuadro? = runCatching {
+        val f = falasArq(i, dest)
+        if (!f.exists()) null else RegraLeituraCapitulo.ler(f.readText())?.takeIf { it.destino == dest }
+    }.getOrNull()
+
+    /** Em que pé o quadro está para a leitura em voz alta (RegraLeituraCapitulo.situacao), no destino de agora. */
+    internal fun situacaoLeitura(q: Quadro): RegraLeituraCapitulo.Situacao {
+        val dest = Traducao.destino
+        val d = q.dados
+        val e = q.estado
+        return RegraLeituraCapitulo.situacao(e == Estado.PRONTO, e == Estado.SEM_TEXTO,
+            e == Estado.ERRO_REDE || e == Estado.ERRO_TRAD, q.paraDestino == dest, d != null && d.destino == dest, d?.falas?.size ?: 0)
+    }
 
     /** O quadro pronto (ou sem texto) foi decidido para outro destino que não o de agora? Então precisa ser repintado. */
     private fun defasado(q: Quadro, dest: String) = RegraLeitor.defasado(
@@ -114,15 +139,19 @@ class Leitor(ctx: Context, val endereco: String) {
             var fez = false
             if (l.isNotEmpty()) {
                 val fim = min(l.size - 1, visivel + JANELA_REDE)
-                for (i in max(0, visivel - 1)..fim) {
+                val alvo = alvoLeitura
+                val ordem = if (alvo in l.indices) sequenceOf(alvo) + (max(0, visivel - 1)..fim).asSequence() else (max(0, visivel - 1)..fim).asSequence()
+                for (i in ordem) {
                     val q = l[i]
-                    if (bruto(i).exists() || pintado(i, Traducao.destino).exists() || q.estado == Estado.ERRO_REDE) continue
+                    // pintado sem o arquivo de falas (cache da 0.27) precisa do original de novo para gerar as falas
+                    val pronto = pintado(i, Traducao.destino).exists() && falasArq(i, Traducao.destino).exists()
+                    if (bruto(i).exists() || pronto || q.estado == Estado.ERRO_REDE) continue
                     val n = Capitulo.baixarPara(q.url, bruto(i))
                     if (n > 0) { daRede++; bytes += n }
                     else {
                         // falha em quadro distante é adiantamento, não leitura: não vira erro na cara do dono,
                         // que veria "não carregou" em dez quadros por um tropeço de rede de um segundo
-                        if (i <= visivel + JANELA_FRENTE && q.imagem == null) q.estado = Estado.ERRO_REDE
+                        if ((i <= visivel + JANELA_FRENTE || i == alvo) && q.imagem == null) q.estado = Estado.ERRO_REDE
                         delay(500)
                     }
                     fez = true
@@ -146,6 +175,10 @@ class Leitor(ctx: Context, val endereco: String) {
         val l = quadros
         if (l.isEmpty()) return null
         val dest = Traducao.destino
+        // O quadro que a leitura espera vem primeiro, mas só enquanto a leitura ainda não sabe o que fazer com ele: pronto longe
+        // da tela sairia da memória no mesmo instante e o motor o recarregaria para sempre.
+        val alvo = alvoLeitura
+        if (alvo in l.indices && !mostrarOriginal && situacaoLeitura(l[alvo]) == RegraLeituraCapitulo.Situacao.PREPARANDO) return l[alvo]
         for (i in max(0, visivel - 1)..min(l.size - 1, visivel + JANELA_FRENTE)) {
             val q = l[i]
             // erro espera pedido do dono: repetir sozinho só queima bateria quando a causa é o site
@@ -168,8 +201,13 @@ class Leitor(ctx: Context, val endereco: String) {
         val dest = Traducao.destino
         // Pronto ou sem texto para OUTRO destino (o dono trocou o idioma com o leitor aberto): sem arquivo do destino
         // atual, volta para a fila e é repintado, em vez de reabrir como original ou no idioma errado.
-        if (defasado(q, dest)) { q.estado = Estado.ESPERA; q.imagem = null; q.paraDestino = null }
-        val prontoNoDisco = pintado(i, dest).exists()
+        if (defasado(q, dest)) { q.estado = Estado.ESPERA; q.imagem = null; q.paraDestino = null; q.dados = null }
+        // Pronto no disco é o quadro pintado E as falas dele: sem as falas não há o que ler, e elas não saem de OCR da imagem pintada.
+        val dadosNoDisco = if (mostrarOriginal) null else lerDados(i, dest)
+        val prontoNoDisco = dadosNoDisco != null && pintado(i, dest).exists()
+        // Pronto sem nada no disco, com a tradução na tela: foi decidido no original ou é cache da 0.27 sem falas. Volta à fila
+        // inteira (a tradução sai do cache), em vez de reabrir o original no lugar do traduzido.
+        if (!mostrarOriginal && q.estado == Estado.PRONTO && !prontoNoDisco) { q.estado = Estado.ESPERA; q.paraDestino = null; q.dados = null }
 
         // caminho barato: já traduzido antes, ou só voltando do disco depois de sair da memória
         if ((q.estado == Estado.PRONTO || q.estado == Estado.SEM_TEXTO) || (prontoNoDisco && !mostrarOriginal)) {
@@ -180,7 +218,7 @@ class Leitor(ctx: Context, val endereco: String) {
             q.proporcao = b.height.toFloat() / b.width
             q.imagem = b
             if (q.estado != Estado.SEM_TEXTO) q.estado = Estado.PRONTO
-            if (doDestino) q.paraDestino = dest
+            if (doDestino) { q.dados = dadosNoDisco; q.paraDestino = dest }
             if (prontoNoDisco && contados.add(i)) doDisco++
             return true
         }
@@ -201,6 +239,7 @@ class Leitor(ctx: Context, val endereco: String) {
         val falas = Falas.ler(original, -10, original.height + 10)
         val msOcr = (System.nanoTime() - t1) / 1_000_000
         if (falas.isEmpty()) {
+            q.dados = semFalas(dest, original)
             q.estado = Estado.SEM_TEXTO
             q.paraDestino = dest
             Telemetria.evento("leitor_quadro", mapOf("i" to i, "kb" to (bruto(i).length() / 1024).toInt(),
@@ -226,6 +265,7 @@ class Leitor(ctx: Context, val endereco: String) {
             return true
         }
         if (uteis.isEmpty()) {
+            q.dados = semFalas(dest, original)
             q.estado = Estado.SEM_TEXTO
             q.paraDestino = dest
             Telemetria.evento("leitor_quadro", mapOf("i" to i, "ms_ocr" to msOcr, "ms_trad" to msTrad,
@@ -238,7 +278,14 @@ class Leitor(ctx: Context, val endereco: String) {
         val camada = Pintura.camada(original, uteis) { mapa[it] ?: it }
         val msPint = (System.nanoTime() - t3) / 1_000_000
 
+        // As falas lidas são as PINTADAS (as que mudaram), com o texto traduzido e a caixa medida no original, em ordem de leitura.
+        val dados = RegraLeituraCapitulo.DadosQuadro(dest, BuildConfig.VERSION_CODE, original.width, original.height,
+            RegraLeituraCapitulo.emOrdemDeLeitura(uteis.map {
+                RegraLeituraCapitulo.FalaQuadro(mapa[it.texto] ?: it.texto, it.caixa.left, it.caixa.top, it.caixa.right, it.caixa.bottom, it.alturaLinha)
+            }))
         runCatching { pintado(i, dest).outputStream().use { s -> camada.compress(Bitmap.CompressFormat.JPEG, 88, s) } }
+        runCatching { falasArq(i, dest).writeText(RegraLeituraCapitulo.escrever(dados)) }
+        q.dados = dados
         q.imagem = camada
         q.falas = falas.size
         q.estado = Estado.PRONTO
@@ -253,6 +300,9 @@ class Leitor(ctx: Context, val endereco: String) {
             "compartilhadas" to r.compartilhadas, "id" to r.idServidor))
         return true
     }
+
+    private fun semFalas(dest: String, b: Bitmap) =
+        RegraLeituraCapitulo.DadosQuadro(dest, BuildConfig.VERSION_CODE, b.width, b.height, emptyList())
 
     /** Solta da memória o que está longe do olho. NÃO recicla: o Compose ainda pode estar desenhando. */
     private fun soltarLonge() {
@@ -276,6 +326,7 @@ class Leitor(ctx: Context, val endereco: String) {
     fun tentarDeNovo(q: Quadro) {
         if (q.estado == Estado.ERRO_REDE) bruto(q.indice).delete()
         q.imagem = null
+        q.dados = null
         q.estado = Estado.ESPERA
         Telemetria.evento("leitor_repetiu", mapOf("i" to q.indice))
     }
