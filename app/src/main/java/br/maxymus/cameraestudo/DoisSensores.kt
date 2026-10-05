@@ -1398,9 +1398,9 @@ object DoisSensores {
      * códigos; esta tabela é a barreira que vale se um deles deixar de passar. Evento que não está na tabela não sai.
      */
     private fun esquemaFechado(tipo: String, campos: Map<String, Any?>): Boolean {
-        if (tipo.startsWith("dois_")) return true
+        if (tipo.startsWith("dois_") || tipo.startsWith("rajada_")) return true
         val onde = campos["onde"] as? String ?: return false
-        return tipo == "erro" && (onde == "sensores" || onde.startsWith("dois_"))
+        return tipo == "erro" && (onde == "sensores" || onde == "rajada" || onde.startsWith("dois_"))
     }
 
     private val FORA_DO_CODIGO = Regex("[^A-Za-z0-9_:.,|=+\\-]")
@@ -1591,6 +1591,19 @@ object DoisSensores {
             "motivo" to conj("marca_grande", "marca_ilegivel"), "classe" to CLASSE
         ),
         "erro:dois_arquivos" to mapOf("onde" to conj("dois_arquivos"), "acao" to conj("limpar"), "classe" to CLASSE),
+        // rajada de teste (0.80, Rajada.kt): só números e códigos, também aqui
+        "rajada_teste" to mapOf(
+            "rodada" to RODADA, "resultado" to conj("ok", "recusou_resolucao", "perdeu_camera", "cancelado", "erro"), "classe" to CLASSE,
+            "etapa" to conj("inicio", "soltar", "caracteristicas", "abrir", "sessao", "3a", "rajada", "devolver", "normal", "gravar"),
+            "quadros" to NUM, "ms_total" to NUM, "fps" to NUM, "largura" to NUM, "altura" to NUM, "largura_max" to NUM, "altura_max" to NUM,
+            "tentativas" to NUM, "exp_ns" to NUM, "iso" to NUM, "ois" to NUM, "nr" to NUM, "edge" to NUM, "ae_travado" to BOOL, "af_fixo" to BOOL,
+            "max_res_disp" to BOOL, "normal" to BOOL, "gravou" to BOOL, "ms_gravar" to NUM
+        ),
+        "rajada_compartilhar" to mapOf("rodada" to RODADA, "arquivos" to NUM, "bytes" to NUM),
+        "erro:rajada" to mapOf(
+            "onde" to conj("rajada"), "acao" to conj("apagar", "revisar", "zip", "compartilhar"),
+            "motivo" to conj("pasta_invalida", "arquivo_sumiu", "lista_mudou"), "classe" to CLASSE
+        ),
         "erro:dois_compartilhar" to mapOf(
             "onde" to conj("dois_compartilhar"), "rodada" to RODADA, "acao" to conj("pacote", "ampliar"),
             "motivo" to conj("pasta_invalida", "sem_imagens", "arquivo_sumiu", "lista_mudou", "excecao", "decodificar"), "arquivos" to NUM,
