@@ -14,6 +14,12 @@ Regras do repositório:
   depois de uma tela de revisão. Siga o modelo do teste de dois sensores (DoisSensoresTela.kt, FileProvider só com a
   raiz específica, caminhos.xml).
 
+## O aparelho (ficha técnica, 05/10)
+POCO X8 Pro Max: câmera principal de 50 MP (8165x6124) com sensor 1/1,95", f/1.5 e ESTABILIZAÇÃO ÓPTICA; Dimensity
+9500s; 12 GB de RAM. No modo padrão o Camera2 entrega 4096x3072 (12,6 MP, pixels combinados 4 em 4). Os 50 MP exigem
+o modo de resolução máxima (SENSOR_PIXEL_MODE_MAXIMUM_RESOLUTION), que NÃO entra na rajada desta fase: só registre no
+meta.json se a câmera declara esse modo e quais tamanhos ele oferece.
+
 ## Objetivo da fase A
 Medir, no aparelho real (POCO X8 Pro Max, sensor principal 4096x3072), o que uma rajada entrega antes de escrever
 qualquer fusão no app. Os quadros vão para um protótipo em Python na bancada do dono.
