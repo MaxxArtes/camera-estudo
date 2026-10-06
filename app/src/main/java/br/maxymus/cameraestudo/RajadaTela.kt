@@ -11,10 +11,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -23,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -38,9 +43,36 @@ private val PainelRaj = Color(0xFF16161B)
 private val CinzaRaj = Color(0xFFBDBDBD)
 private val TecnicoRaj = Color(0xFF8A8A8A)
 
-/** Texto literal da instrução da fase A. */
-private const val INSTRUCAO_RAJADA = "Apoie o celular ou segure firme, aponte para uma estante ou uma parede com textura, em luz baixa. " +
-    "São 8 fotos seguidas e uma normal. As fotos ficam só no aparelho até você compartilhar."
+/** Texto literal da instrução (0.81). */
+private const val INSTRUCAO_RAJADA = "Segure como numa foto normal e aponte para uma estante ou parede com textura, em luz baixa " +
+    "(abajur à noite). São 8 fotos seguidas e uma normal. As fotos ficam só no aparelho até você compartilhar."
+
+/** Legenda de cada modo na escolha. */
+private fun legendaModo(m: Rajada.Modo): String = when (m) {
+    Rajada.Modo.PROCESSADA -> "Como na 0.80: o celular reduz o ruído e aplica nitidez em cada foto."
+    Rajada.Modo.SEM_PROCESSAMENTO -> "Redução de ruído e nitidez desligadas. Fotos com mais ruído, para a soma limpar."
+    Rajada.Modo.RAW -> "Dados crus do sensor. Arquivos grandes: cerca de 25 MB por foto."
+}
+
+/** Uma linha do grupo "Modo": a linha inteira é clicável, com pelo menos 48 dp; indisponível fica desligada. */
+@Composable
+private fun LinhaModo(m: Rajada.Modo, escolhido: Boolean, disponivel: Boolean, aoEscolher: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+            .selectable(selected = escolhido, enabled = disponivel, role = Role.RadioButton, onClick = aoEscolher)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        RadioButton(
+            selected = escolhido, onClick = null, enabled = disponivel,
+            colors = RadioButtonDefaults.colors(selectedColor = CoralRaj, unselectedColor = CinzaRaj, disabledUnselectedColor = TecnicoRaj)
+        )
+        Column(modifier = Modifier.padding(start = 8.dp)) {
+            Text(m.nome, color = if (disponivel) Color.White else TecnicoRaj, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Text(if (disponivel) legendaModo(m) else "Este aparelho não oferece.", color = if (disponivel) CinzaRaj else TecnicoRaj, fontSize = 13.sp)
+        }
+    }
+}
 
 @Composable
 private fun AcaoRaj(titulo: String, legenda: String?, ativo: Boolean = true, aoTocar: () -> Unit) {
@@ -66,7 +98,10 @@ internal fun textoExposicao(ns: Long?): String = when {
 
 /** Item "Rajada de teste" da gaveta: a explicação e o botão. "Ver a última rajada" abre a revisão, nunca compartilha direto. */
 @Composable
-internal fun DialogoRajada(temUltima: Boolean, aviso: String?, aoIniciar: () -> Unit, aoVerUltima: () -> Unit, aoFechar: () -> Unit) {
+internal fun DialogoRajada(
+    temUltima: Boolean, modo: Rajada.Modo, disponibilidade: Map<Rajada.Modo, Rajada.Disponibilidade>, aoEscolherModo: (Rajada.Modo) -> Unit,
+    aviso: String?, aoIniciar: () -> Unit, aoVerUltima: () -> Unit, aoFechar: () -> Unit
+) {
     AlertDialog(
         onDismissRequest = aoFechar,
         containerColor = PainelRaj,
@@ -75,6 +110,14 @@ internal fun DialogoRajada(temUltima: Boolean, aviso: String?, aoIniciar: () -> 
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Text(INSTRUCAO_RAJADA, color = Color.White, fontSize = 16.sp)
                 if (aviso != null) Text(aviso, color = CinzaRaj, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
+                Text("Modo", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
+                Column(modifier = Modifier.selectableGroup()) {
+                    for (m in Rajada.Modo.values()) {
+                        // sem a leitura do aparelho, só a 0.80 fica de pé
+                        val disp = disponibilidade[m]?.ok ?: (m == Rajada.Modo.PROCESSADA)
+                        LinhaModo(m, m == modo, disp) { aoEscolherModo(m) }
+                    }
+                }
                 Spacer(modifier = Modifier.height(16.dp))
                 Button(
                     onClick = aoIniciar,
@@ -99,7 +142,8 @@ internal fun DialogoResultadoRajada(
         title = { Text("Rajada de teste", color = Color.White, fontSize = 22.sp) },
         text = {
             Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
-                if (res.resultado == "ok" || res.resultado == "variou") {
+                Text("Modo: ${res.modo.nome}", color = CinzaRaj, fontSize = 14.sp, modifier = Modifier.padding(bottom = 4.dp))
+                if (Rajada.salvavel(res.resultado)) {
                     if (res.resultado == "variou") Text("Exposição ou ISO variaram; quadros salvos para análise.", color = CoralRaj, fontSize = 15.sp)
                     val fps = res.fps?.let { "%.1f fps".format(it) } ?: "fps ?"
                     Text("${res.quadros} quadros em ${res.msTotal ?: "?"} ms ($fps)", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
@@ -109,6 +153,17 @@ internal fun DialogoResultadoRajada(
                         color = CinzaRaj, fontSize = 13.sp, modifier = Modifier.padding(top = 2.dp)
                     )
                     Text("Exposição: ${textoExposicao(res.exp)} · ISO ${res.iso ?: "?"}", color = Color.White, fontSize = 15.sp, modifier = Modifier.padding(top = 4.dp))
+                    // conferido nos resultados dos quadros, não no que foi pedido
+                    if (res.modo == Rajada.Modo.SEM_PROCESSAMENTO) Text(
+                        if (res.nrEdgeDesligados == true) "Redução de ruído e nitidez: desligadas"
+                        else "O celular não desligou a redução de ruído ou a nitidez (NR ${res.nrVisto ?: "?"}, EDGE ${res.edgeVisto ?: "?"})",
+                        color = if (res.nrEdgeDesligados == true) Color.White else CoralRaj, fontSize = 15.sp, modifier = Modifier.padding(top = 4.dp)
+                    )
+                    Text(when (res.oisLigada) {
+                        true -> "Estabilização óptica: ligada"
+                        false -> "Estabilização óptica: desligada"
+                        null -> "Estabilização óptica: não informada"
+                    }, color = Color.White, fontSize = 15.sp, modifier = Modifier.padding(top = 4.dp))
                     Text(if (res.normal) "Foto normal: salva junto." else "Foto normal: não saiu; os quadros foram salvos assim mesmo.",
                         color = CinzaRaj, fontSize = 14.sp, modifier = Modifier.padding(top = 4.dp))
                 } else {
