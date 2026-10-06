@@ -96,11 +96,11 @@ internal fun textoExposicao(ns: Long?): String = when {
     else -> "%.1f s".format(ns / 1e9)
 }
 
-/** Item "Rajada de teste" da gaveta: a explicação e o botão. "Ver a última rajada" abre a revisão, nunca compartilha direto. */
+/** Item "Rajada de teste" da gaveta: a explicação e o botão. "Ver rajadas guardadas" abre a lista antes da revisão. */
 @Composable
 internal fun DialogoRajada(
-    temUltima: Boolean, modo: Rajada.Modo, disponibilidade: Map<Rajada.Modo, Rajada.Disponibilidade>, aoEscolherModo: (Rajada.Modo) -> Unit,
-    aviso: String?, aoIniciar: () -> Unit, aoVerUltima: () -> Unit, aoFechar: () -> Unit
+    temGuardadas: Boolean, modo: Rajada.Modo, disponibilidade: Map<Rajada.Modo, Rajada.Disponibilidade>, aoEscolherModo: (Rajada.Modo) -> Unit,
+    aviso: String?, aoIniciar: () -> Unit, aoVerGuardadas: () -> Unit, aoFechar: () -> Unit
 ) {
     AlertDialog(
         onDismissRequest = aoFechar,
@@ -124,7 +124,23 @@ internal fun DialogoRajada(
                     colors = ButtonDefaults.buttonColors(containerColor = CoralRaj, contentColor = FundoRaj),
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
                 ) { Text("Fazer a rajada", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) }
-                if (temUltima) AcaoRaj("Ver a última rajada", "Mostra as imagens antes de compartilhar", aoTocar = aoVerUltima)
+                if (temGuardadas) AcaoRaj("Ver rajadas guardadas", "Mostra as imagens antes de compartilhar", aoTocar = aoVerGuardadas)
+            }
+        },
+        confirmButton = { FecharRaj(aoFechar) }
+    )
+}
+
+/** Até três rajadas, da mais nova para a mais velha; a linha inteira segue a ação do diálogo. */
+@Composable
+internal fun DialogoRajadasGuardadas(rajadas: List<Rajada.Guardada>, aoVer: (java.io.File) -> Unit, aoFechar: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = aoFechar,
+        containerColor = PainelRaj,
+        title = { Text("Rajadas guardadas", color = Color.White, fontSize = 22.sp) },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                for (rajada in rajadas) AcaoRaj(rajada.linha, null) { aoVer(rajada.pasta) }
             }
         },
         confirmButton = { FecharRaj(aoFechar) }
@@ -198,7 +214,7 @@ internal fun DialogoResultadoRajada(
  */
 @Composable
 internal fun DialogoRevisaoRajada(
-    pacote: Rajada.Pacote?, carregando: Boolean, zipando: Boolean,
+    pacote: Rajada.Pacote?, carregando: Boolean, zipando: Boolean, salvoDownloads: Boolean,
     aoCompartilhar: (Rajada.Pacote) -> Unit, aoApagar: (Rajada.Pacote) -> Unit, aoFechar: () -> Unit
 ) {
     AlertDialog(
@@ -230,6 +246,7 @@ internal fun DialogoRevisaoRajada(
                 for (l in pacote.listaExata) Text(l, color = TecnicoRaj, fontSize = 12.sp)
                 if (pacote.previaFalhou()) Text("Não consegui abrir todas as prévias; sem elas o compartilhamento fica desligado.",
                     color = CoralRaj, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
+                if (salvoDownloads) Text("Salvo em Downloads/Câmera Estudo", color = CinzaRaj, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp))
                 AcaoRaj(
                     if (zipando) "Preparando o .zip..." else "Compartilhar .zip",
                     if (pacote.pronto()) null else if (pacote.previaFalhou()) "Indisponível sem as prévias" else "Espere as prévias carregarem",

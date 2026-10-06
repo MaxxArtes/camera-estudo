@@ -1605,9 +1605,10 @@ object DoisSensores {
             "tentativas" to NUM, "exp_ns" to NUM, "iso" to NUM, "ois" to NUM, "nr" to NUM, "edge" to NUM, "ae_travado" to BOOL, "af_fixo" to BOOL,
             "max_res_disp" to BOOL, "normal" to BOOL, "gravou" to BOOL, "ms_gravar" to NUM
         ),
-        "rajada_compartilhar" to mapOf("rodada" to RODADA, "arquivos" to NUM, "bytes" to NUM),
+        "rajada_compartilhar" to mapOf("rodada" to RODADA, "arquivos" to NUM, "bytes" to NUM,
+            "destino" to conj("downloads", "interno"), "ms_zip" to NUM, "reaproveitado" to BOOL),
         "erro:rajada" to mapOf(
-            "onde" to conj("rajada"), "acao" to conj("apagar", "revisar", "zip", "compartilhar"),
+            "onde" to conj("rajada"), "acao" to conj("apagar", "revisar", "zip", "compartilhar", "zip_downloads", "limpa_downloads"),
             "motivo" to conj("pasta_invalida", "arquivo_sumiu", "lista_mudou"), "classe" to CLASSE
         ),
         "erro:dois_compartilhar" to mapOf(

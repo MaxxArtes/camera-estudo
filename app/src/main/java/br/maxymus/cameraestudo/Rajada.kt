@@ -1,6 +1,9 @@
 package br.maxymus.cameraestudo
 
 import android.content.ClipData
+import android.content.ContentResolver
+import android.content.ContentUris
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -19,7 +22,11 @@ import android.hardware.camera2.DngCreator
 import android.hardware.camera2.TotalCaptureResult
 import android.media.Image
 import android.media.ImageReader
+import android.net.Uri
 import android.os.Build
+import android.os.Bundle
+import android.os.Environment
+import android.provider.MediaStore
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
@@ -53,6 +60,7 @@ import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.OutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.text.SimpleDateFormat
@@ -933,7 +941,16 @@ object Rajada {
     }
 
     /** Apaga temporárias órfãs (gravação que o processo não terminou), menos a da rodada viva. */
-    suspend fun limparTemporarias(ctx: Context) { travaArquivos.withLock { limparTemporariasSemTrava(ctx, ativa?.id) } }
+    suspend fun limparTemporarias(ctx: Context) { travaArquivos.withLock {
+        limparTemporariasSemTrava(ctx, ativa?.id)
+        if (Build.VERSION.SDK_INT >= 29) {
+            try {
+                val antiga = raizZip(ctx)
+                if (antiga.exists() && !antiga.deleteRecursively()) throw java.io.IOException("limpar_zip_interno")
+            } catch (x: Exception) { erroDownloads("limpa_downloads", x) }
+            limparDownloads(ctx)
+        }
+    } }
 
     private fun limparTemporariasSemTrava(ctx: Context, viva: String?) {
         raiz(ctx).listFiles()?.filter { it.isDirectory && it.name.startsWith(TMP) && it.name != TMP + viva }?.forEach {
@@ -1125,12 +1142,33 @@ object Rajada {
     private fun podar(ctx: Context) {
         val pastas = raiz(ctx).listFiles()?.filter { it.isDirectory && !it.name.startsWith(TMP) }?.sortedByDescending { it.name } ?: return
         for (velha in pastas.drop(GUARDAR)) try { velha.deleteRecursively() } catch (x: Exception) { }
+        if (Build.VERSION.SDK_INT >= 29) limparDownloads(ctx)
     }
 
-    /** Rajada mais nova gravada (com meta.json). Rodar em IO. */
-    fun ultimaPasta(ctx: Context): File? = try {
-        raiz(ctx).listFiles()?.filter { it.isDirectory && !it.name.startsWith(TMP) && File(it, "meta.json").isFile }?.maxByOrNull { it.name }
-    } catch (x: Exception) { null }
+    class Guardada(val pasta: File, val quando: String, val modo: String, val bytes: Long) {
+        val linha: String get() = "$quando · $modo · %.1f MB".format(bytes / 1048576.0)
+    }
+
+    private fun quandoPasta(pasta: File): String = try {
+        SimpleDateFormat("dd/MM HH:mm:ss", Locale.getDefault()).format(
+            SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).parse(pasta.name.substringBeforeLast('_')) ?: Date(pasta.lastModified()))
+    } catch (x: Exception) { "?" }
+
+    /** Pastas definitivas, inclusive com meta ilegível. Leitura em IO, protegida contra rotação e exclusão. */
+    suspend fun guardadas(ctx: Context): List<Guardada> = travaArquivos.withLock {
+        raiz(ctx).listFiles()?.filter { it.isDirectory && !it.name.startsWith(TMP) }
+            ?.sortedByDescending { it.name }?.take(GUARDAR)?.map { pasta ->
+                val modo = try {
+                    when (Modo.de(JSONObject(File(pasta, "meta.json").readText()).optString("modo"))) {
+                        Modo.PROCESSADA -> "Processada"
+                        Modo.SEM_PROCESSAMENTO -> "Sem processamento"
+                        Modo.RAW -> "RAW (DNG)"
+                        null -> "modo ?"
+                    }
+                } catch (x: Exception) { "modo ?" }
+                Guardada(pasta, quandoPasta(pasta), modo, anexos(ctx, pasta)?.sumOf { it.length() } ?: 0L)
+            }.orEmpty()
+    }
 
     /** "Apagar esta rajada": só filha direta de files/rajada pelo caminho canônico. Leva junto o .zip, se houver. */
     suspend fun apagar(ctx: Context, pasta: File): Boolean = travaArquivos.withLock {
@@ -1138,7 +1176,8 @@ object Rajada {
             val p = pasta.canonicalFile
             p.parentFile == raiz(ctx).canonicalFile && !p.name.startsWith(TMP) && p.isDirectory && p.deleteRecursively()
         } catch (x: Exception) { false }
-        try { raizZip(ctx).listFiles()?.forEach { it.delete() } } catch (x: Exception) { }
+        if (Build.VERSION.SDK_INT >= 29) limparDownloads(ctx)
+        else try { raizZip(ctx).listFiles()?.forEach { it.delete() } } catch (x: Exception) { }
         if (!ok) DoisSensores.ev("erro", linkedMapOf("onde" to "rajada", "acao" to "apagar", "motivo" to "pasta_invalida"))
         ok
     }
@@ -1190,10 +1229,7 @@ object Rajada {
                 }
                 decodifica(a, 320)?.let { Miniatura(rotulo, it) }
             }
-            val quando = try {
-                SimpleDateFormat("dd/MM HH:mm:ss", Locale.getDefault()).format(
-                    SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).parse(pasta.name.substringBeforeLast('_')) ?: Date(pasta.lastModified()))
-            } catch (x: Exception) { "?" }
+            val quando = quandoPasta(pasta)
             Pacote(pasta, pasta.name.substringAfterLast('_'), quando, minis, lista, imagens.size)
         }
     } catch (x: Exception) {
@@ -1224,44 +1260,132 @@ object Rajada {
         }
     }
 
-    /**
-     * Monta o .zip em files/rajada_zip (a única raiz do FileProvider para a rajada) com a MESMA lista que a revisão mostrou.
-     * Lista diferente ou arquivo sumido: não monta. Só um .zip existe por vez. Rodar em IO.
-     */
-    suspend fun montarZip(ctx: Context, pc: Pacote): File? = travaArquivos.withLock {
+    private val CAMINHO_DOWNLOADS = Environment.DIRECTORY_DOWNLOADS + "/Câmera Estudo"
+    private val NOME_ZIP_DOWNLOADS = Regex("""^rajada_(\d{8}_\d{6}_[0-9a-f]+)(?: \(\d+\))?\.zip$""")
+    private class EntradaZip(val uri: Uri, val pasta: String, val pendente: Boolean, val bytes: Long)
+    class ZipPronto(val uri: Uri, val bytes: Long, val destino: String, val msZip: Long, val reaproveitado: Boolean)
+
+    private fun erroDownloads(acao: String, x: Exception) {
+        DoisSensores.ev("erro", linkedMapOf("onde" to "rajada", "acao" to acao, "classe" to x.javaClass.simpleName))
+    }
+
+    /** Só nossas entradas: sem permissão de armazenamento, incluindo as pendentes. Chamar com a trava, em API 29+. */
+    @Suppress("DEPRECATION")
+    private fun entradasDownloads(ctx: Context): List<EntradaZip> {
+        val colecao = MediaStore.Downloads.EXTERNAL_CONTENT_URI
+        val campos = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DISPLAY_NAME,
+            MediaStore.MediaColumns.IS_PENDING, MediaStore.MediaColumns.SIZE)
+        // O MediaProvider normaliza RELATIVE_PATH acrescentando a barra final.
+        val selecao = "${MediaStore.MediaColumns.RELATIVE_PATH} IN (?, ?)"
+        val args = arrayOf(CAMINHO_DOWNLOADS, "$CAMINHO_DOWNLOADS/")
+        val cursor = if (Build.VERSION.SDK_INT >= 30) ctx.contentResolver.query(colecao, campos, Bundle().apply {
+            putString(ContentResolver.QUERY_ARG_SQL_SELECTION, selecao)
+            putStringArray(ContentResolver.QUERY_ARG_SQL_SELECTION_ARGS, args)
+            putInt(MediaStore.QUERY_ARG_MATCH_PENDING, MediaStore.MATCH_INCLUDE)
+        }, null) else ctx.contentResolver.query(MediaStore.setIncludePending(colecao), campos, selecao, args, null)
+        return (cursor ?: throw java.io.IOException("consulta_downloads")).use { c ->
+            buildList {
+                while (c.moveToNext()) {
+                    val nome = c.getString(1) ?: continue
+                    val pasta = NOME_ZIP_DOWNLOADS.matchEntire(nome)?.groupValues?.get(1) ?: continue
+                    add(EntradaZip(ContentUris.withAppendedId(colecao, c.getLong(0)), pasta, c.getInt(2) != 0, c.getLong(3)))
+                }
+            }
+        }
+    }
+
+    /** Um zip publicado só sai quando não há mais sua pasta. Pendentes órfãs seguem a mesma regra. Com a trava. */
+    private fun limparDownloads(ctx: Context) {
+        try {
+            val raiz = raiz(ctx)
+            val pastas = if (!raiz.exists()) emptySet() else
+                (raiz.listFiles() ?: throw java.io.IOException("listar_rajadas"))
+                    .filter { it.isDirectory && !it.name.startsWith(TMP) }.map { it.name }.toSet()
+            for (entrada in entradasDownloads(ctx)) if (entrada.pasta !in pastas) {
+                try { ctx.contentResolver.delete(entrada.uri, null, null) }
+                catch (x: Exception) { erroDownloads("limpa_downloads", x) }
+            }
+        } catch (x: Exception) { erroDownloads("limpa_downloads", x) }
+    }
+
+    private fun escreverZip(saida: OutputStream, nome: String, arquivos: List<File>) {
+        ZipOutputStream(BufferedOutputStream(saida, 1 shl 16)).use { z ->
+            z.setLevel(Deflater.BEST_SPEED)   // PNG e JPEG já vêm comprimidos; o DNG é grande e o tempo pesa mais que o tamanho
+            val buf = ByteArray(1 shl 16)
+            for (a in arquivos) {
+                z.putNextEntry(ZipEntry(nome + "/" + a.name))
+                a.inputStream().use { inp -> while (true) { val n = inp.read(buf); if (n < 0) break; z.write(buf, 0, n) } }
+                z.closeEntry()
+            }
+        }
+    }
+
+    /** Mesma lista fechada da revisão. API 26–28 conserva o zip interno e o FileProvider. Rodar em IO. */
+    suspend fun montarZip(ctx: Context, pc: Pacote): ZipPronto? = travaArquivos.withLock {
+        val inicio = SystemClock.elapsedRealtime()
+        val downloads = Build.VERSION.SDK_INT >= 29
+        var pendente: Uri? = null
         try {
             val agora = anexos(ctx, pc.pasta)
             if (agora == null || agora.map { it.name } != pc.anexos.map { it.name } || agora.any { !it.isFile }) {
                 DoisSensores.ev("erro", linkedMapOf("onde" to "rajada", "acao" to "zip", "motivo" to (if (agora == null) "arquivo_sumiu" else "lista_mudou")))
                 return@withLock null
             }
-            val dir = raizZip(ctx)
-            if (!dir.isDirectory && !dir.mkdirs()) throw java.io.IOException("mkdirs")
-            dir.listFiles()?.forEach { it.delete() }
             val nome = "rajada_" + pc.pasta.name
-            val tmp = File(dir, "$nome.parcial")
-            ZipOutputStream(BufferedOutputStream(FileOutputStream(tmp), 1 shl 16)).use { z ->
-                z.setLevel(Deflater.BEST_SPEED)   // PNG e JPEG já vêm comprimidos; o DNG é grande e o tempo pesa mais que o tamanho
-                val buf = ByteArray(1 shl 16)
-                for (a in agora) {
-                    z.putNextEntry(ZipEntry(nome + "/" + a.name))
-                    a.inputStream().use { inp -> while (true) { val n = inp.read(buf); if (n < 0) break; z.write(buf, 0, n) } }
-                    z.closeEntry()
+            if (downloads) {
+                val entradas = entradasDownloads(ctx).filter { it.pasta == pc.pasta.name }
+                val pronta = entradas.filter { !it.pendente && it.bytes > 0 }.maxByOrNull { it.bytes }
+                if (pronta != null) return@withLock ZipPronto(pronta.uri, pronta.bytes, "downloads", SystemClock.elapsedRealtime() - inicio, true)
+                val resolver = ctx.contentResolver
+                // Incompletas não são reutilizadas; uma falha ao apagar não impede criar a nova.
+                for (entrada in entradas) {
+                    try { resolver.delete(entrada.uri, null, null) }
+                    catch (x: Exception) { erroDownloads("limpa_downloads", x) }
                 }
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, ContentValues().apply {
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, CAMINHO_DOWNLOADS)
+                    put(MediaStore.MediaColumns.DISPLAY_NAME, "$nome.zip")
+                    put(MediaStore.MediaColumns.MIME_TYPE, "application/zip")
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }) ?: throw java.io.IOException("inserir_downloads")
+                pendente = uri
+                val nomeReal = resolver.query(uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                    if (c.moveToFirst()) c.getString(0) else null
+                } ?: throw java.io.IOException("nome_downloads")
+                if (NOME_ZIP_DOWNLOADS.matchEntire(nomeReal)?.groupValues?.get(1) != pc.pasta.name)
+                    throw java.io.IOException("nome_downloads_invalido")
+                escreverZip(resolver.openOutputStream(uri, "wt") ?: throw java.io.IOException("abrir_downloads"), nome, agora)
+                // O stream (inclusive o diretório final do ZIP) já foi fechado antes de publicar.
+                val bytes = resolver.openFileDescriptor(uri, "r")?.use { it.statSize } ?: throw java.io.IOException("tamanho_downloads")
+                if (bytes <= 0) throw java.io.IOException("zip_vazio")
+                if (resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null) != 1)
+                    throw java.io.IOException("publicar_downloads")
+                pendente = null
+                ZipPronto(uri, bytes, "downloads", SystemClock.elapsedRealtime() - inicio, false)
+            } else {
+                val dir = raizZip(ctx)
+                if (!dir.isDirectory && !dir.mkdirs()) throw java.io.IOException("mkdirs")
+                dir.listFiles()?.forEach { it.delete() }
+                val tmp = File(dir, "$nome.parcial")
+                escreverZip(FileOutputStream(tmp), nome, agora)
+                val zip = File(dir, "$nome.zip")
+                if (!tmp.renameTo(zip)) { tmp.delete(); throw java.io.IOException("renomear") }
+                ZipPronto(FileProvider.getUriForFile(ctx, ctx.packageName + ".arquivos", zip), zip.length(), "interno", SystemClock.elapsedRealtime() - inicio, false)
             }
-            val zip = File(dir, "$nome.zip")
-            if (!tmp.renameTo(zip)) { tmp.delete(); throw java.io.IOException("renomear") }
-            zip
         } catch (x: Exception) {
-            DoisSensores.ev("erro", linkedMapOf("onde" to "rajada", "acao" to "zip", "classe" to x.javaClass.simpleName))
+            DoisSensores.ev("erro", linkedMapOf("onde" to "rajada", "acao" to (if (downloads) "zip_downloads" else "zip"), "classe" to x.javaClass.simpleName))
             null
+        } finally {
+            pendente?.let { uri ->
+                try { ctx.contentResolver.delete(uri, null, null) }
+                catch (x: Exception) { erroDownloads("limpa_downloads", x) }
+            }
         }
     }
 
-    /** Envia o .zip pelo FileProvider, com concessão só de leitura. Só por toque do dono, depois da revisão. */
-    fun compartilharZip(ctx: Context, zip: File, rodada: String, arquivos: Int) {
+    /** Envia a URI do .zip, com concessão só de leitura. Só por toque do dono, depois da revisão. */
+    fun compartilharZip(ctx: Context, uri: Uri, rodada: String, arquivos: Int, bytes: Long, destino: String, msZip: Long, reaproveitado: Boolean) {
         try {
-            val uri = FileProvider.getUriForFile(ctx, ctx.packageName + ".arquivos", zip)
             val envio = Intent(Intent.ACTION_SEND).apply {
                 type = "application/zip"
                 putExtra(Intent.EXTRA_STREAM, uri)
@@ -1269,7 +1393,8 @@ object Rajada {
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             ctx.startActivity(Intent.createChooser(envio, "Rajada de teste").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION))
-            DoisSensores.ev("rajada_compartilhar", linkedMapOf("rodada" to rodada, "arquivos" to arquivos, "bytes" to zip.length()))
+            DoisSensores.ev("rajada_compartilhar", linkedMapOf("rodada" to rodada, "arquivos" to arquivos, "bytes" to bytes,
+                "destino" to destino, "ms_zip" to msZip, "reaproveitado" to reaproveitado))
         } catch (x: Exception) {
             DoisSensores.ev("erro", linkedMapOf("onde" to "rajada", "acao" to "compartilhar", "classe" to x.javaClass.simpleName))
             Toast.makeText(ctx, "Não consegui compartilhar a rajada: ${x.javaClass.simpleName}", Toast.LENGTH_LONG).show()
