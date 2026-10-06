@@ -319,12 +319,16 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var rajadaFase by remember { mutableStateOf<String?>(null) }
     var rajadaCancelando by remember { mutableStateOf(false) }
     var dialogoRajada by remember { mutableStateOf(false) }
-    var ultimaRajada by remember { mutableStateOf<java.io.File?>(null) }
+    var rajadasGuardadas by remember { mutableStateOf<List<Rajada.Guardada>>(emptyList()) }
+    var listaRajadas by remember { mutableStateOf(false) }
+    var salvoDownloadsRajada by remember { mutableStateOf(false) }
     var resultadoRajada by remember { mutableStateOf<Rajada.Resultado?>(null) }
     var rajadaCameraNaoVoltou by remember { mutableStateOf(false) }
     var revisaoRajada by remember { mutableStateOf(false) }
+    var pastaRevisaoRajada by remember { mutableStateOf<java.io.File?>(null) }
     var pacoteRajada by remember { mutableStateOf<Rajada.Pacote?>(null) }
     var carregandoRajada by remember { mutableStateOf(false) }
+    var leituraRajada by remember { mutableStateOf<Job?>(null) }
     var zipandoRajada by remember { mutableStateOf(false) }
     // 0.81: o modo da rajada (processada, sem processamento, RAW) e o que o aparelho oferece, lidos ao abrir a explicação
     var modoRajada by remember { mutableStateOf(Rajada.Modo.PROCESSADA) }
@@ -1142,13 +1146,13 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     // ---- rajada de teste (0.80): entrada, orquestração e saídas ----
 
     /**
-     * Item "Rajada de teste" da gaveta: limpa temporárias órfãs, procura em IO a última rajada, lê sem abrir a câmera quais
+     * Item "Rajada de teste" da gaveta: limpa temporárias órfãs, lê em IO as rajadas guardadas, lê sem abrir a câmera quais
      * modos o aparelho oferece e o modo guardado, e abre a explicação.
      */
     fun abrirRajada() {
         gaveta = false
         escopo.launch {
-            ultimaRajada = withContext(Dispatchers.IO) { Rajada.limparTemporarias(contexto); Rajada.ultimaPasta(contexto) }
+            rajadasGuardadas = withContext(Dispatchers.IO) { Rajada.limparTemporarias(contexto); Rajada.guardadas(contexto) }
             val disp = withContext(Dispatchers.IO) { Rajada.disponibilidade(contexto) }
             dispRajada = disp
             modoRajada = Rajada.modoGuardado(contexto, disp)
@@ -1250,7 +1254,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             vigiarVoltaRajada()
             rajadaFase = null; rajadaCancelando = false
             resultadoRajada = res
-            res?.pasta?.let { ultimaRajada = it }
+            if (res?.pasta != null) rajadasGuardadas = withContext(Dispatchers.IO) { Rajada.guardadas(contexto) }
         }
     }
 
@@ -1289,8 +1293,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
 
     /** "Ver e compartilhar": a revisão (miniaturas e lista exata) vem antes de qualquer envio. */
     fun abrirRevisaoRajada(pasta: java.io.File) {
-        revisaoRajada = true; pacoteRajada = null; carregandoRajada = true
-        escopo.launch {
+        leituraRajada?.cancel()
+        pastaRevisaoRajada = pasta
+        revisaoRajada = true; pacoteRajada = null; carregandoRajada = true; salvoDownloadsRajada = false
+        leituraRajada = escopo.launch {
             pacoteRajada = withContext(Dispatchers.IO) { Rajada.pacote(contexto, pasta) }
             carregandoRajada = false
         }
@@ -1300,19 +1306,37 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         if (zipandoRajada) return
         zipandoRajada = true
         escopo.launch {
-            val zip = withContext(Dispatchers.IO) { Rajada.montarZip(contexto, pc) }
-            zipandoRajada = false
-            if (zip == null) Toast.makeText(contexto, "Os arquivos da rajada mudaram ou sumiram; abra a revisão de novo.", Toast.LENGTH_LONG).show()
-            else Rajada.compartilharZip(contexto, zip, pc.rodada, pc.anexos.size)
+            try {
+                val zip = withContext(Dispatchers.IO) { Rajada.montarZip(contexto, pc) }
+                if (zip == null) Toast.makeText(contexto, "Não consegui preparar o .zip; confira o espaço livre e abra a revisão de novo.", Toast.LENGTH_LONG).show()
+                else {
+                    if (zip.destino == "downloads") {
+                        if (pacoteRajada === pc) salvoDownloadsRajada = true
+                        Toast.makeText(contexto, "Salvo em Downloads/Câmera Estudo", Toast.LENGTH_LONG).show()
+                        // Dá à revisão tempo de desenhar o aviso antes de abrir o seletor externo.
+                        androidx.compose.runtime.withFrameNanos { }
+                        androidx.compose.runtime.withFrameNanos { }
+                    }
+                    Rajada.compartilharZip(contexto, zip.uri, pc.rodada, pc.anexos.size, zip.bytes, zip.destino, zip.msZip, zip.reaproveitado)
+                }
+            } finally { zipandoRajada = false }
         }
     }
 
     fun apagarRajada(pasta: java.io.File) {
         escopo.launch {
-            val ok = Rajada.apagar(contexto, pasta)
+            val ok = withContext(Dispatchers.IO) { Rajada.apagar(contexto, pasta) }
+            rajadasGuardadas = withContext(Dispatchers.IO) { Rajada.guardadas(contexto) }
+            if (rajadasGuardadas.isEmpty()) listaRajadas = false
             if (ok) {
-                resultadoRajada = null; revisaoRajada = false; pacoteRajada = null; carregandoRajada = false
-                ultimaRajada = withContext(Dispatchers.IO) { Rajada.ultimaPasta(contexto) }
+                val mesmaPasta = runCatching { pastaRevisaoRajada?.canonicalPath == pasta.canonicalPath }.getOrDefault(false)
+                if (revisaoRajada && mesmaPasta) {
+                    leituraRajada?.cancel()
+                    revisaoRajada = false; pacoteRajada = null; carregandoRajada = false
+                    pastaRevisaoRajada = null; salvoDownloadsRajada = false
+                }
+                resultadoRajada = null
+                listaRajadas = rajadasGuardadas.isNotEmpty() && !revisaoRajada
                 Toast.makeText(contexto, "Rajada apagada.", Toast.LENGTH_SHORT).show()
             } else Toast.makeText(contexto, "Não consegui apagar a rajada.", Toast.LENGTH_SHORT).show()
         }
@@ -1760,7 +1784,7 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             aoFechar = { escolhaSensores = false }
         )
         if (dialogoRajada) DialogoRajada(
-            temUltima = ultimaRajada != null,
+            temGuardadas = rajadasGuardadas.isNotEmpty(),
             modo = modoRajada, disponibilidade = dispRajada,
             aoEscolherModo = { m -> modoRajada = m; Rajada.guardarModo(contexto, m) },
             aviso = when {
@@ -1769,11 +1793,16 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
                 else -> null
             },
             aoIniciar = { iniciarRajada() },
-            aoVerUltima = { dialogoRajada = false; ultimaRajada?.let { abrirRevisaoRajada(it) } },
+            aoVerGuardadas = { dialogoRajada = false; resultadoRajada = null; listaRajadas = true },
             aoFechar = { dialogoRajada = false }
         )
+        if (listaRajadas && !revisaoRajada) DialogoRajadasGuardadas(
+            rajadas = rajadasGuardadas,
+            aoVer = { abrirRevisaoRajada(it) },
+            aoFechar = { listaRajadas = false }
+        )
         val resRaj = resultadoRajada
-        if (resRaj != null && !rajadaEmCurso && !revisaoRajada) DialogoResultadoRajada(
+        if (resRaj != null && !rajadaEmCurso && !revisaoRajada && !listaRajadas) DialogoResultadoRajada(
             res = resRaj, cameraNaoVoltou = rajadaCameraNaoVoltou,
             aoReabrir = { reabrirDepoisDaRajada() },
             aoVer = { resRaj.pasta?.let { abrirRevisaoRajada(it) } },
@@ -1781,9 +1810,9 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             aoFechar = { resultadoRajada = null }
         )
         if (revisaoRajada) DialogoRevisaoRajada(
-            pacote = pacoteRajada, carregando = carregandoRajada, zipando = zipandoRajada,
+            pacote = pacoteRajada, carregando = carregandoRajada, zipando = zipandoRajada, salvoDownloads = salvoDownloadsRajada,
             aoCompartilhar = { pc -> compartilharRajada(pc) }, aoApagar = { pc -> apagarRajada(pc.pasta) },
-            aoFechar = { revisaoRajada = false; pacoteRajada = null }
+            aoFechar = { leituraRajada?.cancel(); revisaoRajada = false; pacoteRajada = null; carregandoRajada = false }
         )
         // o resultado abre depois que a câmera voltou (a devolução é uma fase do teste); se ela não voltar, ele abre assim
         // mesmo, com "Reabrir câmera", porque a resposta sobre os sensores não depende disso
