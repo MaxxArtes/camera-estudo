@@ -326,6 +326,9 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
     var pacoteRajada by remember { mutableStateOf<Rajada.Pacote?>(null) }
     var carregandoRajada by remember { mutableStateOf(false) }
     var zipandoRajada by remember { mutableStateOf(false) }
+    // 0.81: o modo da rajada (processada, sem processamento, RAW) e o que o aparelho oferece, lidos ao abrir a explicação
+    var modoRajada by remember { mutableStateOf(Rajada.Modo.PROCESSADA) }
+    var dispRajada by remember { mutableStateOf<Map<Rajada.Modo, Rajada.Disponibilidade>>(emptyMap()) }
     val prontaAtualizacao by Atualizador.pronta.collectAsState()
 
     // Ao abrir: consulta o canal de atualização em segundo plano (falha em silêncio se estiver sem rede).
@@ -1138,11 +1141,17 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
 
     // ---- rajada de teste (0.80): entrada, orquestração e saídas ----
 
-    /** Item "Rajada de teste" da gaveta: limpa temporárias órfãs, procura em IO a última rajada e abre a explicação. */
+    /**
+     * Item "Rajada de teste" da gaveta: limpa temporárias órfãs, procura em IO a última rajada, lê sem abrir a câmera quais
+     * modos o aparelho oferece e o modo guardado, e abre a explicação.
+     */
     fun abrirRajada() {
         gaveta = false
         escopo.launch {
             ultimaRajada = withContext(Dispatchers.IO) { Rajada.limparTemporarias(contexto); Rajada.ultimaPasta(contexto) }
+            val disp = withContext(Dispatchers.IO) { Rajada.disponibilidade(contexto) }
+            dispRajada = disp
+            modoRajada = Rajada.modoGuardado(contexto, disp)
             dialogoRajada = true
         }
     }
@@ -1204,9 +1213,10 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             if (!fechou) { res = Rajada.cameraxNaoFechou(rod); return }
             if (rod.cancelada) { res = Rajada.cancelada(rod, null); return }
             val app = contexto.applicationContext
-            val c = withContext(Dispatchers.Default) { Rajada.capturar(app, rod) { f -> escopo.launch { if (!rajadaCancelando) rajadaFase = f } } }
+            // no RAW, os DNG são gravados na temporária dentro de capturar, com a câmera ainda aberta
+            val c = withContext(Dispatchers.Default) { Rajada.capturar(app, rod, tmp) { f -> escopo.launch { if (!rajadaCancelando) rajadaFase = f } } }
             cap = c
-            if (c.resultado != "ok" && c.resultado != "variou") { res = Rajada.semQuadros(rod, c); return }
+            if (!Rajada.salvavel(c.resultado)) { res = Rajada.semQuadros(rod, c); return }
             // Só o onClosed libera o CameraX; sem ele, grava os quadros sem a foto normal.
             rod.etapa = "devolver"; rajadaFase = "Devolvendo a câmera."
             ligando = true
@@ -1257,10 +1267,11 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
             ocupado || processandoDoc || processandoRetrato || processandoAcabamento || processandoLenta -> "Espere a foto terminar de processar."
             contagem > 0 -> "Espere o temporizador terminar."
             ligando || camera == null -> "A câmera ainda está abrindo; tente de novo em instantes."
+            dispRajada[modoRajada]?.ok == false -> "Este aparelho não oferece o modo escolhido."
             else -> null
         }
         if (recusa != null) { Toast.makeText(contexto, recusa, Toast.LENGTH_SHORT).show(); return }
-        val rod = Rajada.novaRodada()
+        val rod = Rajada.novaRodada(modoRajada)
         rajadaCancelando = false; rajadaCameraNaoVoltou = false
         resultadoRajada = null; rajadaFase = "Preparando."
         // UNDISPATCHED: entra no try/finally do orquestrador já dentro deste toque, como no teste de dois sensores
@@ -1750,6 +1761,8 @@ fun CameraScreen(abrirGaleria: () -> Unit) {
         )
         if (dialogoRajada) DialogoRajada(
             temUltima = ultimaRajada != null,
+            modo = modoRajada, disponibilidade = dispRajada,
+            aoEscolherModo = { m -> modoRajada = m; Rajada.guardarModo(contexto, m) },
             aviso = when {
                 modo != Modo.FOTO -> "Antes, mude para o modo Foto."
                 lente == CameraSelector.LENS_FACING_FRONT -> "Antes, troque para a câmera traseira."
