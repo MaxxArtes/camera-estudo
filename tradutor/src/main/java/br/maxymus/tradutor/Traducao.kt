@@ -78,6 +78,7 @@ object Traducao {
     private const val NIVEL_MODELO = 2
 
     private val cache = ConcurrentHashMap<String, Entrada>()
+    private val ecos = RegistroEcos()
 
     /**
      * O que está sendo pedido AGORA, por chave do cache. O pré-carregamento do modo contínuo e o toque podiam pedir a
@@ -122,7 +123,12 @@ object Traducao {
     private fun guardar(chave: String, texto: String, nivel: Int): Gravado {
         // Máquina e offline devolvem o próprio original quando não sabem traduzir; isso não é tradução e não pode ficar
         // no cache, senão o leitor recebe o original de volta para sempre. Do modelo, igual ao original é decisão e fica.
-        if (nivel < NIVEL_MODELO && normalizar(texto) == chave.substringAfter('|')) return Gravado(Entrada(texto, nivel), false)
+        if (nivel < NIVEL_MODELO && normalizar(texto) == chave.substringAfter('|')) {
+            val melhor = cache[chave]?.takeIf { it.nivel > nivel }
+            if (melhor == null) ecos.registrar(chave) else ecos.remover(chave)
+            return Gravado(melhor ?: Entrada(texto, nivel), false)
+        }
+        ecos.remover(chave)
         var mudou = false
         val efetiva = cache.compute(chave) { _, atual ->
             if (atual != null && nivel < atual.nivel) atual
@@ -252,9 +258,9 @@ object Traducao {
      * de puladas era sobrescrito pelo pré-carregamento ao mesmo tempo; revisão do Astra, 04/10).
      */
     fun traduzirLote(
-        ctx: Context, textos: List<String>, puladasDoPedido: MutableSet<String>? = null, ativo: () -> Boolean = { true }
+        ctx: Context, textos: List<String>, puladasDoPedido: MutableSet<String>? = null, automatico: Boolean = false, ativo: () -> Boolean = { true }
     ): Map<String, String> {
-        val r = traduzirLoteDetalhado(ctx, textos, ativo = ativo)
+        val r = traduzirLoteDetalhado(ctx, textos, automatico = automatico, ativo = ativo)
         puladasDoPedido?.addAll(r.puladas)
         return r.mapa
     }
@@ -282,7 +288,7 @@ object Traducao {
      *    cedo quando ela é falsa. Só se PARA de esperar: o futuro compartilhado nunca é cancelado.
      */
     fun traduzirLoteDetalhado(
-        ctx: Context, textos: List<String>, destinoDoPedido: String? = null, ignorarCache: Boolean = false, ativo: () -> Boolean = { true }
+        ctx: Context, textos: List<String>, destinoDoPedido: String? = null, ignorarCache: Boolean = false, automatico: Boolean = false, ativo: () -> Boolean = { true }
     ): ResultadoLote {
         val t0 = System.nanoTime()
         val dest = destinoDoPedido ?: destino
@@ -311,6 +317,10 @@ object Traducao {
                 val k = chave(t, dest)
                 if (k in minhas) continue      // outra grafia de uma fala que eu já peço: sai com o resultado dela
                 if (ignorarCache) cache.remove(k)
+                if (ecos.bloqueia(k, explicito = !automatico || ignorarCache) && cache[k] == null) {
+                    p.saida[t] = t
+                    continue
+                }
                 val r = Coordenacao.consultarOuReservar(k, { cache[it] }, emAndamento)
                 val pronta = r.pronta
                 when {
@@ -1249,3 +1259,35 @@ internal fun <V> lruPequeno(max: Int): MutableMap<String, V> =
     java.util.Collections.synchronizedMap(object : LinkedHashMap<String, V>(64, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, V>?): Boolean = size > max
     })
+
+/** Ecos automáticos descansam dez minutos; o toque pode tentar na hora. */
+internal class RegistroEcos(private val agora: () -> Long = { System.nanoTime() / 1_000_000 }) {
+    private val falhas = LinkedHashMap<String, Long>()
+    @Synchronized fun registrar(chave: String) {
+        falhas.remove(chave)
+        falhas[chave] = agora()
+        if (falhas.size > 500) falhas.remove(falhas.keys.first())
+    }
+    @Synchronized fun remover(chave: String) { falhas.remove(chave) }
+    @Synchronized fun bloqueia(chave: String, explicito: Boolean = false): Boolean {
+        if (explicito) return false
+        val instante = falhas[chave] ?: return false
+        if (agora() - instante < 600_000L) return true
+        falhas.remove(chave)
+        return false
+    }
+}
+
+/** Duas fichas de reserva; uma nova a cada quinze segundos. */
+internal class BaldePreparo(private val agora: () -> Long = { System.nanoTime() / 1_000_000 }) {
+    private var fichas = 2.0
+    private var ultimo = agora()
+    @Synchronized fun esperaMs(explicito: Boolean = false): Long {
+        if (explicito) return 0
+        val instante = agora()
+        fichas = minOf(2.0, fichas + maxOf(0L, instante - ultimo) / 15_000.0)
+        ultimo = instante
+        if (fichas >= 1.0) { fichas -= 1.0; return 0 }
+        return kotlin.math.ceil((1.0 - fichas) * 15_000).toLong()
+    }
+}
