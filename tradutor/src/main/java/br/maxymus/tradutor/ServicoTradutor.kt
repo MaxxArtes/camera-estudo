@@ -102,6 +102,11 @@ class ServicoTradutor : AccessibilityService() {
     private var ultimaCorrecao = 0
     private var jobRevisao: kotlinx.coroutines.Job? = null
     private var jobPreparo: kotlinx.coroutines.Job? = null
+    private val baldePreparo = BaldePreparo()
+    private var jobFicha: kotlinx.coroutines.Job? = null
+    private var preparoAdiado = false
+    private var adiamentos = 0
+    private var ultimoAdiamento = Long.MIN_VALUE
     private var continuo = false          // sobreposição que acompanha a rolagem, em vez da tela congelada
     private var fechar: View? = null      // o X, janela própria porque a camada não recebe toque
     private var menu: View? = null
@@ -213,21 +218,49 @@ class ServicoTradutor : AccessibilityService() {
     }
 
     private suspend fun preparaEmSilencio() {
-        if (LeitorActivity.visivel || !Traducao.temRede(this)) return
+        if (LeitorActivity.visivel || trabalhando || continuo || !Traducao.temRede(this)) return
         bolha?.visibility = View.INVISIBLE
         kotlinx.coroutines.delay(90)
         val tela = captura()
         bolha?.visibility = View.VISIBLE
-        if (tela == null) return
+        if (tela == null || trabalhando || continuo || LeitorActivity.visivel) return
         val assinatura = assinaturaDe(tela)
         if (assinatura == ultimaAssinatura) return           // tela igual: nada novo para adiantar
+        if (!admitePreparo()) return
         ultimaAssinatura = assinatura
+        val adiada = if (preparoAdiado) 1 else 0
+        preparoAdiado = false
         val t0 = System.nanoTime()
         val n = withContext(Dispatchers.Default) {
             val falas = Falas.ler(tela, (tela.height * 0.11f).toInt(), (tela.height * 0.96f).toInt())
-            if (falas.isEmpty() || LeitorActivity.visivel) 0 else { Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto }, ativo = { isActive && !LeitorActivity.visivel }); falas.size }
+            if (falas.isEmpty() || LeitorActivity.visivel) 0 else { Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto }, automatico = true, ativo = { isActive && !LeitorActivity.visivel }); falas.size }
         }
-        if (n > 0) Telemetria.evento("preparou", mapOf("falas" to n, "ms" to (System.nanoTime() - t0) / 1_000_000, "cache" to Traducao.noCache))
+        if (n > 0) Telemetria.evento("preparou", mapOf("adiada" to adiada, "falas" to n, "ms" to (System.nanoTime() - t0) / 1_000_000, "cache" to Traducao.noCache))
+    }
+
+    /** Uma pendência só: na próxima ficha captura a tela mais recente. */
+    private fun admitePreparo(explicito: Boolean = false): Boolean {
+        val espera = baldePreparo.esperaMs(explicito)
+        if (espera == 0L) {
+            jobFicha?.cancel(); jobFicha = null
+            return true
+        }
+        preparoAdiado = true
+        adiamentos++
+        val agora = System.nanoTime() / 1_000_000
+        if (ultimoAdiamento == Long.MIN_VALUE || agora - ultimoAdiamento >= 60_000) {
+            Telemetria.evento("preparo_adiado", mapOf("contagem" to adiamentos))
+            adiamentos = 0; ultimoAdiamento = agora
+        }
+        if (jobFicha?.isActive != true) jobFicha = escopo.launch {
+            kotlinx.coroutines.delay(espera)
+            while (trabalhando && !LeitorActivity.visivel) kotlinx.coroutines.delay(250)
+            jobFicha = null
+            if (LeitorActivity.visivel || (!continuo && !preparar)) return@launch
+            ultimaAssinatura = 0L
+            if (continuo) desenhaContinuo() else if (sobreposicao == null) preparaEmSilencio()
+        }
+        return false
     }
 
     /** Miniatura de 24x24 somada: barata o bastante para rodar sempre e detectar que a tela mudou. */
@@ -343,11 +376,13 @@ class ServicoTradutor : AccessibilityService() {
      */
     private fun iniciaContinuo() {
         if (camadaCongelada != null) tiraSobreposicao()   // as duas camadas não podem existir juntas; fechar também para a leitura
+        jobPreparo?.cancel(); jobPreparo = null
+        jobFicha?.cancel(); jobFicha = null
         continuo = true
         capturaPretaEmitida = false; capturaPretaNaoConfirmadaEmitida = false; assinaturaEscuraTratada = 0L
         mostraFechar()
         notificacao()
-        escopo.launch { desenhaContinuo() }
+        escopo.launch { desenhaContinuo(explicito = true) }
     }
 
     private fun encerraContinuo() {
@@ -357,7 +392,7 @@ class ServicoTradutor : AccessibilityService() {
         notificacao()
     }
 
-    private suspend fun desenhaContinuo() {
+    private suspend fun desenhaContinuo(explicito: Boolean = false) {
         if (LeitorActivity.visivel || !continuo || trabalhando) return
         trabalhando = true
         sobreposicao?.visibility = View.INVISIBLE
@@ -404,9 +439,10 @@ class ServicoTradutor : AccessibilityService() {
         val uteisConhecido = falas.filter { (conhecido[it.texto] ?: it.texto) != it.texto }
         if (uteisConhecido.isNotEmpty() && continuo && !LeitorActivity.visivel)
             mostraCamada(withContext(Dispatchers.Default) { Pintura.camada(tela, uteisConhecido) { conhecido[it] ?: it } })
+        // o contínuo traduz a tela que o dono está lendo: não passa pelo balde da pré-carga silenciosa
         val tTrad = System.nanoTime()
         // as medidas do pedido vêm no resultado dele: pré-carregamento e toque rodam ao mesmo tempo e não se misturam
-        val r = withContext(Dispatchers.Default) { Traducao.traduzirLoteDetalhado(this@ServicoTradutor, textos, ativo = { isActive && !LeitorActivity.visivel }) }
+        val r = withContext(Dispatchers.Default) { Traducao.traduzirLoteDetalhado(this@ServicoTradutor, textos, automatico = !explicito, ativo = { isActive && !LeitorActivity.visivel }) }
         val mapa = r.mapa
         val msT = (System.nanoTime() - tTrad) / 1_000_000
         trabalhando = false
@@ -724,6 +760,7 @@ class ServicoTradutor : AccessibilityService() {
                     "modelo" to (r.modelo ?: "-"), "puladas" to camada.falas.count { it.texto in r.puladas }, "und" to r.und,
                     "ms_modelo" to r.msModelo, "compartilhadas" to r.compartilhadas, "id" to r.idServidor,
                     "ms_ocr" to msOcr, "ms_trad" to msTrad, "ms_pint" to msPint))
+                if (LeitorActivity.visivel) { camada.camada.recycle(); return@launch }
                 mostraSobreposicao(tela, camada.camada, camada.pintadas)
                 agendaRevisaoCongelada(tela, camada.falas, referencia)
                 if (ouvir) ouvirCongelada(RegraVoz.BOLHA)
@@ -890,6 +927,7 @@ class ServicoTradutor : AccessibilityService() {
     private fun tiraCaixa() { caixaAviso?.let { runCatching { janelas.removeView(it) } }; caixaAviso = null }
 
     private fun mostraSobreposicao(tela: Bitmap, camada: Bitmap, pintadas: List<Pintada>) {
+        if (LeitorActivity.visivel) { camada.recycle(); return }
         tiraSobreposicao()
         congeladaPintadas = pintadas
         val caixa = FrameLayout(this)
