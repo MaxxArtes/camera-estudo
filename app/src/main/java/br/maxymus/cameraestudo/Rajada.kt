@@ -635,11 +635,12 @@ object Rajada {
                         override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) = guardaTentativa {
                             if (!e.valida) return@guardaTentativa
                             val m = metaDe(request.tag as? Int ?: -1, result)
+                            // o DngCreator precisa do resultado do MESMO quadro: guardado pelo SENSOR_TIMESTAMP ANTES do meta,
+                            // porque a espera olha os metas; ao ver o oitavo meta, o resultado dele já está guardado
+                            if (raw) m.ts?.let { ts -> synchronized(e.resultados) { if (e.valida) e.resultados[ts] = result } }
                             synchronized(e.metas) {
                                 if (e.valida && m.ordem in 0 until QUADROS && e.metas.none { it.ordem == m.ordem }) e.metas += m
                             }
-                            // o DngCreator precisa do resultado do MESMO quadro: guardado pelo SENSOR_TIMESTAMP
-                            if (raw) m.ts?.let { ts -> synchronized(e.resultados) { if (e.valida) e.resultados[ts] = result } }
                         }
                         override fun onCaptureFailed(session: CameraCaptureSession, request: CaptureRequest, failure: CaptureFailure) = guardaTentativa {
                             if (!e.valida) return@guardaTentativa
@@ -651,7 +652,8 @@ object Rajada {
                     pedido.duracaoMinNs = runCatching { mapa?.getOutputMinFrameDuration(formato, tam) }.getOrNull()
                     pedido.stallNs = runCatching { mapa?.getOutputStallDuration(formato, tam) }.getOrNull()
                     // RAW: maxImages = QUADROS, e as Image ficam presas no leitor até virarem DNG; sem o YUV grande
-                    val grande = ImageReader.newInstance(tam.width, tam.height, formato, QUADROS).also { leitores += it }
+                    // RAW retém os QUADROS até virarem DNG: 2 vagas de folga para o HAL nunca ficar sem buffer em voo
+                    val grande = ImageReader.newInstance(tam.width, tam.height, formato, if (raw) QUADROS + 2 else QUADROS).also { leitores += it }
                     val peq = ImageReader.newInstance(pequeno.width, pequeno.height, ImageFormat.YUV_420_888, 2).also { leitores += it }
                     if (raw) grande.setOnImageAvailableListener({ rd ->
                         guardaTentativa {
