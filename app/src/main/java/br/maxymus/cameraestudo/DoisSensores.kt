@@ -1594,10 +1594,13 @@ object DoisSensores {
             "motivo" to conj("marca_grande", "marca_ilegivel"), "classe" to CLASSE
         ),
         "erro:dois_arquivos" to mapOf("onde" to conj("dois_arquivos"), "acao" to conj("limpar"), "classe" to CLASSE),
-        // rajada de teste (0.80, Rajada.kt): só números e códigos, também aqui
+        // rajada de teste (0.80, Rajada.kt): só números e códigos, também aqui. 0.81: "modo" (0 processada, 1 sem_processamento,
+        // 2 raw), o resultado "modo_nao_aplicado" e a etapa "dng" (gravação dos DNG com a câmera aberta)
         "rajada_teste" to mapOf(
-            "rodada" to RODADA, "resultado" to conj("ok", "recusou_resolucao", "perdeu_camera", "cancelado", "erro", "camerax_nao_fechou", "sem_convergencia", "variou"), "classe" to CLASSE,
-            "etapa" to conj("inicio", "soltar", "caracteristicas", "abrir", "sessao", "3a", "rajada", "devolver", "normal", "gravar"),
+            "rodada" to RODADA, "modo" to NUM,
+            "resultado" to conj("ok", "recusou_resolucao", "perdeu_camera", "cancelado", "erro", "camerax_nao_fechou", "sem_convergencia", "variou", "modo_nao_aplicado"),
+            "classe" to CLASSE,
+            "etapa" to conj("inicio", "soltar", "caracteristicas", "abrir", "sessao", "3a", "rajada", "dng", "devolver", "normal", "gravar"),
             "quadros" to NUM, "ms_total" to NUM, "fps" to NUM, "largura" to NUM, "altura" to NUM, "largura_max" to NUM, "altura_max" to NUM,
             "tentativas" to NUM, "exp_ns" to NUM, "iso" to NUM, "ois" to NUM, "nr" to NUM, "edge" to NUM, "ae_travado" to BOOL, "af_fixo" to BOOL,
             "max_res_disp" to BOOL, "normal" to BOOL, "gravou" to BOOL, "ms_gravar" to NUM
