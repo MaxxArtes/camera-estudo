@@ -57,6 +57,11 @@ class ServicoTradutor : AccessibilityService() {
         val bolhaNaTela: Boolean get() = ativo?.bolha != null
         private const val CANAL = "tradutor"
         private const val AVISO = 1
+        // AccessibilityManager envia TYPE_VIEW_SCROLLED no máximo a cada 100 ms: 300 ms sem evento = parada.
+        private const val ESPERA_CONTINUO_MS = 300L
+        private const val ESPERA_PREPARO_MS = 700L
+        private const val CONSULTA_CONTINUO_MS = 50L
+        private const val CONSULTA_PREPARO_MS = 250L
         // ids próprios das ações de acessibilidade da bolha: o byte alto diferente de zero marca ação personalizada
         private const val ACAO_A11Y_MENU = 0x4F000001
         private const val ACAO_A11Y_OUVIR = 0x4F000002
@@ -113,6 +118,8 @@ class ServicoTradutor : AccessibilityService() {
     private var camadaCongelada: ImageView? = null   // a camada traduzida da tela congelada, para trocar quando chega correção do modelo
     private var jobRevisaoCongelada: kotlinx.coroutines.Job? = null
     private var adiantando = false
+    private var voltando = false
+    private var pararVolta = false
     private var bx = 0; private var by = 0
     private var caixaAviso: View? = null    // a caixa com mensagem e botões (captura escura, captura protegida), uma por vez
     // avisos já dados NESTA ativação do modo contínuo, para a suspeita de captura não repetir aviso nem evento a cada rolagem
@@ -133,6 +140,7 @@ class ServicoTradutor : AccessibilityService() {
         androidx.core.content.ContextCompat.registerReceiver(this, receptor, filtro, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         preparar = getSharedPreferences("tradutor", Context.MODE_PRIVATE).getBoolean("preparar", true)
         Traducao.carregarPreferencias(this)
+        Traducao.iniciarCacheDisco(this)
         mostraBolha()
         notificacao()
     }
@@ -147,6 +155,7 @@ class ServicoTradutor : AccessibilityService() {
         // serviço destruído: as esperas de toque e de pré-carregamento param (ativo = false nos laços), sem cancelar os
         // futuros compartilhados do coordenador, que terminam pelo próprio prazo
         escopo.cancel()
+        Traducao.descarregarCacheDisco()
         super.onDestroy()
     }
 
@@ -188,9 +197,9 @@ class ServicoTradutor : AccessibilityService() {
         if (!LeitorActivity.visivel && (continuo || preparar)) {
             jobPreparo = escopo.launch {
                 kotlinx.coroutines.delay(700)
-                if (LeitorActivity.visivel || trabalhando) return@launch
+                if (LeitorActivity.visivel || (!continuo && trabalhando)) return@launch
                 ultimaAssinatura = 0L
-                if (continuo) desenhaContinuo() else preparaEmSilencio()
+                if (continuo) desenhaQuandoQuieto() else preparaEmSilencio()
             }
         }
     }
@@ -207,12 +216,19 @@ class ServicoTradutor : AccessibilityService() {
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {
         if (LeitorActivity.visivel || e == null || (!preparar && !continuo)) return
         if (e.eventType != AccessibilityEvent.TYPE_VIEW_SCROLLED && e.eventType != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) return
-        ultimaRolagem = System.currentTimeMillis()
+        ultimaRolagem = SystemClock.elapsedRealtime()
         if (jobPreparo?.isActive == true) return
         jobPreparo = escopo.launch {
-            while (System.currentTimeMillis() - ultimaRolagem < 700) kotlinx.coroutines.delay(250)
+            if (continuo) {
+                desenhaQuandoQuieto()
+                return@launch
+            }
+            while (SystemClock.elapsedRealtime() - ultimaRolagem <
+                (if (continuo) ESPERA_CONTINUO_MS else ESPERA_PREPARO_MS)) {
+                kotlinx.coroutines.delay(if (continuo) CONSULTA_CONTINUO_MS else CONSULTA_PREPARO_MS)
+            }
             if (LeitorActivity.visivel || trabalhando) return@launch
-            if (continuo) desenhaContinuo()
+            if (continuo) desenhaContinuo(msEspera = SystemClock.elapsedRealtime() - ultimaRolagem)
             else if (preparar && sobreposicao == null) preparaEmSilencio()
         }
     }
@@ -332,7 +348,8 @@ class ServicoTradutor : AccessibilityService() {
                         p.x = if (p.x + lado / 2 < meio) dp(12) else resources.displayMetrics.widthPixels - lado - dp(12)
                         runCatching { janelas.updateViewLayout(v, p) }
                         bx = p.x; by = p.y
-                    } else if (adiantando) adiantando = false
+                    } else if (voltando) pararVolta = true
+                    else if (adiantando) adiantando = false
                     else if (System.currentTimeMillis() - descidaEm > 550) abreMenu()
                     else if (vozLazy.isInitialized() && voz.lendo) voz.parar(RegraVoz.TOQUE_BOLHA)   // durante a leitura o toque SÓ para a leitura
                     else if (continuo) encerraContinuo() else iniciaContinuo()
@@ -392,13 +409,60 @@ class ServicoTradutor : AccessibilityService() {
         notificacao()
     }
 
-    private suspend fun desenhaContinuo(explicito: Boolean = false) {
+    private suspend fun desenhaQuandoQuieto() {
+        do {
+            // Reconfere a quietude também enquanto outro desenho está em andamento.
+            while (trabalhando || SystemClock.elapsedRealtime() - ultimaRolagem < ESPERA_CONTINUO_MS) {
+                if (!continuo || LeitorActivity.visivel) return
+                kotlinx.coroutines.delay(CONSULTA_CONTINUO_MS)
+            }
+            if (!continuo || LeitorActivity.visivel) return
+            val marca = ultimaRolagem
+            desenhaContinuo(msEspera = SystemClock.elapsedRealtime() - marca)
+        } while (continuo && !LeitorActivity.visivel && ultimaRolagem != marca)
+    }
+
+    private suspend fun desenhaContinuo(explicito: Boolean = false, msEspera: Long = 0L) {
+        val rolagemCapturada = ultimaRolagem
         if (LeitorActivity.visivel || !continuo || trabalhando) return
+        val inicioContinuo = System.nanoTime()
+        var primeiraPintura: kotlinx.coroutines.CompletableDeferred<Long>? = null
+        fun medirPrimeiraPintura() {
+            if (primeiraPintura != null) return
+            val vista = sobreposicao ?: return
+            val medida = kotlinx.coroutines.CompletableDeferred<Long>()
+            primeiraPintura = medida
+            val observador = vista.viewTreeObserver
+            val ouvinte = object : android.view.ViewTreeObserver.OnDrawListener {
+                override fun onDraw() {
+                    if (vista.isShown && !medida.isCompleted) {
+                        val ms = (System.nanoTime() - inicioContinuo) / 1_000_000
+                        vista.post { medida.complete(ms) }
+                    }
+                }
+            }
+            observador.addOnDrawListener(ouvinte)
+            // Só observa a pintura: as duas passadas seguem sem esperar um quadro da interface.
+            escopo.launch {
+                try { kotlinx.coroutines.withTimeoutOrNull(1_000) { medida.await() } }
+                finally {
+                    vista.viewTreeObserver.let { if (it.isAlive) it.removeOnDrawListener(ouvinte) }
+                    if (observador.isAlive) observador.removeOnDrawListener(ouvinte)
+                    medida.complete(-1L)
+                }
+            }
+        }
         trabalhando = true
         sobreposicao?.visibility = View.INVISIBLE
         bolha?.visibility = View.INVISIBLE
         fechar?.visibility = View.INVISIBLE
         kotlinx.coroutines.delay(90)
+        if (ultimaRolagem != rolagemCapturada || !continuo || LeitorActivity.visivel) {
+            bolha?.visibility = View.VISIBLE
+            fechar?.visibility = View.VISIBLE
+            trabalhando = false
+            return
+        }
         val cap = capturar()
         val tela = cap.tela
         bolha?.visibility = View.VISIBLE
@@ -410,6 +474,7 @@ class ServicoTradutor : AccessibilityService() {
             sobreposicao?.visibility = if (LeitorActivity.visivel) View.INVISIBLE else View.VISIBLE
             return
         }
+        if (ultimaRolagem != rolagemCapturada) { trabalhando = false; return }
         val assin = assinaturaDe(tela)
         // tela igual não basta para pular: se o modelo chegou atrasado e melhorou o cache, tem que redesenhar
         val corr = Traducao.correcoes.get()
@@ -426,6 +491,11 @@ class ServicoTradutor : AccessibilityService() {
         val lidas = withContext(Dispatchers.Default) { Falas.lerOuNulo(tela, topo, base) }
         val falas = lidas?.falas.orEmpty()
         val msO = (System.nanoTime() - tOcr) / 1_000_000
+        if (ultimaRolagem != rolagemCapturada) {
+            trabalhando = false
+            ultimaAssinatura = 0L
+            return
+        }
         if (falas.isEmpty()) {
             // OCR que rodou e não achou texto: se a imagem é quase toda preta, pode ser página escura ou captura bloqueada
             if (lidas?.algumTexto == false) suspeitaNoContinuo(tela, topo, base, assin)
@@ -437,30 +507,54 @@ class ServicoTradutor : AccessibilityService() {
         // Só se pinta o que MUDOU, o mesmo filtro do Leitor (uteis): fala pulada por já estar no idioma do dono, ou
         // traduzida igual ao original, não ganha faixa. Senão a interface do app em português levaria uma por cima.
         val uteisConhecido = falas.filter { (conhecido[it.texto] ?: it.texto) != it.texto }
-        if (uteisConhecido.isNotEmpty() && continuo && !LeitorActivity.visivel)
-            mostraCamada(withContext(Dispatchers.Default) { Pintura.camada(tela, uteisConhecido) { conhecido[it] ?: it } })
+        if (uteisConhecido.isNotEmpty() && continuo && !LeitorActivity.visivel) {
+            val camada = withContext(Dispatchers.Default) { Pintura.camada(tela, uteisConhecido) { conhecido[it] ?: it } }
+            if (ultimaRolagem != rolagemCapturada || !continuo || LeitorActivity.visivel) {
+                trabalhando = false
+                ultimaAssinatura = 0L
+                return
+            }
+            mostraCamada(camada)
+            medirPrimeiraPintura()
+        }
         // o contínuo traduz a tela que o dono está lendo: não passa pelo balde da pré-carga silenciosa
         val tTrad = System.nanoTime()
         // as medidas do pedido vêm no resultado dele: pré-carregamento e toque rodam ao mesmo tempo e não se misturam
         val r = withContext(Dispatchers.Default) { Traducao.traduzirLoteDetalhado(this@ServicoTradutor, textos, automatico = !explicito, ativo = { isActive && !LeitorActivity.visivel }) }
         val mapa = r.mapa
         val msT = (System.nanoTime() - tTrad) / 1_000_000
-        trabalhando = false
-        if (!continuo || LeitorActivity.visivel) return
+        if (!continuo || LeitorActivity.visivel || ultimaRolagem != rolagemCapturada) {
+            trabalhando = false
+            ultimaAssinatura = 0L
+            return
+        }
         val tPint = System.nanoTime()
         val uteis = falas.filter { (mapa[it.texto] ?: it.texto) != it.texto }
         // Sem nada útil a camada sai vazia, e mesmo assim é posta: ela troca a da tela anterior, que senão ficaria com
         // as faixas velhas por cima da tela nova (e a tela igual continua sendo reconhecida acima, por haver camada).
-        if (uteisConhecido.isEmpty() || uteis.map { it.texto to mapa[it.texto] } != uteisConhecido.map { it.texto to conhecido[it.texto] })
-            mostraCamada(withContext(Dispatchers.Default) { Pintura.camada(tela, uteis) { mapa[it] ?: it } })
+        if (uteisConhecido.isEmpty() || uteis.map { it.texto to mapa[it.texto] } != uteisConhecido.map { it.texto to conhecido[it.texto] }) {
+            val camada = withContext(Dispatchers.Default) { Pintura.camada(tela, uteis) { mapa[it] ?: it } }
+            if (ultimaRolagem != rolagemCapturada || !continuo || LeitorActivity.visivel) {
+                trabalhando = false
+                ultimaAssinatura = 0L
+                return
+            }
+            mostraCamada(camada)
+            if (uteis.isNotEmpty()) medirPrimeiraPintura()
+        }
+        trabalhando = false
         val msP = (System.nanoTime() - tPint) / 1_000_000
         // só números, códigos fixos e o id aleatório do serviço: nenhum texto de fala nem de resposta, nem hash deles
-        Telemetria.evento("traduziu", mapOf("modo" to "continuo", "falas" to falas.size,
-            "ja_no_cache" to conhecido.size, "caminho" to r.caminho,
-            "origem" to r.origem, "modelo" to (r.modelo ?: "-"),
-            "puladas" to falas.count { it.texto in r.puladas }, "und" to r.und, "ms_modelo" to r.msModelo,
-            "compartilhadas" to r.compartilhadas, "id" to r.idServidor,
-            "ms_ocr" to msO, "ms_trad" to msT, "ms_pint" to msP, "cache" to Traducao.noCache))
+        escopo.launch {
+            val msPrimeira = primeiraPintura?.await() ?: -1L
+            Telemetria.evento("traduziu", mapOf("modo" to "continuo", "falas" to falas.size,
+                "ja_no_cache" to conhecido.size, "caminho" to r.caminho,
+                "origem" to r.origem, "modelo" to (r.modelo ?: "-"),
+                "puladas" to falas.count { it.texto in r.puladas }, "und" to r.und, "ms_modelo" to r.msModelo,
+                "compartilhadas" to r.compartilhadas, "id" to r.idServidor,
+                "ms_ocr" to msO, "ms_trad" to msT, "ms_pint" to msP, "cache" to Traducao.noCache,
+                "ms_espera" to msEspera, "ms_primeira" to msPrimeira))
+        }
         agendaRevisao(corr)
     }
 
@@ -479,7 +573,10 @@ class ServicoTradutor : AccessibilityService() {
             repeat(24) {
                 kotlinx.coroutines.delay(500)
                 if (!continuo || LeitorActivity.visivel) return@launch
-                if (Traducao.correcoes.get() != referencia && !trabalhando) { desenhaContinuo(); return@launch }
+                if (Traducao.correcoes.get() != referencia) {
+                    desenhaQuandoQuieto()
+                    return@launch
+                }
             }
         }
     }
@@ -568,39 +665,87 @@ class ServicoTradutor : AccessibilityService() {
      * ainda não viu é rolar de verdade. Então o app rola sozinho, lê e traduz cada tela para o cache, e volta.
      * Depois disso a leitura fica instantânea, porque o cache é indexado pelo TEXTO.
      *
-     * Volta ao ponto de partida rolando o mesmo tanto para trás. Não é exato, e o aviso diz isso.
+     * Confere as capturas da volta para parar no ponto de partida ou no topo da página.
      */
-    private suspend fun adiantaCapitulo(maxTelas: Int = 25) {
-        if (adiantando) return
+    private suspend fun adiantaCapitulo(maxTelas: Int = 120) {
+        if (adiantando || voltando) return
         adiantando = true
+        val inicio = System.nanoTime()
+        var motivo = "teto"
+        var rolagens = 0
+        var anterior: Long? = null
+        var primeira: Long? = null
         aviso("Adiantando o capítulo. Toque na bolha para parar.")
         var telas = 0
         var iguais = 0
         for (i in 0 until maxTelas) {
-            if (!adiantando) break
+            if (!adiantando) { motivo = "toque"; break }
             bolha?.visibility = View.INVISIBLE
             sobreposicao?.visibility = View.INVISIBLE
             kotlinx.coroutines.delay(90)
             val cap = capturar()
             val tela = cap.tela
             bolha?.visibility = View.VISIBLE
-            if (tela == null) { if (cap.protegida) avisaCapturaProtegida(); break }
+            if (!adiantando) { motivo = "toque"; break }
+            if (tela == null) { motivo = "captura"; if (cap.protegida) avisaCapturaProtegida(); break }
             val assin = assinaturaDe(tela)
-            if (assin == ultimaAssinatura) { iguais++; if (iguais >= 2) break } else iguais = 0
+            if (primeira == null) primeira = assin
+            if (assin == anterior) { iguais++; if (iguais >= 2) { motivo = "fim"; break } } else iguais = 0
+            anterior = assin
             ultimaAssinatura = assin
             withContext(Dispatchers.Default) {
                 val falas = Falas.ler(tela, (tela.height * 0.11f).toInt(), (tela.height * 0.96f).toInt())
-                if (falas.isNotEmpty()) Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto }, ativo = { isActive && !LeitorActivity.visivel })
+                if (falas.isNotEmpty()) Traducao.traduzirLote(this@ServicoTradutor, falas.map { it.texto }, ativo = { isActive && adiantando && !LeitorActivity.visivel })
             }
             telas++
-            if (!rola(true)) break
+            if (!adiantando) { motivo = "toque"; break }
+            if (!rola(true)) { motivo = "captura"; break }
+            rolagens++
             kotlinx.coroutines.delay(650)
         }
-        // volta para onde estava
-        repeat(telas) { if (rola(false)) kotlinx.coroutines.delay(500) }
+        if (!adiantando) motivo = "toque"
         adiantando = false
-        aviso("Adiantei $telas telas. A leitura agora sai na hora.")
-        Telemetria.evento("adiantou_capitulo", mapOf("telas" to telas, "cache" to Traducao.noCache))
+        voltando = rolagens > 0
+        pararVolta = false
+        var volta = if (rolagens == 0) "sem_ida" else "teto"
+        var gestosVolta = 0
+        var anteriorVolta: Long? = null
+        try {
+            for (i in 0 until (if (rolagens == 0) 0 else maxOf(rolagens * 2, 10))) {
+                if (pararVolta) { volta = "toque"; break }
+                gestosVolta++
+                val rolou = rola(false)
+                if (pararVolta) { volta = "toque"; break }
+                kotlinx.coroutines.delay(150)
+                if (pararVolta) { volta = "toque"; break }
+                bolha?.visibility = View.INVISIBLE
+                sobreposicao?.visibility = View.INVISIBLE
+                val cap = try {
+                    kotlinx.coroutines.delay(90)
+                    capturar()
+                } finally {
+                    bolha?.visibility = View.VISIBLE
+                }
+                if (pararVolta) { volta = "toque"; break }
+                val assin = cap.tela?.let { assinaturaDe(it) }
+                if (assin != null) {
+                    if (assin == primeira) { volta = "partida"; break }
+                    if (assin == anteriorVolta) { volta = "topo"; break }
+                }
+                anteriorVolta = assin
+                if (!rolou) break
+            }
+        } finally {
+            voltando = false
+        }
+        aviso("Adiantei $telas telas." + when (volta) {
+            "topo", "partida" -> " Voltei ao começo."
+            "toque" -> " Parei a volta."
+            else -> ""
+        } + if (motivo == "teto") " O fim do capítulo não foi adiantado." else "")
+        Telemetria.evento("adiantou_capitulo", mapOf("telas" to telas, "cache" to Traducao.noCache,
+            "motivo" to motivo, "volta" to volta, "gestos_volta" to gestosVolta,
+            "seg" to (System.nanoTime() - inicio) / 1_000_000_000))
     }
 
     /** Rolagem por gesto: é o que alcança o navegador, que não expõe a página como conteúdo. */
@@ -611,7 +756,7 @@ class ServicoTradutor : AccessibilityService() {
         val ate = if (paraBaixo) alt * 0.22f else alt * 0.86f
         val caminho = android.graphics.Path().apply { moveTo(l, de); lineTo(l, ate) }
         val gesto = android.accessibilityservice.GestureDescription.Builder()
-            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(caminho, 0, 320)).build()
+            .addStroke(android.accessibilityservice.GestureDescription.StrokeDescription(caminho, 0, 320L)).build()
         val ok = runCatching {
             dispatchGesture(gesto, object : GestureResultCallback() {
                 override fun onCompleted(d: android.accessibilityservice.GestureDescription?) { if (cont.isActive) cont.resume(true) {} }

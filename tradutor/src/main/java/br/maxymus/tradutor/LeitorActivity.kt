@@ -105,6 +105,7 @@ class LeitorActivity : ComponentActivity() {
         super.onCreate(estado)
         Telemetria.iniciar(this)
         Traducao.carregarPreferencias(this)
+        Traducao.iniciarCacheDisco(this)
         val endereco = enderecoDo(intent)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Coral, background = Fundo, surface = Superficie, onSurface = Texto)) {
