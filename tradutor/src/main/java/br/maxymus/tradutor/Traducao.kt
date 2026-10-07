@@ -12,6 +12,13 @@ import com.google.mlkit.nl.translate.TranslateLanguage
 import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.Translator
 import com.google.mlkit.nl.translate.TranslatorOptions
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -78,7 +85,163 @@ object Traducao {
     private const val NIVEL_MODELO = 2
 
     private val cache = ConcurrentHashMap<String, Entrada>()
+    private const val LIMITE_CACHE = 20_000
+    private const val LOTE_DISCO = 50
+    private const val INTERVALO_DISCO_MS = 2_000L
+    private val travaCache = Any()
+    private data class OperacaoDisco(val chave: String, val entrada: Entrada?)
+    private val pendentesDisco = ArrayList<OperacaoDisco>()
+    private val removidasDuranteCarga = HashSet<String>()
+    private val alteradasDuranteCarga = HashSet<String>()
+    private val sinalDisco = Channel<Unit>(Channel.CONFLATED)
+    private val escopoDisco = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private var discoIniciado = false
+    private var carregandoDisco = true
+    private var forcarDisco = false
+    private var mudancasDisco = 0
     private val ecos = RegistroEcos()
+
+    /** Um escritor sobrevive ao escopo da bolha, inclusive para esvaziar a fila no onDestroy. */
+    fun iniciarCacheDisco(ctx: Context) {
+        val arquivo = File(ctx.filesDir, "traducoes.jsonl")
+        synchronized(travaCache) {
+            if (discoIniciado) return
+            discoIniciado = true
+        }
+        escopoDisco.launch {
+            val inicio = System.nanoTime()
+            val lidas = LinkedHashMap<String, Entrada>()
+            var linhas = 0L
+            var linhasCompactadas = 0L
+            var reescrever = false
+            try {
+                if (arquivo.exists()) arquivo.bufferedReader().useLines { conteudo ->
+                    conteudo.forEach { linha ->
+                        linhas++
+                        try {
+                            val json = JSONObject(linha)
+                            val chave = json.getString("chave")
+                            if (json.optBoolean("remover", false)) {
+                                lidas.remove(chave)
+                                return@forEach
+                            }
+                            val entrada = Entrada(json.getString("texto"), json.getInt("nivel"))
+                            if (entrada.nivel in NIVEL_OFFLINE..NIVEL_MODELO &&
+                                entrada.nivel >= (lidas[chave]?.nivel ?: -1)) {
+                                lidas.remove(chave)
+                                lidas[chave] = entrada
+                                if (lidas.size > LIMITE_CACHE) lidas.remove(lidas.keys.first())
+                            }
+                        } catch (_: org.json.JSONException) { /* linha incompleta ou ilegível: segue */ }
+                    }
+                }
+                reescrever = linhas > LIMITE_CACHE * 2L || arquivo.length() > 8L * 1024 * 1024
+            } catch (e: Exception) {
+                lidas.clear()
+                reescrever = true
+                erroCacheDisco(e)
+            }
+            synchronized(travaCache) {
+                for ((chave, entrada) in lidas) {
+                    val atual = cache[chave]
+                    // Tradução nova vence empate; uma remoção explícita durante a carga também vale.
+                    if (chave in removidasDuranteCarga || (chave in alteradasDuranteCarga && atual == null)) continue
+                    if (atual == null || entrada.nivel > atual.nivel) {
+                        cache[chave] = entrada
+                        limitarCache(chave)
+                    }
+                }
+                carregandoDisco = false
+                alteradasDuranteCarga.clear()
+                // Uma carga de nível maior também precisa vencer uma escrita que já estava na fila.
+                for (i in pendentesDisco.indices) {
+                    val op = pendentesDisco[i]
+                    if (op.entrada != null && op.chave !in removidasDuranteCarga) {
+                        cache[op.chave]?.let { pendentesDisco[i] = OperacaoDisco(op.chave, it) }
+                    }
+                }
+                removidasDuranteCarga.clear()
+            }
+            Telemetria.evento("cache_carregado", mapOf("entradas" to cache.size,
+                "ms" to (System.nanoTime() - inicio) / 1_000_000))
+            while (true) {
+                if (!reescrever) {
+                    sinalDisco.receive()
+                    val prazo = System.nanoTime() + INTERVALO_DISCO_MS * 1_000_000
+                    while (synchronized(travaCache) { !forcarDisco && mudancasDisco < LOTE_DISCO }) {
+                        val restante = (prazo - System.nanoTime()) / 1_000_000
+                        if (restante <= 0 || withTimeoutOrNull(restante) { sinalDisco.receive() } == null) break
+                    }
+                }
+                val lote = synchronized(travaCache) {
+                    val copia = if (reescrever) cache.map { OperacaoDisco(it.key, it.value) } else pendentesDisco.toList()
+                    pendentesDisco.clear(); mudancasDisco = 0; forcarDisco = false
+                    copia
+                }
+                try {
+                    if (reescrever) {
+                        val temporario = File(arquivo.parentFile, arquivo.name + ".tmp")
+                        temporario.bufferedWriter().use { out ->
+                            for ((chave, entrada) in lote) { out.write(linhaCache(chave, entrada)); out.newLine() }
+                        }
+                        if (!temporario.renameTo(arquivo)) throw java.io.IOException()
+                        linhasCompactadas = lote.size.toLong()
+                        linhas = 0L
+                        reescrever = false
+                    } else if (lote.isNotEmpty()) {
+                        // Se o processo caiu no meio da última linha, isola o próximo JSON dela.
+                        arquivo.appendText("\n" + lote.joinToString("", transform = { linhaCache(it.chave, it.entrada) + "\n" }))
+                        linhas += lote.size + 1L // inclui a linha que separa o lote de uma possível escrita parcial
+                        reescrever = linhasCompactadas + linhas > LIMITE_CACHE * 2L ||
+                            arquivo.length() > 8L * 1024 * 1024
+                    }
+                } catch (e: Exception) {
+                    erroCacheDisco(e)
+                    // Uma escrita parcial é recuperada com uma foto completa, sem duplicar trecho truncado.
+                    reescrever = true
+                    kotlinx.coroutines.delay(INTERVALO_DISCO_MS)
+                }
+            }
+        }
+    }
+
+    fun descarregarCacheDisco() {
+        synchronized(travaCache) { forcarDisco = true }
+        sinalDisco.trySend(Unit)
+    }
+
+    private fun linhaCache(chave: String, entrada: Entrada?) = JSONObject().apply {
+        put("chave", chave)
+        if (entrada == null) put("remover", true)
+        else { put("texto", entrada.texto); put("nivel", entrada.nivel) }
+    }.toString()
+
+    private fun erroCacheDisco(e: Exception) {
+        Telemetria.evento("erro", mapOf("onde" to "cache_disco", "codigo" to Telemetria.classe(e)))
+    }
+
+    /** Chamado sob travaCache; consultas continuam livres e nunca esperam pelo disco. */
+    private fun limitarCache(preservar: String) {
+        while (cache.size > LIMITE_CACHE) {
+            val chave = cache.keys.first { it != preservar }
+            cache.remove(chave)
+            pendentesDisco.removeAll { it.chave == chave && it.entrada != null }
+        }
+    }
+
+    private fun removerCache(chave: String) {
+        synchronized(travaCache) {
+            cache.remove(chave)
+            pendentesDisco.removeAll { it.chave == chave && it.entrada != null }
+            pendentesDisco.add(OperacaoDisco(chave, null))
+            mudancasDisco++
+            if (carregandoDisco) {
+                alteradasDuranteCarga.add(chave)
+                removidasDuranteCarga.add(chave)
+            }
+            sinalDisco.trySend(Unit)
+        }
+    }
 
     /**
      * O que está sendo pedido AGORA, por chave do cache. O pré-carregamento do modo contínuo e o toque podiam pedir a
@@ -129,12 +292,26 @@ object Traducao {
             return Gravado(melhor ?: Entrada(texto, nivel), false)
         }
         ecos.remover(chave)
-        var mudou = false
-        val efetiva = cache.compute(chave) { _, atual ->
-            if (atual != null && nivel < atual.nivel) atual
-            else { mudou = atual == null || atual.texto != texto; Entrada(texto, nivel) }
-        } ?: Entrada(texto, nivel)
-        return Gravado(efetiva, mudou)
+        return synchronized(travaCache) {
+            var mudou = false
+            var alterou = false
+            val efetiva = cache.compute(chave) { _, atual ->
+                if (atual != null && nivel < atual.nivel) atual
+                else {
+                    mudou = atual == null || atual.texto != texto
+                    alterou = mudou || atual?.nivel != nivel
+                    if (alterou) Entrada(texto, nivel) else atual
+                }
+            } ?: Entrada(texto, nivel)
+            if (alterou) {
+                if (carregandoDisco) alteradasDuranteCarga.add(chave)
+                pendentesDisco.add(OperacaoDisco(chave, efetiva))
+                mudancasDisco++
+                limitarCache(chave)
+                sinalDisco.trySend(Unit)
+            }
+            Gravado(efetiva, mudou)
+        }
     }
 
     /**
@@ -316,7 +493,7 @@ object Traducao {
                 if (t in c.pular || !vistas.add(t)) continue
                 val k = chave(t, dest)
                 if (k in minhas) continue      // outra grafia de uma fala que eu já peço: sai com o resultado dela
-                if (ignorarCache) cache.remove(k)
+                if (ignorarCache) removerCache(k)
                 if (ecos.bloqueia(k, explicito = !automatico || ignorarCache) && cache[k] == null) {
                     p.saida[t] = t
                     continue

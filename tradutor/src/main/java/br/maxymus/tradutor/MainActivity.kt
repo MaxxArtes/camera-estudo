@@ -58,6 +58,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(estado)
         Telemetria.iniciar(this)
         Traducao.carregarPreferencias(this)
+        Traducao.iniciarCacheDisco(this)
         // sem esta permissão a notificação fixa simplesmente não aparece no Android 13 ou mais novo
         if (android.os.Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
