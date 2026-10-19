@@ -76,6 +76,7 @@ private fun Preparacao() {
     val ctx = LocalContext.current
     var servicoLigado by remember { mutableStateOf(false) }   // rodando AGORA
     var servicoListado by remember { mutableStateOf(false) }  // ligado nas configuracoes do Android
+    var jaLigou by remember { mutableStateOf(false) }         // a captura já rodou alguma vez neste aparelho
     var tentouAtivar by remember { mutableStateOf(false) }
     var nova by remember { mutableStateOf<Atualizador.Versao?>(null) }
     // reconfere A CADA VOLTA à tela: antes a busca acontecia uma vez só, quando a tela nascia, então quem
@@ -100,12 +101,17 @@ private fun Preparacao() {
         // Acontece de verdade: instalar atualização mata o processo, e o HyperOS nem sempre religa o serviço.
         servicoListado = lista.split(':').any { it.equals(nome, true) }
         servicoLigado = ServicoTradutor.ativo != null
+        jaLigou = ctx.getSharedPreferences("tradutor", android.content.Context.MODE_PRIVATE)
+            .getBoolean(ServicoTradutor.MARCA_JA_LIGOU, false) || servicoLigado
         bolhaNaTela = ServicoTradutor.bolhaNaTela
         if (servicoLigado) {
             // a notificação fixa pode ser dispensada com um arrasto no Android 14 e acima, e não voltava sozinha
             ServicoTradutor.ativo?.let { runCatching { it.reafirmaNotificacao() } }
         } else if (servicoListado) {
             Telemetria.evento("servico_listado_morto", mapOf("android" to android.os.Build.VERSION.SDK_INT))
+        } else if (jaLigou) {
+            // o HyperOS tirou o serviço da lista depois de encerrar o app: antes a tela voltava a parecer a de primeira vez
+            Telemetria.evento("servico_desligado_pelo_sistema", mapOf("android" to android.os.Build.VERSION.SDK_INT))
         }
     }
     val dono = LocalLifecycleOwner.current
@@ -133,19 +139,19 @@ private fun Preparacao() {
 
         CartaoLeitor()
 
-        Cartao("Captura da tela", if (servicoLigado) "Ativada" else if (servicoListado) "Reativar" else "Ativar",
+        Cartao("Captura da tela", if (servicoLigado) "Ativada" else if (servicoListado || jaLigou) "Reativar" else "Ativar",
             "Para funcionar, o app precisa capturar o que está na tela quando você toca na bolha. " +
             "A captura acontece só nesse momento, não fica guardada, e ela alcança qualquer coisa visível " +
             "na hora, inclusive o que estiver em outros aplicativos. Isso é ligado em Acessibilidade, nas " +
             "configurações do Android, e você desliga no mesmo lugar quando quiser.",
             pronto = servicoLigado) {
             tentouAtivar = true
-            ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            abrirAcessibilidade(ctx)
         }
 
         // O Android bloqueia acessibilidade para app instalado fora da loja ("configurações restritas"). O caminho
         // para liberar NÃO fica na tela de acessibilidade, então o app diz onde é em vez de deixar o dono procurando.
-        if (tentouAtivar && !servicoListado) Column(
+        if (tentouAtivar && !servicoListado && !jaLigou) Column(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF2A2026)).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Apareceu \"Controlada pelas configurações restritas\"?", color = Texto, fontSize = 15.sp, fontWeight = FontWeight.Medium)
@@ -167,10 +173,11 @@ private fun Preparacao() {
         EscolhaIdiomas()
         ListaIdiomas()
 
-        if (servicoListado && !servicoLigado) Column(
+        if (!servicoLigado && (servicoListado || jaLigou)) Column(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF2A2026)).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("A captura consta ligada, mas não está rodando", color = Texto, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text(if (servicoListado) "A captura consta ligada, mas não está rodando" else "O sistema desligou a captura",
+                color = Texto, fontSize = 15.sp, fontWeight = FontWeight.Medium)
             // Medido em 01/10: o dono fechou o app pelos recentes e tentou religar 4 vezes em 30 s, sem efeito.
             // No HyperOS, fechar pelos recentes equivale a forçar a parada, e com a inicialização automática
             // desligada o sistema RECUSA religar o serviço — desligar e ligar na Acessibilidade sozinho não basta.
@@ -191,16 +198,30 @@ private fun Preparacao() {
                 ctx.startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                     android.net.Uri.parse("package:" + ctx.packageName)))
             }
-            Passo("3. Desligue e ligue o Tradutor em Acessibilidade") {
+            Passo(if (servicoListado) "3. Desligue e ligue o Tradutor em Acessibilidade" else "3. Ligue o Tradutor em Acessibilidade") {
                 Telemetria.evento("ajuda_reativar", mapOf("passo" to "acessibilidade"))
-                ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                abrirAcessibilidade(ctx)
             }
-            Text("Para não acontecer de novo: não feche o Tradutor arrastando nos recentes. Se quiser, " +
-                 "trave ele lá com o cadeado.", color = Texto2, fontSize = 12.sp)
+            Text("Para não acontecer de novo, o Tradutor não aparece mais nos recentes: assim ele não é fechado por engano " +
+                 "ao limpar a lista. Para voltar a ele, use o ícone.", color = Texto2, fontSize = 12.sp)
         }
 
         // Sem este cartão a bolha escondida só voltava pela notificação fixa — e ela pode ser dispensada.
-        // Era um beco sem saída: o botão da captura fica desabilitado quando o serviço já está ligado.
+        // Era um beco sem saída: o botão da captura fica desabilitado quando o serviço já está ligado. Ele aparece também
+        // com o serviço parado (a bolha vive nele), e aí o botão leva direto a religar a captura.
+        if (!servicoLigado) Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Superficie).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Bolha", color = Texto, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            Text(if (jaLigou) "A bolha está desligada porque o sistema encerrou a captura. Ligue o Tradutor de tela em " +
+                     "Acessibilidade e ela volta sozinha."
+                 else "A bolha aparece quando a captura estiver ligada.",
+                 color = Texto2, fontSize = 13.sp)
+            Button(onClick = { tentouAtivar = true; abrirAcessibilidade(ctx) },
+                modifier = Modifier.fillMaxWidth().height(56.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Coral, contentColor = Fundo)) {
+                Text("Ativar bolha", fontSize = 15.sp)
+            }
+        }
         if (servicoLigado) Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Superficie).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Bolha", color = Texto, fontSize = 16.sp, fontWeight = FontWeight.Medium)
@@ -233,6 +254,22 @@ private fun Preparacao() {
         Text("Traduz a tela parada, uma tela por vez. Não acompanha a rolagem, e onomatopeia desenhada não é traduzida.",
             color = Texto2, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
     }
+}
+
+/**
+ * Abre a Acessibilidade já no Tradutor quando o sistema deixa: a tela de detalhes do serviço costuma exigir permissão de
+ * sistema, então cai para a lista com o item destacado (aceito pelas configurações do Android puro e por várias variantes)
+ * e, por fim, para a lista simples.
+ */
+private fun abrirAcessibilidade(ctx: android.content.Context) {
+    val componente = android.content.ComponentName(ctx, ServicoTradutor::class.java).flattenToString()
+    val detalhes = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS").putExtra(Intent.EXTRA_COMPONENT_NAME, componente)
+    if (runCatching { ctx.startActivity(detalhes) }.isSuccess) return
+    val destacada = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+        .putExtra(":settings:fragment_args_key", componente)
+        .putExtra(":settings:show_fragment_args", android.os.Bundle().apply { putString(":settings:fragment_args_key", componente) })
+    if (runCatching { ctx.startActivity(destacada) }.isSuccess) return
+    runCatching { ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
 }
 
 /** De qual idioma e para qual idioma. Automático detecta sozinho, que é o que serve para quadrinho. */
