@@ -76,6 +76,11 @@ class Leitor(ctx: Context, val endereco: String) {
     @Volatile var alvoLeitura = -1
 
     private val contados = HashSet<Int>()
+    /**
+     * As falas ORIGINAIS de cada quadro já lido, sem as onomatopeias: o contexto que vai junto do pedido dos quadros
+     * seguintes (RegraContexto), para o modelo manter nome e tratamento de um quadro para o outro. Só na memória.
+     */
+    private val fontes = java.util.concurrent.ConcurrentHashMap<Int, List<String>>()
     private var totalFalas = 0
     private var daRede = 0
     private var doDisco = 0
@@ -273,10 +278,14 @@ class Leitor(ctx: Context, val endereco: String) {
         }
 
         val t2 = System.nanoTime()
+        fontes[i] = falas.filter { !it.sfx }.map { it.texto }
+        val contexto = RegraContexto.montar((max(0, i - RegraContexto.MAX_ITENS) until i).mapNotNull { fontes[it] })
         // o pedido leva o MESMO destino que dá nome ao arquivo pintado, e as medidas dele vêm no resultado
-        val r = Traducao.traduzirLoteDetalhado(ctx, falas.map { it.texto }, dest, ignorarCache = q.ignorarCache)
+        val r = Traducao.traduzirLoteDetalhado(ctx, falas.map { it.texto }, dest, ignorarCache = q.ignorarCache,
+            contexto = contexto, sfx = falas.filter { it.sfx }.map { it.texto }.toSet())
         q.ignorarCache = false
         val mapa = r.mapa
+        if (Avaliacao.ligada(ctx)) Avaliacao.gravar(ctx, "${chave}_$i", original, falas, mapa)
         val msTrad = (System.nanoTime() - t2) / 1_000_000
         // Fala que voltou igual não é tradução: pintar o texto original com a nossa fonte por cima do balão
         // só estraga o desenho. Então pinta-se apenas o que mudou.
@@ -313,7 +322,8 @@ class Leitor(ctx: Context, val endereco: String) {
 
         // As falas lidas são as PINTADAS (as que mudaram), com o texto traduzido e a caixa medida no original, em ordem de leitura.
         val dados = RegraLeituraCapitulo.DadosQuadro(dest, BuildConfig.VERSION_CODE, original.width, original.height,
-            RegraLeituraCapitulo.emOrdemDeLeitura(uteis.map {
+            // a onomatopeia é pintada, mas não é lida em voz alta
+            RegraLeituraCapitulo.emOrdemDeLeitura(uteis.filter { !it.sfx }.map {
                 RegraLeituraCapitulo.FalaQuadro(mapa[it.texto] ?: it.texto, it.caixa.left, it.caixa.top, it.caixa.right, it.caixa.bottom, it.alturaLinha)
             }))
         runCatching { pintado(i, dest).outputStream().use { s -> composta.compress(Bitmap.CompressFormat.JPEG, 88, s) } }
@@ -329,6 +339,7 @@ class Leitor(ctx: Context, val endereco: String) {
         Telemetria.evento("leitor_quadro", mapOf("i" to i, "kb" to (bruto(i).length() / 1024).toInt(),
             "ms_ocr" to msOcr, "ms_trad" to msTrad, "ms_pint" to msPint, "falas" to falas.size, "puladas" to r.puladas.size,
             "traduzidas" to uteis.size, "px_w" to original.width, "px_h" to original.height,
+            "sfx" to falas.count { it.sfx }, "contexto" to contexto.size,
             "caminho" to r.caminho, "cache" to Traducao.noCache,
             "compartilhadas" to r.compartilhadas, "id" to r.idServidor))
         return true
@@ -354,6 +365,12 @@ class Leitor(ctx: Context, val endereco: String) {
         for (q in quadros) if (q.estado == Estado.PRONTO) { q.imagem = null }
         Telemetria.evento("leitor_alternou", mapOf("original" to mostrarOriginal, "i" to visivel))
     }
+
+    /**
+     * O original do quadro, para o dono espiar segurando o dedo. Decodificado na hora (bloqueante, chamar fora da principal)
+     * e largado quando o dedo sai: não entra na janela de memória dos motores. Nulo se os bytes não estão no disco.
+     */
+    fun originalParaEspiar(q: Quadro): Bitmap? = bruto(q.indice).takeIf { it.exists() }?.let { Capitulo.decodificar(it) }
 
     /** Pedido explícito do dono num quadro que falhou. */
     fun tentarDeNovo(q: Quadro) {
