@@ -21,7 +21,7 @@ import kotlin.math.min
  *  3. A faixa é opaca e de canto reto, na cor do balão, com o texto na cor medida da letra (desenho do Astra,
  *     01/10). Nada de transparência: sobre arte escura ela precisa delimitar a área sozinha.
  *
- *  4. Com a parede do balão clara, a faixa quadrada é encaixada dentro dele (RegraBalao, Tradutor 0.32).
+ *  4. Com a parede do balão clara, a faixa quadrada é encaixada dentro dele (RegraBalao, Tradutor 0.33).
  *
  * A saída é uma camada transparente do tamanho da tela: só o que foi pintado fica opaco.
  */

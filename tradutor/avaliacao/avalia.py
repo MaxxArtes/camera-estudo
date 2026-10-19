@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Banco de avaliação do Tradutor (0.32): compara o que o app leu com um gabarito feito à mão.
+"""Banco de avaliação do Tradutor (0.33): compara o que o app leu com um gabarito feito à mão.
 
 Ideia do FrankYomik (gabarito congelado e taxa de erro por caractere a cada mudança de OCR), reescrita aqui só com a
-biblioteca padrão. Mede o reconhecimento e a junção das linhas em falas, que é onde as mudanças da 0.32 mexem
+biblioteca padrão. Mede o reconhecimento e a junção das linhas em falas, que é onde as mudanças da 0.33 mexem
 (faixas, segunda passada, onomatopeia), e não a tradução.
 
 Uso:

@@ -1,6 +1,6 @@
 # Banco de avaliação do Tradutor
 
-Mede o reconhecimento e a junção das linhas em falas contra um gabarito feito à mão, para que mudanças como as da 0.32
+Mede o reconhecimento e a junção das linhas em falas contra um gabarito feito à mão, para que mudanças como as da 0.33
 (faixas no quadro alto, segunda passada invertida, onomatopeia fora da junção) sejam aprovadas por número, e não por
 impressão. Ideia do FrankYomik, que congela imagens com o texto certo e mede a taxa de erro por caractere a cada mudança.
 

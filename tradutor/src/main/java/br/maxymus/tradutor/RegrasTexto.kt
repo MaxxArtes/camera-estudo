@@ -4,7 +4,7 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Regras do reconhecimento e do pedido de tradução (Tradutor 0.32), sem Android, para rodar na JVM do harness. Ideias
+ * Regras do reconhecimento e do pedido de tradução (Tradutor 0.33), sem Android, para rodar na JVM do harness. Ideias
  * estudadas no FrankYomik (leitor de mangá e webtoon de código aberto) e reescritas do zero aqui; nenhum código dele foi
  * copiado (o servidor dele é AGPL e o cliente GPL).
  */

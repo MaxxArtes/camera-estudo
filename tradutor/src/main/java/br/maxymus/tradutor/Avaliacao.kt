@@ -7,7 +7,7 @@ import org.json.JSONObject
 import java.io.File
 
 /**
- * Exportação para o banco de avaliação (tradutor/avaliacao/, Tradutor 0.32). DESLIGADA: só grava quando existe o arquivo
+ * Exportação para o banco de avaliação (tradutor/avaliacao/, Tradutor 0.33). DESLIGADA: só grava quando existe o arquivo
  * `ligado` na pasta do app, criado à mão pelo dono por adb:
  *
  *     adb shell mkdir -p /sdcard/Android/data/br.maxymus.tradutor/files/avaliacao
