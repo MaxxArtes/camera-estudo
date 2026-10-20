@@ -47,12 +47,24 @@ internal object RegraFaixas {
         return saida
     }
 
+    /** margem, em px, entre o limite com que uma faixa descarta o que encosta no topo e o com que a vizinha de cima descarta o que encosta na base */
+    const val MARGEM_EMENDA = 6
+
     /**
-     * A linha (já em coordenadas da página) encosta numa emenda da faixa, e não numa borda da imagem? Então ela foi cortada
-     * aqui e é descartada: a faixa vizinha a tem inteira.
+     * A linha (já em coordenadas da página) foi cortada por uma emenda da faixa [faixaTopo, faixaBase) e deve ser descartada
+     * porque a faixa vizinha a tem? Sem Android, para o teste.
+     *  - Encostou no TOPO da faixa (que não é o topo da imagem): sai; a faixa de cima a leu inteira, ou cortada na base dela.
+     *  - Encostou na BASE da faixa (que não é a base da imagem): sai só se a linha começa depois do topo da faixa de baixo,
+     *    onde essa faixa a lê inteira. Uma linha mais alta que a sobreposição, que começa antes disso, não cabe inteira em
+     *    nenhuma das duas: fica na faixa de cima (cortada), em vez de sumir das duas. Os dois limites têm margem entre si, e
+     *    o pior caso é a linha sair duas vezes (semRepetidas junta), nunca nenhuma.
      */
-    fun cortada(c: Caixa, faixaTopo: Int, faixaBase: Int, alturaImagem: Int, folga: Int = 2): Boolean =
-        (faixaTopo > 0 && c.topo <= faixaTopo + folga) || (faixaBase < alturaImagem && c.base >= faixaBase - folga)
+    fun cortada(c: Caixa, faixaTopo: Int, faixaBase: Int, alturaImagem: Int, folga: Int = 2, sobreposicao: Int = SOBREPOSICAO): Boolean {
+        val noTopo = faixaTopo > 0 && c.topo <= faixaTopo + folga
+        val topoDaVizinha = faixaBase - sobreposicao
+        val naBase = faixaBase < alturaImagem && c.base >= faixaBase - folga && c.topo >= topoDaVizinha + folga + MARGEM_EMENDA
+        return noTopo || naBase
+    }
 
     /**
      * Junta o que veio de várias leituras (faixas vizinhas, ou a segunda passada) sem repetir: duas caixas que se cobrem
@@ -102,13 +114,34 @@ internal object RegraSfx {
  * A junção das linhas do reconhecedor em falas (a regra medida na bancada em 22/09, que estava em Falas.junta): junta duas
  * linhas quando a distância vertical entre elas é menor que 1,6 vez a altura da LINHA e elas se sobrepõem em pelo menos 25%
  * da largura. Agora sem Android, para o banco de avaliação, e com a onomatopeia de fora: linha grande só junta com linha grande.
+ * Linha grande que ESTÁ dentro da regra de junção de uma linha comum vizinha não é onomatopeia: é a linha gritada de um balão,
+ * e sair da junção a partiria em falas separadas (o defeito que a junção corrigiu).
  */
 internal object RegraJuncao {
     class Linha(val texto: String, val caixa: Caixa, val alturaLinha: Int, val sfx: Boolean = false)
 
-    fun juntar(entrada: List<Linha>): List<Linha> {
+    /** As duas linhas se juntam? A altura que vale é a da MENOR linha (não a do bloco). */
+    fun ligadas(a: Caixa, alturaA: Int, b: Caixa, alturaB: Int): Boolean {
+        val alt = max(1, min(alturaA, alturaB))
+        val vert = if (b.topo >= a.base) b.topo - a.base else a.topo - b.base
+        val sobrepoe = min(a.direita, b.direita) - max(a.esquerda, b.esquerda)
+        val largura = min(a.largura, b.largura)
+        return vert < alt * 1.6f && sobrepoe > largura * 0.25f
+    }
+
+    /** Os índices que de fato saem da junção: grandes pela mediana E sem nenhuma linha comum vizinha que as ligaria. */
+    fun sfx(entrada: List<Linha>): Set<Int> {
         val grandes = RegraSfx.grandes(entrada.map { it.alturaLinha })
-        val marcadas = entrada.mapIndexed { i, l -> if (i in grandes) Linha(l.texto, l.caixa, l.alturaLinha, true) else l }
+        return grandes.filter { i ->
+            entrada.indices.none { j ->
+                j !in grandes && ligadas(entrada[i].caixa, entrada[i].alturaLinha, entrada[j].caixa, entrada[j].alturaLinha)
+            }
+        }.toSet()
+    }
+
+    fun juntar(entrada: List<Linha>): List<Linha> {
+        val fora = sfx(entrada)
+        val marcadas = entrada.mapIndexed { i, l -> if (i in fora) Linha(l.texto, l.caixa, l.alturaLinha, true) else l }
         val l = marcadas.sortedWith(compareBy({ it.caixa.topo }, { it.caixa.esquerda })).toMutableList()
         var mudou = true
         while (mudou) {
@@ -119,11 +152,7 @@ internal object RegraJuncao {
                     if (a.sfx != b.sfx) continue
                     // ALTURA DA LINHA, não do bloco: depois de juntar 3 linhas o "bloco" media 150 px, e 1,6 vez isso engolia
                     // o balão vizinho inteiro (captura do dono em 23/09).
-                    val alt = max(1, min(a.alturaLinha, b.alturaLinha))
-                    val vert = if (b.caixa.topo >= a.caixa.base) b.caixa.topo - a.caixa.base else a.caixa.topo - b.caixa.base
-                    val sobrepoe = min(a.caixa.direita, b.caixa.direita) - max(a.caixa.esquerda, b.caixa.esquerda)
-                    val largura = min(a.caixa.largura, b.caixa.largura)
-                    if (vert < alt * 1.6f && sobrepoe > largura * 0.25f) {
+                    if (ligadas(a.caixa, a.alturaLinha, b.caixa, b.alturaLinha)) {
                         val acima = if (a.caixa.topo <= b.caixa.topo) a else b
                         val abaixo = if (acima === a) b else a
                         l[i] = Linha(acima.texto + " " + abaixo.texto, a.caixa.une(b.caixa), (a.alturaLinha + b.alturaLinha) / 2, a.sfx)
