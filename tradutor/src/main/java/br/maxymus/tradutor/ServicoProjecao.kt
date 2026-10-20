@@ -302,9 +302,12 @@ class ServicoProjecao : Service() {
         }
     }
 
+    @Suppress("DEPRECATION")
     private fun mostrarPainel(tela: Bitmap, resultado: Congelada) {
         fecharPainel()
         val caixa = FrameLayout(this)
+        caixa.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE or
+            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
         caixa.addView(ImageView(this).apply { setImageBitmap(tela); scaleType = ImageView.ScaleType.FIT_XY },
             FrameLayout.LayoutParams(-1, -1))
         val imagem = ImageView(this).apply { setImageBitmap(resultado.camada); scaleType = ImageView.ScaleType.FIT_XY }
@@ -325,7 +328,11 @@ class ServicoProjecao : Service() {
         val p = parametros(tela.width, tela.height).apply {
             gravity = Gravity.TOP or Gravity.LEFT
             flags = flags or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
-            if (Build.VERSION.SDK_INT >= 30) layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            if (Build.VERSION.SDK_INT >= 30) {
+                // A imagem usa coordenadas físicas da tela inteira, inclusive as áreas das barras.
+                setFitInsetsTypes(0)
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            }
             else if (Build.VERSION.SDK_INT >= 28) layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
         janelas.addView(caixa, p)

@@ -9,13 +9,13 @@ plugins {
 // O processo foi medido na bancada antes deste módulo existir (galeria/medicao não; ver docs/ do módulo).
 android {
     namespace = "br.maxymus.tradutor"
-    compileSdk = 35
+    compileSdk = 34
     defaultConfig {
         applicationId = "br.maxymus.tradutor"
-        minSdk = 30            // takeScreenshot da acessibilidade exige API 30
+        minSdk = 26            // leitor e MediaProjection; acessibilidade captura somente a partir da API 30
         targetSdk = 34
-        versionCode = 33
-        versionName = "0.33"
+        versionCode = 34
+        versionName = "0.34"
         ndk { abiFilters += listOf("arm64-v8a") }
         buildConfigField("String", "TELEMETRIA_TOKEN", "\"" + (System.getenv("TELEMETRIA_TOKEN") ?: "") + "\"")
         // token do NOSSO servico de tradução por modelo de linguagem; a chave do provedor fica no servidor

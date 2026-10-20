@@ -32,11 +32,10 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * O serviço faz tudo: a bolha, a captura e a sobreposição.
+ * Modo avançado: bolha, captura por acessibilidade, contínuo, preparo e gestos.
  *
- * Divergência do Astra, explicada: ele previu DUAS permissões, desenhar sobre outros apps e acessibilidade. Um
- * serviço de acessibilidade pode criar janelas do tipo TYPE_ACCESSIBILITY_OVERLAY sem a permissão de desenhar
- * sobre outros apps, então a primeira sai da configuração. Uma permissão a menos para o dono conceder.
+ * Este modo usa TYPE_ACCESSIBILITY_OVERLAY sem autorização de sobreposição. O modo manual da 0.34
+ * tem seu próprio serviço e TYPE_APPLICATION_OVERLAY; ambos compartilham FluxoCongelado.
  *
  * Desenho da primeira versão (Astra, 22/09): a tradução é uma leitura CONGELADA da tela. Mostramos a captura já
  * traduzida por cima de tudo e o toque fora dos botões fecha. Isso evita o desalinhamento entre desenho e texto quando a
@@ -131,6 +130,8 @@ class ServicoTradutor : AccessibilityService() {
     private var assinaturaEscuraTratada = 0L    // a última tela escura já diagnosticada no contínuo: a mesma tela não gasta outra captura
 
     override fun onServiceConnected() {
+        // A troca é síncrona: remove as janelas da projeção antes de criar a bolha avançada.
+        ServicoProjecao.ativo?.encerrar(false, "Acessibilidade avançada ativa: a sessão manual foi encerrada.")
         ativo = this
         janelas = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         Telemetria.iniciar(this)
@@ -897,6 +898,10 @@ class ServicoTradutor : AccessibilityService() {
     private suspend fun captura(): Bitmap? = capturar().tela
 
     private suspend fun capturar(): Capturada = withContext(Dispatchers.Main) {
+        if (Build.VERSION.SDK_INT < 30) {
+            aviso("A captura por acessibilidade exige Android 11. Desligue a opção avançada e use a sessão manual.")
+            return@withContext Capturada(null)
+        }
         portaoCaptura.withLock {
             // todas as tentativas, inclusive a confirmação, respeitam o intervalo do Android
             ultimaCaptura?.let { ultima ->

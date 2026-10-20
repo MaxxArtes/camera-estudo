@@ -5,6 +5,9 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <!-- A leitura em voz alta fala com o motor de voz do sistema (TextToSpeech). No Android 11 ou mais o app so enxerga o
          servico de TTS se declarar que quer ve-lo; sem isto nao acha motor nenhum. -->
     <queries>
@@ -47,8 +50,12 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
-        <!-- A captura da tela e a bolha vivem aqui. Servico de acessibilidade pode criar janela do tipo
-             TYPE_ACCESSIBILITY_OVERLAY sem a permissao de desenhar sobre outros apps: uma permissao a menos. -->
+        <!-- Sessão manual autorizada pela tela visível; nunca reinicia sem novo consentimento. -->
+        <service
+            android:name=".ServicoProjecao"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+        <!-- Opção avançada: contínuo, preparo por rolagem e gestos continuam na acessibilidade. -->
         <service
             android:name=".ServicoTradutor"
             android:exported="true"
