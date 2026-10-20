@@ -54,6 +54,10 @@ class ServicoProjecao : Service() {
     private var projecao: ProjecaoTela? = null
     private var encerrada = false
     private var donaDaSessao = false
+    private var inicioSessao: Long? = null
+    private var capturas = 0
+    private var erroCapturaRegistrado = false
+    private var inicioCaptura = 0L
     private var bolha: View? = null
     private var painel: View? = null
     private var original: Bitmap? = null
@@ -75,12 +79,13 @@ class ServicoProjecao : Service() {
     }
     private val telaDesligada = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            encerrar(true, "A tela foi bloqueada. Inicie uma nova sessão para capturar.")
+            encerrar(FimSessao.SISTEMA, "A tela foi bloqueada. Inicie uma nova sessão para capturar.")
         }
     }
 
     override fun onCreate() {
         super.onCreate()
+        Telemetria.iniciar(this)
         EstadoCaptura.iniciar(this)
         contentResolver.registerContentObserver(
             Settings.Secure.getUriFor(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES), false, observador)
@@ -92,7 +97,7 @@ class ServicoProjecao : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ENCERRAR) {
-            encerrar(false, "Sessão encerrada.")
+            encerrar(FimSessao.USUARIO, "Sessão encerrada.")
             return START_NOT_STICKY
         }
         // Um segundo comando não cria outra projeção nem outro VirtualDisplay.
@@ -105,7 +110,10 @@ class ServicoProjecao : Service() {
         }
         donaDaSessao = true
         try {
-            check(!EstadoCaptura.acessibilidadeLigada(this)) { "A acessibilidade está ligada e tem prioridade." }
+            if (EstadoCaptura.acessibilidadeLigada(this)) {
+                encerrar(FimSessao.ACESSIBILIDADE, "A acessibilidade está ligada e tem prioridade.")
+                return START_NOT_STICKY
+            }
             check(Settings.canDrawOverlays(this)) { "Autorize a sobreposição para usar a bolha." }
             val dados = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra("consentimento", Intent::class.java)
                 else @Suppress("DEPRECATION") intent.getParcelableExtra<Intent>("consentimento")
@@ -116,12 +124,17 @@ class ServicoProjecao : Service() {
             val n = notificacao()
             if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICACAO, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
             else startForeground(NOTIFICACAO, n)
-            Telemetria.iniciar(this)
             Traducao.carregarPreferencias(this)
             Traducao.iniciarCacheDisco(this)
             val captura = ProjecaoTela(this,
-                { encerrar(true, "O sistema encerrou a captura. Inicie uma nova sessão e autorize novamente.") },
+                { motivo -> encerrar(motivo, "A captura foi interrompida. Inicie uma nova sessão e autorize novamente.") },
                 {
+                    if (ativo === this && !encerrada) {
+                        Telemetria.evento("sessao", mapOf("acao" to "girou"))
+                        // Registrar antes de cancelar: o cancelamento pode ocultar a exceção da projeção.
+                        if (trabalho?.isActive == true) registrarErroCaptura(
+                            ErroCapturaSessao(FalhaCaptura.ROTACAO, "A tela girou. Capture novamente."))
+                    }
                     invalidarTela()
                     avisar("A tela mudou de tamanho. Toque na bolha para capturar novamente.")
                 })
@@ -130,6 +143,8 @@ class ServicoProjecao : Service() {
             check(EstadoCaptura.ativar(this, pedido))
             ativo = this
             mostrarBolha()
+            inicioSessao = android.os.SystemClock.elapsedRealtime()
+            Telemetria.evento("sessao", mapOf("acao" to "iniciada"))
             escopo.launch {
                 while (isActive) {
                     delay(1_000)
@@ -137,7 +152,7 @@ class ServicoProjecao : Service() {
                 }
             }
         } catch (_: Exception) {
-            encerrar(true, "Não foi possível iniciar a captura. Confira a sobreposição e peça uma nova sessão.")
+            encerrar(FimSessao.ERRO, "Não foi possível iniciar a captura. Confira a sobreposição e peça uma nova sessão.")
         }
         return START_NOT_STICKY
     }
@@ -159,16 +174,19 @@ class ServicoProjecao : Service() {
     private fun conferirModo() {
         if (encerrada) return
         if (EstadoCaptura.modo(this) == ModoCaptura.ACESSIBILIDADE)
-            encerrar(false, "Acessibilidade avançada ativa: a sessão manual foi encerrada.")
+            encerrar(FimSessao.ACESSIBILIDADE, "Acessibilidade avançada ativa: a sessão manual foi encerrada.")
         else if (!Settings.canDrawOverlays(this))
-            encerrar(true, "A permissão de sobreposição foi retirada. Autorize-a antes de iniciar outra sessão.")
+            encerrar(FimSessao.ERRO, "A permissão de sobreposição foi retirada. Autorize-a antes de iniciar outra sessão.")
     }
 
-    fun encerrar(peloSistema: Boolean, mensagem: String) {
+    internal fun encerrar(motivo: FimSessao, mensagem: String) {
         if (encerrada) return
         encerrada = true
+        if (donaDaSessao) Telemetria.evento("sessao", mapOf("acao" to "encerrada", "motivo" to motivo.codigo,
+            "duracao_s" to (inicioSessao?.let { (android.os.SystemClock.elapsedRealtime() - it) / 1_000 } ?: 0L),
+            "capturas" to capturas))
         if (ativo === this) ativo = null
-        EstadoCaptura.encerrar(this, peloSistema, mensagem)
+        EstadoCaptura.encerrar(this, motivo.peloSistema, mensagem)
         invalidarTela()
         remover(bolha); bolha = null
         projecao?.fechar(); projecao = null
@@ -179,7 +197,7 @@ class ServicoProjecao : Service() {
     }
 
     override fun onDestroy() {
-        if (!encerrada && donaDaSessao) encerrar(true, "A sessão foi interrompida. Inicie uma nova sessão para capturar.")
+        if (!encerrada && donaDaSessao) encerrar(FimSessao.SISTEMA, "A sessão foi interrompida. Inicie uma nova sessão para capturar.")
         escopo.cancel()
         contentResolver.unregisterContentObserver(observador)
         runCatching { unregisterReceiver(telaDesligada) }
@@ -190,7 +208,7 @@ class ServicoProjecao : Service() {
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         runCatching { projecao?.configuracaoMudou() }.onFailure {
-            encerrar(true, "Não consegui ajustar a captura à rotação. Inicie outra sessão.")
+            encerrar(FimSessao.ERRO, "Não consegui ajustar a captura à rotação. Inicie outra sessão.")
         }
         bolha?.let { v ->
             val p = v.layoutParams as WindowManager.LayoutParams
@@ -250,6 +268,13 @@ class ServicoProjecao : Service() {
         if (LeitorActivity.visivel) v.visibility = View.INVISIBLE
     }
 
+    private fun registrarErroCaptura(e: Exception) {
+        if (erroCapturaRegistrado) return
+        erroCapturaRegistrado = true
+        Telemetria.evento("erro", mapOf("onde" to "sessao_captura", "msg" to Telemetria.classe(e),
+            "motivo" to motivoErroCaptura(e), "ms" to Telemetria.ms(inicioCaptura)))
+    }
+
     private fun capturar() {
         conferirModo()
         // Cancelamento durante OCR bloqueante só termina ao sair do trabalhador. Até lá, não começar
@@ -257,6 +282,9 @@ class ServicoProjecao : Service() {
         if (encerrada || LeitorActivity.visivel || trabalho?.isCompleted == false || painel != null) return
         val fonte = projecao ?: return
         val geracao = geracaoTela
+        capturas++ // Conta os pedidos aceitos, inclusive timeout, rotação e captura preta.
+        erroCapturaRegistrado = false
+        inicioCaptura = Telemetria.agora()
         trabalho = escopo.launch {
             var tela: Bitmap? = null
             var processada: FluxoCongelado.Processada? = null
@@ -266,11 +294,17 @@ class ServicoProjecao : Service() {
                 delay(90) // preserva a espera pelo compositor da 0.33, antes de drenar o ImageReader
                 val b = fonte.capturar()
                 tela = b
-                checkNotNull(b) { "Nenhum quadro novo chegou. Toque novamente; se persistir, reinicie a sessão." }
+                if (b == null) throw ErroCapturaSessao(FalhaCaptura.SEM_QUADRO,
+                    "Nenhum quadro novo chegou. Toque novamente; se persistir, reinicie a sessão.")
                 bolha?.visibility = View.VISIBLE
                 val topo = (b.height * 0.11f).toInt(); val base = (b.height * 0.96f).toInt()
                 val preta = withContext(Dispatchers.Default) { QuadroPreto.rejeitar(b.width, topo, base, b::getPixel) }
-                check(!preta) { "A captura ficou preta. Pode ser bloqueio de captura ou uma tela escura. Tente outra tela." }
+                if (preta) {
+                    Telemetria.evento("captura_preta", mapOf("evidencia" to "sessao_grade",
+                        "ms" to Telemetria.ms(inicioCaptura)))
+                    avisar("A captura ficou preta. Pode ser bloqueio de captura ou uma tela escura. Tente outra tela.")
+                    return@launch
+                }
                 val referencia = Traducao.correcoes.get()
                 withContext(Dispatchers.Default) {
                     processada = FluxoCongelado.processar(this@ServicoProjecao, b, topo, base) { isActive }
@@ -278,6 +312,22 @@ class ServicoProjecao : Service() {
                 if (encerrada || geracao != geracaoTela || LeitorActivity.visivel) return@launch
                 val r = checkNotNull(processada)
                 val congelada = r.congelada
+                // Tempo total desde o toque aceito, incluindo espera pelo compositor e pelo quadro.
+                val campos = mutableMapOf<String, Any?>("modo" to "sessao", "falas" to (congelada?.falas?.size ?: 0),
+                    "ms" to Telemetria.ms(inicioCaptura), "cache" to Traducao.noCache,
+                    "ms_ocr" to r.msOcr, "ms_trad" to r.msTrad)
+                if (r.tudoNoIdioma) campos["tudo_no_idioma"] = true
+                if (congelada != null) {
+                    val resultado = congelada.resultado
+                    campos.putAll(mapOf("ms_pint" to r.msPint,
+                        "caminho" to resultado.caminho, "origem" to resultado.origem,
+                        "online" to resultado.online, "offline" to resultado.offline,
+                        "modelo" to (resultado.modelo ?: "-"),
+                        "puladas" to congelada.falas.count { it.texto in resultado.puladas }, "und" to resultado.und,
+                        "ms_modelo" to resultado.msModelo, "compartilhadas" to resultado.compartilhadas,
+                        "id" to resultado.idServidor))
+                }
+                Telemetria.evento("traduziu", campos)
                 if (congelada == null) {
                     avisar(when {
                         r.ocrFalhou -> "Não consegui reconhecer o texto. Capture novamente."
@@ -294,6 +344,7 @@ class ServicoProjecao : Service() {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
+                registrarErroCaptura(e)
                 avisar(e.message ?: "Não consegui capturar esta tela. Tente novamente.")
             } finally {
                 if (!mostrada) { tela?.recycle(); processada?.congelada?.camada?.recycle() }
