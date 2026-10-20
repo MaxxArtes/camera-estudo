@@ -1,0 +1,5 @@
+<resources>
+    <!-- Fundo escuro do painel (variável bg do tema escuro em index.html). -->
+    <color name="fundo">#11151D</color>
+    <color name="ic_launcher_background">#17171B</color>
+</resources>
