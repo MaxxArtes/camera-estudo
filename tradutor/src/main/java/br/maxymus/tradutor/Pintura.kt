@@ -21,6 +21,8 @@ import kotlin.math.min
  *  3. A faixa é opaca e de canto reto, na cor do balão, com o texto na cor medida da letra (desenho do Astra,
  *     01/10). Nada de transparência: sobre arte escura ela precisa delimitar a área sozinha.
  *
+ *  4. Com a parede do balão clara, a faixa quadrada é encaixada dentro dele (RegraBalao, Tradutor 0.33).
+ *
  * A saída é uma camada transparente do tamanho da tela: só o que foi pintado fica opaco.
  */
 object Pintura {
@@ -81,8 +83,14 @@ object Pintura {
             val larguraTexto = linhas.maxOfOrNull { tinta.measureText(it) }?.toInt() ?: 0
             val fw = min(w, max(f.caixa.width(), larguraTexto + 1) + 2 * mx)
             val fh = min(h, (linhas.size * tam * 1.25f).toInt() + 2 * my)
-            val fx0 = (f.caixa.centerX() - fw / 2).coerceIn(0, max(0, w - fw))
-            val fy0 = (f.caixa.centerY() - fh / 2).coerceIn(0, max(0, h - fh))
+            var fx0 = (f.caixa.centerX() - fw / 2).coerceIn(0, max(0, w - fw))
+            var fy0 = (f.caixa.centerY() - fh / 2).coerceIn(0, max(0, h - fh))
+            // Com a parede do balão clara, a faixa (ainda quadrada) é encaixada dentro dele, em cada eixo em que couber: era
+            // a faixa saindo do balão para a arte em volta o que incomodava em quadro escuro (RegraBalao).
+            RegraBalao.interior(px, w, h, Caixa(f.caixa.left, f.caixa.top, f.caixa.right, f.caixa.bottom), fundo, max(40, alt * 3))?.let { b ->
+                fx0 = RegraBalao.encaixa(fx0, fx0 + fw, b.esquerda, b.direita).first
+                fy0 = RegraBalao.encaixa(fy0, fy0 + fh, b.topo, b.base).first
+            }
             faixas += Faixa(fx0, fy0, fx0 + fw, fy0 + fh, linhas, tam, fundo, letra)
         }
 

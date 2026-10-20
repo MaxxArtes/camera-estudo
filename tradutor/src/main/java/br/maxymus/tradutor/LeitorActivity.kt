@@ -1,6 +1,7 @@
 package br.maxymus.tradutor
 
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -27,6 +29,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -70,11 +73,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private val Fundo = Color(0xFF111114)
 private val Superficie = Color(0xFF252529)
 private val Coral = Color(0xFFFF575F)
+private val Ambar = Color(0xFFFFB547)
 private val Texto = Color(0xFFF5F5F5)
 private val Texto2 = Color(0xFFA3A3AA)
 
@@ -214,7 +220,9 @@ private fun TelaCapitulo(endereco: String, voltar: () -> Unit) {
                 contentPadding = with(LocalDensity.current) {
                     PaddingValues(top = leitura.alturaCima.toDp(), bottom = leitura.alturaBaixo.toDp())
                 }) {
-                items(leitor.quadros, key = { it.indice }) { q -> QuadroNaTela(q) { leitor.tentarDeNovo(q) } }
+                items(leitor.quadros, key = { it.indice }) { q ->
+                    QuadroNaTela(q, { leitor.tentarDeNovo(q) }, { barras = !barras }, { leitor.originalParaEspiar(q) })
+                }
             }
             if (mostrarBarras) {
                 BarraDeCima(endereco, voltar, Modifier.align(Alignment.TopCenter).onSizeChanged { leitura.alturaCima = it.height })
@@ -236,9 +244,28 @@ private fun SemVoz(leitura: LeituraNoLeitor) =
 
 /** Um quadro. Enquanto não há imagem, o espaço é um marcador COMPACTO: inventar altura faria a lista pular. */
 @Composable
-private fun QuadroNaTela(q: Leitor.Quadro, tentarDeNovo: () -> Unit) {
+private fun QuadroNaTela(q: Leitor.Quadro, tentarDeNovo: () -> Unit, tocar: () -> Unit, espiar: () -> Bitmap?) {
     val b = q.imagem
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
+    // Segurar o dedo por 200 ms mostra o ORIGINAL deste quadro enquanto o dedo estiver lá (ideia do FrankYomik); um toque
+    // rápido continua mostrando e escondendo as barras, e arrastar continua rolando. "Ver original" segue para o capítulo inteiro.
+    var espiado by remember(q.indice) { mutableStateOf<Bitmap?>(null) }
+    val escopo = rememberCoroutineScope()
+    BoxWithConstraints(Modifier.fillMaxWidth().pointerInput(q.indice) {
+        var espiou = false
+        detectTapGestures(
+            onPress = {
+                espiou = false
+                val espera = escopo.launch {
+                    delay(200)
+                    espiou = true
+                    espiado = withContext(Dispatchers.IO) { espiar() }
+                }
+                tryAwaitRelease()
+                espera.cancel()
+                espiado = null
+            },
+            onTap = { if (!espiou) tocar() })
+    }) {
         val altura = if (q.proporcao > 0f) maxWidth * q.proporcao else 180.dp
         Box(Modifier.fillMaxWidth().height(altura)) {
             if (b != null) {
@@ -252,15 +279,20 @@ private fun QuadroNaTela(q: Leitor.Quadro, tentarDeNovo: () -> Unit) {
                     }
                 }
             }
+            espiado?.let {
+                Image(it.asImageBitmap(), contentDescription = null,
+                    modifier = Modifier.fillMaxWidth(), contentScale = ContentScale.FillWidth)
+                Etiqueta("Original", Modifier.align(Alignment.TopEnd))
+            }
             if (q.estado == Leitor.Estado.TRADUZINDO)
-                Etiqueta("Traduzindo…", Modifier.align(Alignment.TopStart))
+                Etiqueta("Traduzindo…", Modifier.align(Alignment.TopStart), Ambar)
             if (q.estado == Leitor.Estado.ERRO_REDE && b != null)
                 TextButton(onClick = tentarDeNovo, modifier = Modifier.align(Alignment.TopStart).padding(8.dp)) {
                     Text("Tentar novamente", color = Coral, fontSize = 12.sp)
                 }
             if (q.estado == Leitor.Estado.ERRO_TRAD && b != null)
                 Row(Modifier.align(Alignment.TopStart).padding(8.dp)) {
-                    Etiqueta("Sem tradução", Modifier)
+                    Etiqueta("Sem tradução", Modifier, Coral)
                     TextButton(onClick = tentarDeNovo) { Text("Tentar tradução", color = Coral, fontSize = 12.sp) }
                 }
         }
@@ -275,9 +307,13 @@ private fun Coluna(aviso: String, acao: String, ao: () -> Unit) =
     }
 
 @Composable
-private fun Etiqueta(texto: String, m: Modifier) =
-    Text(texto, color = Texto, fontSize = 11.sp,
-        modifier = m.padding(8.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xCC111114)).padding(horizontal = 8.dp, vertical = 4.dp))
+private fun Etiqueta(texto: String, m: Modifier, ponto: Color? = null) =
+    // o ponto diz o estado de longe: âmbar trabalhando, coral sem tradução
+    Row(m.padding(8.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xCC111114)).padding(horizontal = 8.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        if (ponto != null) Box(Modifier.padding(end = 6.dp).size(8.dp).clip(CircleShape).background(ponto))
+        Text(texto, color = Texto, fontSize = 11.sp)
+    }
 
 @Composable
 private fun BarraDeCima(endereco: String, voltar: () -> Unit, m: Modifier) =
