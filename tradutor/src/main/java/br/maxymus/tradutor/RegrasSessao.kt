@@ -10,6 +10,21 @@ internal fun modoCaptura(acessibilidadeLigada: Boolean, projecaoAtiva: Boolean):
 
 internal enum class EstadoSessao { OCIOSA, PEDINDO, ATIVA, PARADA_PELO_SISTEMA }
 
+internal enum class FimSessao(val codigo: String, val peloSistema: Boolean) {
+    USUARIO("usuario", false), SISTEMA("sistema", true),
+    ACESSIBILIDADE("acessibilidade", false), ERRO("erro", true)
+}
+
+internal enum class FalhaCaptura(val codigo: String) {
+    SEM_QUADRO("sem_quadro"), LEITURA("leitura"), ROTACAO("rotacao"), OUTRO("outro")
+}
+
+internal class ErroCapturaSessao(val motivo: FalhaCaptura, mensagem: String, causa: Throwable? = null) :
+    IllegalStateException(mensagem, causa)
+
+internal fun motivoErroCaptura(erro: Throwable): String =
+    ((erro as? ErroCapturaSessao)?.motivo ?: FalhaCaptura.OUTRO).codigo
+
 /** Token local invalida consentimentos atrasados; nunca permite reutilizar uma sessão encerrada. */
 internal class SessaoCaptura(interrompida: Boolean = false) {
     var estado = if (interrompida) EstadoSessao.PARADA_PELO_SISTEMA else EstadoSessao.OCIOSA
