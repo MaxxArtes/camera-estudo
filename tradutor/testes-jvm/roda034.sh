@@ -9,6 +9,7 @@ export SRC
 bash "$AQUI/roda033.sh"
 SAIDA=$(mktemp -d "${TMPDIR:-/tmp}/tradutor-034.XXXXXX")
 trap 'rm -rf "$SAIDA"' EXIT
-"$KOTLINC" -jvm-target 17 -include-runtime \
-    "$SRC/RegrasSessao.kt" "$AQUI/Teste034.kt" -d "$SAIDA/teste034.jar"
-java -jar "$SAIDA/teste034.jar"
+C=/root/.cache/kc-camera
+JAVA_OPTS="-Xmx1400m -Xms256m" "$KOTLINC" -no-jdk -no-reflect -jvm-target 17 \
+    -cp "$C/ferramentas/android.jar" "$SRC/RegrasSessao.kt" "$AQUI/Teste034.kt" -d "$SAIDA"
+java -cp "$SAIDA:$C/ferramentas/kotlinc/lib/kotlin-stdlib.jar" br.maxymus.tradutor.Teste034Kt

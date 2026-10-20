@@ -898,10 +898,6 @@ class ServicoTradutor : AccessibilityService() {
     private suspend fun captura(): Bitmap? = capturar().tela
 
     private suspend fun capturar(): Capturada = withContext(Dispatchers.Main) {
-        if (Build.VERSION.SDK_INT < 30) {
-            aviso("A captura por acessibilidade exige Android 11. Desligue a opção avançada e use a sessão manual.")
-            return@withContext Capturada(null)
-        }
         portaoCaptura.withLock {
             // todas as tentativas, inclusive a confirmação, respeitam o intervalo do Android
             ultimaCaptura?.let { ultima ->

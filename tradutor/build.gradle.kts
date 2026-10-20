@@ -9,10 +9,10 @@ plugins {
 // O processo foi medido na bancada antes deste módulo existir (galeria/medicao não; ver docs/ do módulo).
 android {
     namespace = "br.maxymus.tradutor"
-    compileSdk = 34
+    compileSdk = 35
     defaultConfig {
         applicationId = "br.maxymus.tradutor"
-        minSdk = 26            // leitor e MediaProjection; acessibilidade captura somente a partir da API 30
+        minSdk = 30            // takeScreenshot da acessibilidade exige API 30
         targetSdk = 34
         versionCode = 34
         versionName = "0.34"
