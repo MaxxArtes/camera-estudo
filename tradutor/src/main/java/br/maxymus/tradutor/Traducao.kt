@@ -270,8 +270,13 @@ object Traducao {
     /** A mesma normalização para a chave do cache e para o LRU de idioma (ver normalizarFala). */
     private fun normalizar(s: String) = normalizarFala(s)
 
-    /** O destino vem de quem chama, da foto do pedido: a chave não pode mudar porque o dono trocou o idioma no meio. */
-    private fun chave(s: String, dest: String) = dest + "|" + normalizar(s)
+    /**
+     * O destino vem de quem chama, da foto do pedido: a chave não pode mudar porque o dono trocou o idioma no meio. A chave
+     * leva também a REVISÃO da tradução (REVISAO_CACHE): mudou o pedido ao modelo (contexto, tipo, contrato), as traduções
+     * antigas deixam de valer em vez de ficarem para sempre no cache. Ideia do FrankYomik, que versiona o cache pelo processo
+     * inteiro. A revisão fica antes do "|", que é onde guardar() separa o texto da chave.
+     */
+    private fun chave(s: String, dest: String) = dest + "#r" + REVISAO_CACHE + "|" + normalizar(s)
 
     /** O que ficou no cache depois de guardar: a entrada de fato (pode ser a que já estava) e se o TEXTO dessa chave mudou. */
     private class Gravado(val entrada: Entrada, val mudou: Boolean)
@@ -410,7 +415,10 @@ object Traducao {
      * thread escreve aqui (o laço das próprias falas, o acompanhamento das alheias e as recuperações), então o mapa é
      * concorrente e os contadores são atômicos; o resultado devolve uma CÓPIA do mapa.
      */
-    private class Pedido(val t0: Long, val dest: String, val origem: String) {
+    private class Pedido(
+        val t0: Long, val dest: String, val origem: String,
+        val contexto: List<String> = emptyList(), val sfx: Set<String> = emptySet()
+    ) {
         /** o único prazo do pedido: nada espera nem abre tempo novo depois dele */
         val prazoFinal = t0 + PRAZO_MODELO * 1_000_000_000L
         val mot = motores
@@ -465,13 +473,14 @@ object Traducao {
      *    cedo quando ela é falsa. Só se PARA de esperar: o futuro compartilhado nunca é cancelado.
      */
     fun traduzirLoteDetalhado(
-        ctx: Context, textos: List<String>, destinoDoPedido: String? = null, ignorarCache: Boolean = false, automatico: Boolean = false, ativo: () -> Boolean = { true }
+        ctx: Context, textos: List<String>, destinoDoPedido: String? = null, ignorarCache: Boolean = false, automatico: Boolean = false,
+        contexto: List<String> = emptyList(), sfx: Set<String> = emptySet(), ativo: () -> Boolean = { true }
     ): ResultadoLote {
         val t0 = System.nanoTime()
         val dest = destinoDoPedido ?: destino
         val fixa = origemFixa
         val c = classificar(textos, dest, fixa)
-        val p = Pedido(t0, dest, c.origem)
+        val p = Pedido(t0, dest, c.origem, contexto, sfx)
         // só o dono fixar a origem igual ao destino devolve tudo sem traduzir; a origem automática nunca é igual ao destino
         if (RegraIdioma.devolveTudoSemTraduzir(fixa, dest)) {
             textos.forEach { p.saida[it] = it }
@@ -647,7 +656,7 @@ object Traducao {
                 // o instante em que o modelo terminou é gravado por ele mesmo: o laço abaixo só olha de 40 em 40 ms
                 val fimModelo = AtomicLong(0L)
                 val fModelo = if (comModelo) piscina.submit<RespostaModelo> {
-                    (if (ativo()) porModelo(faltando, origem, dest) else RespostaModelo(null, null, null)).also { fimModelo.set(System.nanoTime()) }
+                    (if (ativo()) porModelo(faltando, origem, dest, p.contexto, p.sfx) else RespostaModelo(null, null, null)).also { fimModelo.set(System.nanoTime()) }
                 } else null
                 val fMaquina = piscina.submit<String?> { if (ativo()) mot.maquina(numerado, origem, dest) else null }
                 piscina.shutdown()
@@ -802,26 +811,78 @@ object Traducao {
      * instalado fora da loja e qualquer um consegue abrir e ler o que está dentro.
      * Medido em 23/09: acerta "Você é o Sr. Seonghyeon Han?", que os outros dois caminhos erravam.
      */
-    private fun porModelo(falas: List<String>, origem: String, dest: String): RespostaModelo {
+    private fun porModelo(
+        falas: List<String>, origem: String, dest: String, contexto: List<String> = emptyList(), sfx: Set<String> = emptySet()
+    ): RespostaModelo {
         if (BuildConfig.TRADUTOR_TOKEN.isEmpty() || falas.isEmpty()) return RespostaModelo(null, null, null)
-        return runCatching {
-            val corpo = JSONObject().put("de", origem).put("para", Idiomas.nomeCheio(dest))
-                .put("falas", org.json.JSONArray(falas)).toString().toByteArray()
-            val con = (URL("https://pocketlm.maxymus.dev.br/tradutor/traduzir").openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"; doOutput = true
-                connectTimeout = 6_000; readTimeout = 25_000
-                setRequestProperty("Authorization", "Bearer " + BuildConfig.TRADUTOR_TOKEN)
-                setRequestProperty("Content-Type", "application/json")
+        val t0 = System.nanoTime()
+        val ids = RegraPedidoModelo.ids(falas.size)
+        val primeira = pedidoModelo(falas, ids, falas.indices.toList(), origem, dest, contexto, sfx)
+        val textos = primeira.textos ?: return RespostaModelo(null, primeira.modelo, primeira.id)
+        val r = textos.toMutableList()
+        // Faltou fala na resposta: pede SÓ as que faltaram, no máximo duas vezes (a segunda em duas metades), dentro do prazo.
+        // Antes a fala que faltava ia para a máquina mesmo com o modelo no ar.
+        var tentativa = 0
+        var pedidos = 0
+        var recuperadas = 0
+        while ((System.nanoTime() - t0) / 1_000_000L < PRAZO_RECUPERACAO_MODELO_MS) {
+            val planos = RegraPedidoModelo.recuperacao(RegraPedidoModelo.faltando(r), tentativa++)
+            if (planos.isEmpty()) break
+            for (plano in planos) {
+                pedidos++
+                pedidoModelo(falas, ids, plano, origem, dest, contexto, sfx).textos?.forEachIndexed { k, t ->
+                    if (t != null && r[plano[k]] == null) { r[plano[k]] = t; recuperadas++ }
+                }
             }
-            con.outputStream.use { it.write(corpo) }
-            if (con.responseCode != 200) return@runCatching RespostaModelo(null, "http " + con.responseCode, idDoErro(con.errorStream))
-            val j = JSONObject(con.inputStream.bufferedReader().use { it.readText() })
-            val a = j.getJSONArray("falas")
-            // o nome do modelo e o id vêm da resposta e vão para a telemetria: só passam se tiverem a cara de nome e de id
-            RespostaModelo(List(a.length()) { a.getString(it) }, SaneaTelemetria.modelo(j.optString("modelo", "?")),
-                SaneaTelemetria.idServidor(j.optString("id", "")))
-        }.getOrElse { RespostaModelo(null, "falhou", null) }
+        }
+        if (pedidos > 0) Telemetria.evento("modelo_recuperou", mapOf("faltaram" to textos.count { it == null },
+            "recuperadas" to recuperadas, "pedidos" to pedidos))
+        // a lista segue posicional para quem já a usa; o que não veio vai em branco e respostaDoModelo descarta
+        return RespostaModelo(r.map { it.orEmpty() }, primeira.modelo, primeira.id)
     }
+
+    /** Uma chamada ao serviço com as falas `indices`. `textos` nulo é chamada que falhou; dentro, nulo é fala que não veio. */
+    private class Parcial(val textos: List<String?>?, val modelo: String?, val id: String?)
+
+    /**
+     * O servidor ainda não conhece o contrato novo? Começa supondo que sim; se ele recusar o corpo novo (400 ou 422), o
+     * pedido é repetido no formato antigo e o app não insiste mais até reabrir.
+     */
+    @Volatile private var contratoNovo = true
+
+    private fun pedidoModelo(
+        falas: List<String>, ids: List<String>, indices: List<Int>, origem: String, dest: String,
+        contexto: List<String>, sfx: Set<String>
+    ): Parcial = runCatching {
+        val novo = contratoNovo
+        val corpo = JSONObject().put("de", origem).put("para", Idiomas.nomeCheio(dest))
+            .put("falas", org.json.JSONArray(indices.map { falas[it] }))
+        if (novo) corpo.put("versao", RegraPedidoModelo.VERSAO)
+            .put("ids", org.json.JSONArray(indices.map { ids[it] }))
+            .put("tipos", org.json.JSONArray(indices.map { if (falas[it] in sfx) RegraPedidoModelo.SFX else RegraPedidoModelo.FALA }))
+            .put("contexto", org.json.JSONArray(contexto))
+        val con = (URL("https://pocketlm.maxymus.dev.br/tradutor/traduzir").openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"; doOutput = true
+            connectTimeout = 6_000; readTimeout = 25_000
+            setRequestProperty("Authorization", "Bearer " + BuildConfig.TRADUTOR_TOKEN)
+            setRequestProperty("Content-Type", "application/json")
+        }
+        con.outputStream.use { it.write(corpo.toString().toByteArray()) }
+        val codigo = con.responseCode
+        if (novo && (codigo == 400 || codigo == 422)) {
+            contratoNovo = false
+            Telemetria.evento("modelo_contrato_antigo", mapOf("http" to codigo))
+            return@runCatching pedidoModelo(falas, ids, indices, origem, dest, contexto, sfx)
+        }
+        if (codigo != 200) return@runCatching Parcial(null, "http $codigo", idDoErro(con.errorStream))
+        val j = JSONObject(con.inputStream.bufferedReader().use { it.readText() })
+        val porId = j.optJSONObject("traducoes")?.let { o -> o.keys().asSequence().associateWith { k -> o.optString(k, "") } }
+        val lista = j.optJSONArray("falas")?.let { a -> List(a.length()) { if (a.isNull(it)) null else a.optString(it, "") } }
+        if (porId == null && lista == null) return@runCatching Parcial(null, "falhou", null)
+        // o nome do modelo e o id vêm da resposta e vão para a telemetria: só passam se tiverem a cara de nome e de id
+        Parcial(RegraPedidoModelo.alinhar(indices.map { ids[it] }, porId, lista),
+            SaneaTelemetria.modelo(j.optString("modelo", "?")), SaneaTelemetria.idServidor(j.optString("id", "")))
+    }.getOrElse { Parcial(null, "falhou", null) }
 
     /** O id que o serviço põe também na resposta de erro, para casar o pedido com o registro dele. Nada além do id sai daqui. */
     private fun idDoErro(fluxo: java.io.InputStream?): String? = runCatching {
@@ -840,6 +901,10 @@ object Traducao {
      * extra pela máquina e o offline têm que ter parado. Em 27/09 o modelo levava 4 a 7 s.
      */
     const val PRAZO_MODELO = 9L
+    /** até quando, em ms desde o primeiro pedido ao modelo, ainda se pede de novo a fala que faltou na resposta */
+    private const val PRAZO_RECUPERACAO_MODELO_MS = 6_000L
+    /** sobe quando o pedido ao modelo muda de um jeito que muda a tradução: o cache da revisão anterior deixa de valer */
+    const val REVISAO_CACHE = 2
     /**
      * quanto o lote espera pelo modelo, em ms desde o início, quando a máquina ou o local já chegaram. O modelo responde
      * em ~0,4 s (mediana 373 ms, p90 583 ms em 03/10); passando disso vale mais mostrar a reserva e deixar a correção
