@@ -28,7 +28,10 @@
             android:grantUriPermissions="true">
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/caminhos" />
         </provider>
-        <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="portrait">
+        <!-- Fora dos recentes de proposito: no HyperOS, arrastar o app nos recentes e forcar a parada, e isso mata o servico
+             de acessibilidade (a bolha) sem deixar ele voltar sozinho. Sem cartao nos recentes nao ha o que arrastar. -->
+        <activity android:name=".MainActivity" android:exported="true" android:screenOrientation="portrait"
+            android:excludeFromRecents="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -37,7 +40,7 @@
         <!-- Leitor de capitulo: recebe o endereco compartilhado do navegador. So ACTION_SEND: com ACTION_VIEW
              o app viraria candidato a abrir todo link do sistema, que nao e o que o dono quer. -->
         <activity android:name=".LeitorActivity" android:exported="true" android:screenOrientation="portrait"
-            android:label="@string/leitor_nome">
+            android:label="@string/leitor_nome" android:excludeFromRecents="true">
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />

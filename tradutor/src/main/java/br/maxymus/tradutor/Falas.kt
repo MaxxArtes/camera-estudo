@@ -41,13 +41,13 @@ object Falas {
      * escura em que a primeira leitura não achou nada ganha uma segunda, invertida e com contraste (RegraSegundaPassada).
      */
     fun lerOuNulo(b: Bitmap, topo: Int, base: Int): Leitura? = runCatching<Leitura?> {
-        val primeira = (if (RegraFaixas.precisaCortar(b.width, b.height)) porFaixas(b) else uma(b, 0)) ?: return@runCatching null
+        val primeira = lerImagem(b, inverter = false) ?: return@runCatching null
         fun naArea(c: Caixa) = c.topo >= topo && c.base <= base
         var linhas = primeira.linhas.filter { naArea(it.caixa) }
         var algumTexto = primeira.comTexto.any { naArea(it) }
         if (RegraSegundaPassada.precisa(linhas.size, luminancia(b))) {
-            val invertida = invertida(b)
-            val segunda = try { uma(invertida, 0) } finally { invertida.recycle() }
+            // as mesmas faixas do quadro alto: cada faixa é invertida sozinha, em vez de copiar a imagem inteira
+            val segunda = lerImagem(b, inverter = true)
             if (segunda != null) {
                 val novas = segunda.linhas.filter { naArea(it.caixa) }
                 linhas = RegraFaixas.semRepetidas(linhas + novas) { it.caixa }
@@ -61,6 +61,17 @@ object Falas {
     }.getOrElse { e ->
         Telemetria.evento("erro", mapOf("onde" to "ocr", "msg" to Telemetria.classe(e)))
         null
+    }
+
+    /** O quadro inteiro, ou em faixas se for alto. `inverter`: a segunda passada, com a inversão feita sobre a parte lida. */
+    private fun lerImagem(b: Bitmap, inverter: Boolean): Bruta? =
+        if (RegraFaixas.precisaCortar(b.width, b.height)) porFaixas(b, inverter) else umaParte(b, 0, inverter)
+
+    /** Lê `parte` (a imagem, ou uma faixa dela), invertendo uma CÓPIA dela quando pedido. */
+    private fun umaParte(parte: Bitmap, dy: Int, inverter: Boolean): Bruta? {
+        if (!inverter) return uma(parte, dy)
+        val copia = invertida(parte)
+        return try { uma(copia, dy) } finally { copia.recycle() }
     }
 
     /** Uma leitura do reconhecedor; as caixas descem `dy` pixels para voltar à página. Nulo quando ela falhou. */
@@ -82,18 +93,18 @@ object Falas {
      * O quadro alto, faixa por faixa. A linha que encosta numa emenda foi cortada e sai (a faixa vizinha tem a linha
      * inteira); o que se repete na sobreposição sai também. Uma faixa que falha derruba a leitura toda, como antes.
      */
-    private fun porFaixas(b: Bitmap): Bruta? {
+    private fun porFaixas(b: Bitmap, inverter: Boolean): Bruta? {
         val cortes = RegraFaixas.cortes(b.height)
         val todas = ArrayList<RegraJuncao.Linha>()
         val comTexto = ArrayList<Caixa>()
         for ((y0, y1) in cortes) {
             val faixa = Bitmap.createBitmap(b, 0, y0, b.width, y1 - y0)
-            val r = try { uma(faixa, y0) } finally { if (faixa !== b) faixa.recycle() }
+            val r = try { umaParte(faixa, y0, inverter) } finally { if (faixa !== b) faixa.recycle() }
             r ?: return null
             comTexto += r.comTexto
             todas += r.linhas.filter { !RegraFaixas.cortada(it.caixa, y0, y1, b.height) }
         }
-        Telemetria.evento("ocr_faixas", mapOf("faixas" to cortes.size, "px_h" to b.height))
+        if (!inverter) Telemetria.evento("ocr_faixas", mapOf("faixas" to cortes.size, "px_h" to b.height))
         return Bruta(RegraFaixas.semRepetidas(todas) { it.caixa }, comTexto)
     }
 

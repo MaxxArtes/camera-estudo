@@ -52,6 +52,13 @@ class ServicoTradutor : AccessibilityService() {
         const val ACAO_BOLHA = "br.maxymus.tradutor.BOLHA"
         const val ACAO_PREPARAR = "br.maxymus.tradutor.PREPARAR"
         const val ACAO_NOTIFICAR = "br.maxymus.tradutor.NOTIFICAR"
+        /** em SharedPreferences "tradutor": a captura (o serviço) já se conectou alguma vez neste aparelho */
+        const val MARCA_JA_LIGOU = "captura_ja_ligou"
+        /**
+         * em SharedPreferences "tradutor": o serviço saiu pelo onDestroy, que é a parada ordenada (o dono desligando a captura
+         * na Acessibilidade). Quando o sistema mata o processo o onDestroy não roda e a marca fica de fora; religar apaga a marca.
+         */
+        const val MARCA_PARADA_ORDENADA = "captura_parada_ordenada"
 
         /** A tela de preparação precisa saber o que oferecer: mostrar ou esconder a bolha. */
         val bolhaNaTela: Boolean get() = ativo?.bolha != null
@@ -139,6 +146,10 @@ class ServicoTradutor : AccessibilityService() {
         val filtro = android.content.IntentFilter().apply { addAction(ACAO_TRADUZIR); addAction(ACAO_BOLHA); addAction(ACAO_PREPARAR); addAction(ACAO_NOTIFICAR) }
         androidx.core.content.ContextCompat.registerReceiver(this, receptor, filtro, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED)
         preparar = getSharedPreferences("tradutor", Context.MODE_PRIVATE).getBoolean("preparar", true)
+        // a tela do app usa esta marca para saber que a captura já funcionou aqui: se o sistema a desligar depois, o que o
+        // dono precisa é do caminho de reativar, e não da explicação de primeira vez
+        getSharedPreferences("tradutor", Context.MODE_PRIVATE).edit().putBoolean(MARCA_JA_LIGOU, true)
+            .putBoolean(MARCA_PARADA_ORDENADA, false).apply()
         Traducao.carregarPreferencias(this)
         Traducao.iniciarCacheDisco(this)
         mostraBolha()
@@ -147,6 +158,7 @@ class ServicoTradutor : AccessibilityService() {
 
     override fun onDestroy() {
         ativo = null; continuo = false; tiraSobreposicao(); tiraBolha(); tiraMenu(); tiraCaixa()
+        getSharedPreferences("tradutor", Context.MODE_PRIVATE).edit().putBoolean(MARCA_PARADA_ORDENADA, true).apply()
         // o motor de voz é desligado (shutdown) e a leitura em andamento para: o serviço morreu, como a tela congelada
         if (vozLazy.isInitialized()) voz.desligar()
         fechar?.let { runCatching { janelas.removeView(it) } }; fechar = null
