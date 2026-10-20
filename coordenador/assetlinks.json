@@ -1,0 +1,1 @@
+[{"relation": ["delegate_permission/common.handle_all_urls"], "target": {"namespace": "android_app", "package_name": "br.maxymus.coordenador", "sha256_cert_fingerprints": ["6E:CD:0F:30:04:75:AB:0A:C4:46:E4:6E:F8:C9:EC:67:ED:D7:09:D1:6F:47:A0:EB:D5:33:9B:97:87:01:3B:3D"]}}]

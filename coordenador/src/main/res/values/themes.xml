@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.Coordenador" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@color/fundo</item>
+        <item name="android:navigationBarColor">@color/fundo</item>
+        <item name="android:windowBackground">@color/fundo</item>
+    </style>
+</resources>
