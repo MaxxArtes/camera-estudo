@@ -77,6 +77,7 @@ private fun Preparacao() {
     var servicoLigado by remember { mutableStateOf(false) }   // rodando AGORA
     var servicoListado by remember { mutableStateOf(false) }  // ligado nas configuracoes do Android
     var jaLigou by remember { mutableStateOf(false) }         // a captura já rodou alguma vez neste aparelho
+    var paradaOrdenada by remember { mutableStateOf(false) }  // o serviço saiu pelo onDestroy: o dono desligou, não foi o sistema
     var tentouAtivar by remember { mutableStateOf(false) }
     var nova by remember { mutableStateOf<Atualizador.Versao?>(null) }
     // reconfere A CADA VOLTA à tela: antes a busca acontecia uma vez só, quando a tela nascia, então quem
@@ -103,13 +104,15 @@ private fun Preparacao() {
         servicoLigado = ServicoTradutor.ativo != null
         jaLigou = ctx.getSharedPreferences("tradutor", android.content.Context.MODE_PRIVATE)
             .getBoolean(ServicoTradutor.MARCA_JA_LIGOU, false) || servicoLigado
+        paradaOrdenada = !servicoLigado && !servicoListado &&
+            ctx.getSharedPreferences("tradutor", android.content.Context.MODE_PRIVATE).getBoolean(ServicoTradutor.MARCA_PARADA_ORDENADA, false)
         bolhaNaTela = ServicoTradutor.bolhaNaTela
         if (servicoLigado) {
             // a notificação fixa pode ser dispensada com um arrasto no Android 14 e acima, e não voltava sozinha
             ServicoTradutor.ativo?.let { runCatching { it.reafirmaNotificacao() } }
         } else if (servicoListado) {
             Telemetria.evento("servico_listado_morto", mapOf("android" to android.os.Build.VERSION.SDK_INT))
-        } else if (jaLigou) {
+        } else if (jaLigou && !paradaOrdenada) {
             // o HyperOS tirou o serviço da lista depois de encerrar o app: antes a tela voltava a parecer a de primeira vez
             Telemetria.evento("servico_desligado_pelo_sistema", mapOf("android" to android.os.Build.VERSION.SDK_INT))
         }
@@ -173,7 +176,12 @@ private fun Preparacao() {
         EscolhaIdiomas()
         ListaIdiomas()
 
-        if (!servicoLigado && (servicoListado || jaLigou)) Column(
+        if (paradaOrdenada) Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Superficie).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("A captura está desligada", color = Texto, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text("Para voltar a traduzir, ligue o Tradutor de tela em Acessibilidade.", color = Texto2, fontSize = 13.sp)
+        } else if (!servicoLigado && (servicoListado || jaLigou)) Column(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF2A2026)).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(if (servicoListado) "A captura consta ligada, mas não está rodando" else "O sistema desligou a captura",
@@ -212,8 +220,8 @@ private fun Preparacao() {
         if (!servicoLigado) Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Superficie).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Bolha", color = Texto, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-            Text(if (jaLigou) "A bolha está desligada porque o sistema encerrou a captura. Ligue o Tradutor de tela em " +
-                     "Acessibilidade e ela volta sozinha."
+            Text(if (jaLigou) "A bolha está desligada porque a captura " + (if (paradaOrdenada) "foi desligada" else "foi encerrada pelo sistema") +
+                     ". Ligue o Tradutor de tela em Acessibilidade e ela volta sozinha."
                  else "A bolha aparece quando a captura estiver ligada.",
                  color = Texto2, fontSize = 13.sp)
             Button(onClick = { tentouAtivar = true; abrirAcessibilidade(ctx) },
