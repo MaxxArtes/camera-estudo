@@ -99,11 +99,13 @@ class LeitorActivity : ComponentActivity() {
         super.onResume()
         emPrimeiroPlano++
         ServicoTradutor.ativo?.leitorMudou()
+        ServicoProjecao.ativo?.leitorMudou()
     }
 
     override fun onPause() {
         emPrimeiroPlano = (emPrimeiroPlano - 1).coerceAtLeast(0)
         ServicoTradutor.ativo?.leitorMudou()
+        ServicoProjecao.ativo?.leitorMudou()
         super.onPause()
     }
 

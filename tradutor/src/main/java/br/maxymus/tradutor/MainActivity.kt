@@ -1,10 +1,14 @@
 package br.maxymus.tradutor
 
 import android.content.Intent
+import android.media.projection.MediaProjectionConfig
+import android.media.projection.MediaProjectionManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,6 +27,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -39,6 +44,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.withResumed
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -54,8 +61,68 @@ private val Texto2 = Color(0xFFA3A3AA)
  * a captura alcança dita sem enfeite. Nada de "é totalmente seguro".
  */
 class MainActivity : ComponentActivity() {
+    private var pedidoCaptura = -1L
+    private val consentimento = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { resultado ->
+        val pedido = pedidoCaptura
+        pedidoCaptura = -1
+        val dados = resultado.data
+        if (!EstadoCaptura.aguardando(pedido)) return@registerForActivityResult
+        if (resultado.resultCode != RESULT_OK || dados == null) {
+            EstadoCaptura.negar(this, pedido, "Captura não autorizada. O leitor continua pronto.")
+        } else {
+            lifecycleScope.launch {
+                var enviado = false
+                try {
+                    lifecycle.withResumed {
+                        if (EstadoCaptura.aguardando(pedido)) {
+                            if (EstadoCaptura.acessibilidadeLigada(this@MainActivity)) {
+                                EstadoCaptura.negar(this@MainActivity, pedido, "A acessibilidade está ligada e tem prioridade.")
+                            } else runCatching {
+                                startForegroundService(Intent(this@MainActivity, ServicoProjecao::class.java)
+                                    .setAction(ServicoProjecao.INICIAR).putExtra("pedido", pedido)
+                                    .putExtra("resultado", resultado.resultCode).putExtra("consentimento", dados))
+                                enviado = true
+                            }.onFailure {
+                                EstadoCaptura.negar(this@MainActivity, pedido, "Não consegui iniciar a sessão. Tente novamente.")
+                            }
+                        }
+                    }
+                } finally {
+                    if (!enviado) EstadoCaptura.negar(this@MainActivity, pedido, "Início interrompido. Peça uma nova sessão.")
+                }
+            }
+        }
+    }
+
+    fun iniciarCaptura() {
+        if (EstadoCaptura.acessibilidadeLigada(this)) {
+            EstadoCaptura.avisar("Desligue a acessibilidade avançada para usar a sessão manual.")
+            return
+        }
+        if (!Settings.canDrawOverlays(this)) {
+            EstadoCaptura.avisar("Autorize a sobreposição antes de iniciar a sessão.")
+            return
+        }
+        val pedido = EstadoCaptura.pedir(this) ?: return
+        pedidoCaptura = pedido
+        runCatching {
+            val gestor = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+            val intent = if (Build.VERSION.SDK_INT >= 34)
+                gestor.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
+            else gestor.createScreenCaptureIntent()
+            consentimento.launch(intent)
+        }.onFailure { EstadoCaptura.negar(this, pedido, "Não consegui abrir o consentimento de captura.") }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putLong("pedido_captura", pedidoCaptura)
+        super.onSaveInstanceState(outState)
+    }
+
     override fun onCreate(estado: Bundle?) {
         super.onCreate(estado)
+        EstadoCaptura.iniciar(this)
+        pedidoCaptura = estado?.getLong("pedido_captura", -1) ?: -1
         Telemetria.iniciar(this)
         Traducao.carregarPreferencias(this)
         Traducao.iniciarCacheDisco(this)
@@ -95,12 +162,12 @@ private fun Preparacao() {
     var bolhaNaTela by remember { mutableStateOf(false) }
 
     fun confere() {
-        val nome = ctx.packageName + "/" + ServicoTradutor::class.java.name
+        val nome = android.content.ComponentName(ctx, ServicoTradutor::class.java)
         val lista = Settings.Secure.getString(ctx.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
         // Estas DUAS perguntas não são a mesma, e tratá-las como uma foi o defeito: com um "ou" entre elas o app
         // dizia "Ativada" para serviço listado mas morto, e todo botão falava com ninguém, em silêncio.
         // Acontece de verdade: instalar atualização mata o processo, e o HyperOS nem sempre religa o serviço.
-        servicoListado = lista.split(':').any { it.equals(nome, true) }
+        servicoListado = lista.split(':').any { android.content.ComponentName.unflattenFromString(it) == nome }
         servicoLigado = ServicoTradutor.ativo != null
         jaLigou = ctx.getSharedPreferences("tradutor", android.content.Context.MODE_PRIVATE)
             .getBoolean(ServicoTradutor.MARCA_JA_LIGOU, false) || servicoLigado
@@ -137,17 +204,18 @@ private fun Preparacao() {
                     colors = ButtonDefaults.buttonColors(containerColor = Coral, contentColor = Fundo)) { Text("Atualizar", fontSize = 15.sp) }
             }
         }
-        Text("Uma bolha fica por cima do navegador. Ao tocar nela, o app lê a tela, traduz e mostra a página traduzida. Toque de novo para voltar.",
+        Text("Use o leitor de capítulo para traduzir e ouvir sem acessibilidade. Para outros apps, inicie uma sessão de captura manual.",
             color = Texto2, fontSize = 14.sp)
 
         CartaoLeitor()
+        CartaoSessao(servicoListado || servicoLigado, recarrega)
 
-        Cartao("Captura da tela", if (servicoLigado) "Ativada" else if (servicoListado || jaLigou) "Reativar" else "Ativar",
-            "Para funcionar, o app precisa capturar o que está na tela quando você toca na bolha. " +
-            "A captura acontece só nesse momento, não fica guardada, e ela alcança qualquer coisa visível " +
-            "na hora, inclusive o que estiver em outros aplicativos. Isso é ligado em Acessibilidade, nas " +
-            "configurações do Android, e você desliga no mesmo lugar quando quiser.",
-            pronto = servicoLigado) {
+        Cartao("Acessibilidade (avançado)", if (servicoLigado || servicoListado) "Configurar acessibilidade" else "Ativar opção avançada",
+            (if (servicoLigado) "Ativa. " else if (servicoListado) "Ligada nas configurações, mas sem serviço conectado. " else "Desligada. ") +
+            "Opcional: oferece modo contínuo, preparo durante a rolagem e gestos. " +
+            "Quando ligada, tem prioridade e encerra a sessão manual. O leitor funciona sem esta opção." +
+            (if (Build.VERSION.SDK_INT < 30) " A captura por acessibilidade exige Android 11 ou superior; use a sessão manual." else ""),
+            pronto = false) {
             tentouAtivar = true
             abrirAcessibilidade(ctx)
         }
@@ -179,17 +247,17 @@ private fun Preparacao() {
         if (paradaOrdenada) Column(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Superficie).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("A captura está desligada", color = Texto, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-            Text("Para voltar a traduzir, ligue o Tradutor de tela em Acessibilidade.", color = Texto2, fontSize = 13.sp)
-        } else if (!servicoLigado && (servicoListado || jaLigou)) Column(
+            Text("Acessibilidade avançada desligada", color = Texto, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text("O leitor e a sessão manual continuam disponíveis.", color = Texto2, fontSize = 13.sp)
+        } else if (!servicoLigado && servicoListado) Column(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color(0xFF2A2026)).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(if (servicoListado) "A captura consta ligada, mas não está rodando" else "O sistema desligou a captura",
+            Text("A acessibilidade consta ligada, mas não está rodando",
                 color = Texto, fontSize = 15.sp, fontWeight = FontWeight.Medium)
             // Medido em 01/10: o dono fechou o app pelos recentes e tentou religar 4 vezes em 30 s, sem efeito.
             // No HyperOS, fechar pelos recentes equivale a forçar a parada, e com a inicialização automática
             // desligada o sistema RECUSA religar o serviço — desligar e ligar na Acessibilidade sozinho não basta.
-            Text("O sistema do celular encerrou o app e não deixa a captura voltar sozinha. " +
+            Text("Para usar a sessão manual, desligue esta opção nas configurações. Para recuperar a acessibilidade, " +
                  "Faça os três passos, na ordem. Os dois primeiros são uma vez só.",
                  color = Texto2, fontSize = 13.sp)
             Passo("1. Ligue a Inicialização automática do Tradutor") {
@@ -214,25 +282,10 @@ private fun Preparacao() {
                  "ao limpar a lista. Para voltar a ele, use o ícone.", color = Texto2, fontSize = 12.sp)
         }
 
-        // Sem este cartão a bolha escondida só voltava pela notificação fixa — e ela pode ser dispensada.
-        // Era um beco sem saída: o botão da captura fica desabilitado quando o serviço já está ligado. Ele aparece também
-        // com o serviço parado (a bolha vive nele), e aí o botão leva direto a religar a captura.
-        if (!servicoLigado) Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Superficie).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Bolha", color = Texto, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-            Text(if (jaLigou) "A bolha está desligada porque a captura " + (if (paradaOrdenada) "foi desligada" else "foi encerrada pelo sistema") +
-                     ". Ligue o Tradutor de tela em Acessibilidade e ela volta sozinha."
-                 else "A bolha aparece quando a captura estiver ligada.",
-                 color = Texto2, fontSize = 13.sp)
-            Button(onClick = { tentouAtivar = true; abrirAcessibilidade(ctx) },
-                modifier = Modifier.fillMaxWidth().height(56.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Coral, contentColor = Fundo)) {
-                Text("Ativar bolha", fontSize = 15.sp)
-            }
-        }
+        // Controle exclusivo da bolha avançada; a sessão manual tem seus próprios estados acima.
         if (servicoLigado) Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Superficie).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Bolha", color = Texto, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            Text("Bolha da acessibilidade", color = Texto, fontSize = 16.sp, fontWeight = FontWeight.Medium)
             Text(if (bolhaNaTela) "A bolha está na tela. Toque nela para traduzir, arraste para mudar de lugar."
                  else "A bolha está escondida. Traga ela de volta para traduzir por cima do navegador.",
                  color = Texto2, fontSize = 13.sp)
@@ -246,11 +299,6 @@ private fun Preparacao() {
             }
         }
 
-        if (servicoLigado)
-            Text("Tudo pronto. Abra o quadrinho no navegador e toque na bolha.", color = Coral, fontSize = 14.sp)
-        else
-            Text("Falta ligar a captura, acima.", color = Texto2, fontSize = 13.sp)
-
         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
             Text("Versão instalada " + Atualizador.versaoInstalada(ctx).first, color = Texto2, fontSize = 12.sp,
                 modifier = Modifier.weight(1f))
@@ -261,6 +309,51 @@ private fun Preparacao() {
         }
         Text("Traduz a tela parada, uma tela por vez. Não acompanha a rolagem, e onomatopeia desenhada não é traduzida.",
             color = Texto2, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+    }
+}
+
+@Composable
+private fun CartaoSessao(acessibilidade: Boolean, revisaoPermissao: Int) {
+    val ctx = LocalContext.current
+    val estado by EstadoCaptura.estado.collectAsState()
+    val mensagem by EstadoCaptura.mensagem.collectAsState()
+    val sobreposicao = remember(revisaoPermissao, estado) { Settings.canDrawOverlays(ctx) }
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Superficie).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Sessão de captura manual", color = Texto, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        Text(when (estado) {
+            EstadoSessao.OCIOSA -> "Ociosa"
+            EstadoSessao.PEDINDO -> "Aguardando autorização e início da sessão"
+            EstadoSessao.ATIVA -> "Ativa · toque na bolha para capturar, traduzir e ouvir"
+            EstadoSessao.PARADA_PELO_SISTEMA -> "Interrompida · inicie novamente para dar um novo consentimento"
+        }, color = Coral, fontSize = 14.sp)
+        Text("A sessão compartilha a tela inteira com o Tradutor. Só um toque na bolha processa uma imagem; " +
+            "o resultado fica congelado e não acompanha a rolagem. As imagens não são gravadas. " +
+            "Com internet, o texto reconhecido é enviado para tradução. Encerre a sessão ao terminar.",
+            color = Texto2, fontSize = 13.sp)
+        if (mensagem.isNotBlank()) Text(mensagem, color = Texto2, fontSize = 13.sp)
+        if (acessibilidade) Text("A acessibilidade avançada tem prioridade. Desligue-a nas configurações para usar este modo.",
+            color = Texto2, fontSize = 13.sp)
+        if (!sobreposicao) Button(onClick = {
+            runCatching { ctx.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                android.net.Uri.parse("package:" + ctx.packageName))) }.onFailure {
+                EstadoCaptura.avisar("Abra as configurações do app e autorize aparecer sobre outros aplicativos.")
+            }
+        }) { Text("Autorizar sobreposição") }
+        if (estado == EstadoSessao.ATIVA || estado == EstadoSessao.PEDINDO) {
+            Button(onClick = {
+                val servico = ServicoProjecao.ativo
+                if (servico != null) servico.encerrar(false, "Sessão encerrada.")
+                else {
+                    EstadoCaptura.encerrar(ctx, false, "Pedido de captura cancelado.")
+                    ctx.stopService(Intent(ctx, ServicoProjecao::class.java))
+                }
+            }) { Text(if (estado == EstadoSessao.ATIVA) "Encerrar sessão" else "Cancelar pedido") }
+        } else {
+            Button(onClick = { (ctx as MainActivity).iniciarCaptura() }, enabled = sobreposicao && !acessibilidade) {
+                Text(if (estado == EstadoSessao.PARADA_PELO_SISTEMA) "Iniciar nova sessão" else "Iniciar sessão")
+            }
+        }
     }
 }
 
@@ -374,7 +467,7 @@ private fun CartaoLeitor() {
     var endereco by remember { mutableStateOf("") }
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Superficie).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Leitor de capítulo", color = Texto, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+        Text("Leitor de capítulo · sempre pronto", color = Texto, fontSize = 16.sp, fontWeight = FontWeight.Medium)
         Text("Cole o endereço de um capítulo para ler com tradução. O app baixa os quadros no seu aparelho e " +
              "troca o texto pelo traduzido. Quando há internet, o texto das falas é enviado para tradução; " +
              "sem internet, a tradução acontece aqui mesmo, com o idioma baixado.",
