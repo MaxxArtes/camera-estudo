@@ -20,7 +20,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 /** Um MediaProjection e um VirtualDisplay por sessão; todos os callbacks usam a thread principal. */
 internal class ProjecaoTela(
-    private val ctx: Context, private val aoParar: () -> Unit, private val aoRedimensionar: () -> Unit
+    private val ctx: Context, private val aoParar: (FimSessao) -> Unit, private val aoRedimensionar: () -> Unit
 ) {
     private val handler = Handler(Looper.getMainLooper())
     private var projecao: MediaProjection? = null
@@ -39,11 +39,11 @@ internal class ProjecaoTela(
         override fun onStop() {
             if (fechada) return
             fechar()
-            aoParar()
+            aoParar(FimSessao.SISTEMA)
         }
         override fun onCapturedContentResize(width: Int, height: Int) {
             if (fechada || display == null) return
-            runCatching { redimensionar(width, height) }.onFailure { fechar(); aoParar() }
+            runCatching { redimensionar(width, height) }.onFailure { fechar(); aoParar(FimSessao.ERRO) }
         }
     }
 
@@ -80,7 +80,8 @@ internal class ProjecaoTela(
 
     private fun redimensionar(w: Int, h: Int) {
         if (w <= 0 || h <= 0 || (w == largura && h == altura)) return
-        pedido?.resultado?.completeExceptionally(IllegalStateException("A tela girou. Capture novamente."))
+        pedido?.resultado?.completeExceptionally(ErroCapturaSessao(FalhaCaptura.ROTACAO,
+            "A tela girou. Capture novamente."))
         pedido = null
         aoRedimensionar()
         val antigo = leitor
@@ -113,7 +114,8 @@ internal class ProjecaoTela(
                         }
                     }
                 }.onFailure {
-                    pedido?.resultado?.completeExceptionally(IllegalStateException("Não consegui ler o quadro da captura.", it))
+                    pedido?.resultado?.completeExceptionally(ErroCapturaSessao(FalhaCaptura.LEITURA,
+                        "Não consegui ler o quadro da captura.", it))
                 }
             }, handler)
         }
@@ -122,7 +124,11 @@ internal class ProjecaoTela(
     suspend fun capturar(): Bitmap? {
         check(!fechada && pedido == null)
         val fonte = checkNotNull(leitor)
-        fonte.acquireLatestImage()?.use { ultimoTimestamp = maxOf(ultimoTimestamp, it.timestamp) }
+        try {
+            fonte.acquireLatestImage()?.use { ultimoTimestamp = maxOf(ultimoTimestamp, it.timestamp) }
+        } catch (e: Exception) {
+            throw ErroCapturaSessao(FalhaCaptura.LEITURA, "Não consegui ler o quadro da captura.", e)
+        }
         // A superfície nova força o compositor a produzir inclusive uma tela estática. Só drenar a fila
         // poderia esperar para sempre por outra mudança na tela. O VirtualDisplay continua sendo o mesmo.
         val novo = novoLeitor(largura, altura)

@@ -75,6 +75,23 @@ fun main() {
     confere("cor escura legítima passa", !rejeita { _, _ -> 0xFF001000.toInt() })
     confere("barras claras fora do conteúdo não escondem captura preta",
         rejeita { _, y -> if (y < 100 || y >= 1380) -1 else 0 })
+    println("5) motivos seguros para telemetria da sessão")
+    confere("usuário encerra sem pedir recuperação", FimSessao.USUARIO.codigo == "usuario" && !FimSessao.USUARIO.peloSistema)
+    confere("sistema exige nova sessão", FimSessao.SISTEMA.codigo == "sistema" && FimSessao.SISTEMA.peloSistema)
+    confere("troca de modo não é interrupção do sistema",
+        FimSessao.ACESSIBILIDADE.codigo == "acessibilidade" && !FimSessao.ACESSIBILIDADE.peloSistema)
+    confere("erro exige nova sessão", FimSessao.ERRO.codigo == "erro" && FimSessao.ERRO.peloSistema)
+    confere("timeout é sem quadro",
+        motivoErroCaptura(ErroCapturaSessao(FalhaCaptura.SEM_QUADRO, "teste")) == "sem_quadro")
+    confere("falha de leitura preserva causa e motivo", run {
+        val causa = IllegalArgumentException("teste")
+        val erro = ErroCapturaSessao(FalhaCaptura.LEITURA, "teste", causa)
+        erro.cause === causa && motivoErroCaptura(erro) == "leitura"
+    })
+    confere("rotação tem motivo próprio",
+        motivoErroCaptura(ErroCapturaSessao(FalhaCaptura.ROTACAO, "teste")) == "rotacao")
+    confere("falha inesperada não é classificada pela mensagem",
+        motivoErroCaptura(IllegalStateException("leitura rotacao sem_quadro")) == "outro")
     println(if (falhas == 0) "TUDO CERTO (0.34): $total verificações" else "FALHAS (0.34): $falhas de $total")
     check(falhas == 0)
 }

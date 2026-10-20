@@ -131,7 +131,7 @@ class ServicoTradutor : AccessibilityService() {
 
     override fun onServiceConnected() {
         // A troca é síncrona: remove as janelas da projeção antes de criar a bolha avançada.
-        ServicoProjecao.ativo?.encerrar(false, "Acessibilidade avançada ativa: a sessão manual foi encerrada.")
+        ServicoProjecao.ativo?.encerrar(FimSessao.ACESSIBILIDADE, "Acessibilidade avançada ativa: a sessão manual foi encerrada.")
         ativo = this
         janelas = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         Telemetria.iniciar(this)

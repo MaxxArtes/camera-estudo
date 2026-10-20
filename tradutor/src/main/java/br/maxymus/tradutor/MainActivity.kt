@@ -68,6 +68,7 @@ class MainActivity : ComponentActivity() {
         val dados = resultado.data
         if (!EstadoCaptura.aguardando(pedido)) return@registerForActivityResult
         if (resultado.resultCode != RESULT_OK || dados == null) {
+            Telemetria.evento("sessao", mapOf("acao" to "negada"))
             EstadoCaptura.negar(this, pedido, "Captura não autorizada. O leitor continua pronto.")
         } else {
             lifecycleScope.launch {
@@ -105,6 +106,7 @@ class MainActivity : ComponentActivity() {
         }
         val pedido = EstadoCaptura.pedir(this) ?: return
         pedidoCaptura = pedido
+        Telemetria.evento("sessao", mapOf("acao" to "pedida"))
         runCatching {
             val gestor = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
             val intent = if (Build.VERSION.SDK_INT >= 34)
@@ -343,8 +345,10 @@ private fun CartaoSessao(acessibilidade: Boolean, revisaoPermissao: Int) {
         if (estado == EstadoSessao.ATIVA || estado == EstadoSessao.PEDINDO) {
             Button(onClick = {
                 val servico = ServicoProjecao.ativo
-                if (servico != null) servico.encerrar(false, "Sessão encerrada.")
+                if (servico != null) servico.encerrar(FimSessao.USUARIO, "Sessão encerrada.")
                 else {
+                    if (EstadoCaptura.estado.value == EstadoSessao.PEDINDO)
+                        Telemetria.evento("sessao", mapOf("acao" to "negada"))
                     EstadoCaptura.encerrar(ctx, false, "Pedido de captura cancelado.")
                     ctx.stopService(Intent(ctx, ServicoProjecao::class.java))
                 }
