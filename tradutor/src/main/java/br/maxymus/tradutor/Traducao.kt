@@ -271,12 +271,11 @@ object Traducao {
     private fun normalizar(s: String) = normalizarFala(s)
 
     /**
-     * O destino vem de quem chama, da foto do pedido: a chave não pode mudar porque o dono trocou o idioma no meio. A chave
-     * leva também a REVISÃO da tradução (REVISAO_CACHE): mudou o pedido ao modelo (contexto, tipo, contrato), as traduções
-     * antigas deixam de valer em vez de ficarem para sempre no cache. Ideia do FrankYomik, que versiona o cache pelo processo
-     * inteiro. A revisão fica antes do "|", que é onde guardar() separa o texto da chave.
+     * O destino vem de quem chama, da foto do pedido: a chave não pode mudar porque o dono trocou o idioma no meio. O formato
+     * "destino|texto" é o da 0.31 e NÃO muda: as ~20 mil traduções guardadas no aparelho continuam valendo. Se um dia o pedido
+     * ao modelo mudar a ponto de invalidar o cache, a revisão entra na chave JUNTO com a migração das entradas antigas na carga.
      */
-    private fun chave(s: String, dest: String) = dest + "#r" + REVISAO_CACHE + "|" + normalizar(s)
+    private fun chave(s: String, dest: String) = dest + "|" + normalizar(s)
 
     /** O que ficou no cache depois de guardar: a entrada de fato (pode ser a que já estava) e se o TEXTO dessa chave mudou. */
     private class Gravado(val entrada: Entrada, val mudou: Boolean)
@@ -820,6 +819,8 @@ object Traducao {
         val primeira = pedidoModelo(falas, ids, falas.indices.toList(), origem, dest, contexto, sfx)
         val textos = primeira.textos ?: return RespostaModelo(null, primeira.modelo, primeira.id)
         val r = textos.toMutableList()
+        // Sem o servidor v2 a recuperação seria um segundo pedido ao contrato antigo, que só gasta a cota do Groq.
+        if (!CONTRATO_V2) return RespostaModelo(r.map { it.orEmpty() }, primeira.modelo, primeira.id)
         // Faltou fala na resposta: pede SÓ as que faltaram, no máximo duas vezes (a segunda em duas metades), dentro do prazo.
         // Antes a fala que faltava ia para a máquina mesmo com o modelo no ar.
         var tentativa = 0
@@ -848,7 +849,7 @@ object Traducao {
      * O servidor ainda não conhece o contrato novo? Começa supondo que sim; se ele recusar o corpo novo (400 ou 422), o
      * pedido é repetido no formato antigo e o app não insiste mais até reabrir.
      */
-    @Volatile private var contratoNovo = true
+    @Volatile private var contratoNovo = CONTRATO_V2
 
     private fun pedidoModelo(
         falas: List<String>, ids: List<String>, indices: List<Int>, origem: String, dest: String,
@@ -869,12 +870,17 @@ object Traducao {
         }
         con.outputStream.use { it.write(corpo.toString().toByteArray()) }
         val codigo = con.responseCode
-        if (novo && (codigo == 400 || codigo == 422)) {
-            contratoNovo = false
-            Telemetria.evento("modelo_contrato_antigo", mapOf("http" to codigo))
-            return@runCatching pedidoModelo(falas, ids, indices, origem, dest, contexto, sfx)
+        if (codigo != 200) {
+            val erro = con.errorStream?.bufferedReader()?.use { it.readText().take(4096) }.orEmpty()
+            // só um 400 ou 422 de FORMATO (o corpo novo que o servidor não entende) volta ao pedido antigo; qualquer outro erro
+            // (limite, ocupado, modelo) não desliga nada
+            if (novo && RegraPedidoModelo.erroDeFormato(codigo, erro)) {
+                contratoNovo = false
+                Telemetria.evento("modelo_contrato_antigo", mapOf("http" to codigo))
+                return@runCatching pedidoModelo(falas, ids, indices, origem, dest, contexto, sfx)
+            }
+            return@runCatching Parcial(null, "http $codigo", idDoErro(erro))
         }
-        if (codigo != 200) return@runCatching Parcial(null, "http $codigo", idDoErro(con.errorStream))
         val j = JSONObject(con.inputStream.bufferedReader().use { it.readText() })
         val porId = j.optJSONObject("traducoes")?.let { o -> o.keys().asSequence().associateWith { k -> o.optString(k, "") } }
         val lista = j.optJSONArray("falas")?.let { a -> List(a.length()) { if (a.isNull(it)) null else a.optString(it, "") } }
@@ -885,9 +891,8 @@ object Traducao {
     }.getOrElse { Parcial(null, "falhou", null) }
 
     /** O id que o serviço põe também na resposta de erro, para casar o pedido com o registro dele. Nada além do id sai daqui. */
-    private fun idDoErro(fluxo: java.io.InputStream?): String? = runCatching {
-        fluxo?.bufferedReader()?.use { it.readText().take(4096) }
-            ?.let { SaneaTelemetria.idServidor(JSONObject(it).optString("id", "")) }
+    private fun idDoErro(corpo: String): String? = runCatching {
+        SaneaTelemetria.idServidor(JSONObject(corpo).optString("id", ""))
     }.getOrNull()
 
     /**
@@ -903,8 +908,12 @@ object Traducao {
     const val PRAZO_MODELO = 9L
     /** até quando, em ms desde o primeiro pedido ao modelo, ainda se pede de novo a fala que faltou na resposta */
     private const val PRAZO_RECUPERACAO_MODELO_MS = 6_000L
-    /** sobe quando o pedido ao modelo muda de um jeito que muda a tradução: o cache da revisão anterior deixa de valer */
-    const val REVISAO_CACHE = 2
+    /**
+     * O servidor de hoje lê só "falas" e "para". Enquanto não existir o servidor v2 (tradutor/docs/servidor-traducao-v2.md) o
+     * app NÃO manda versão, ids, tipos nem contexto e NÃO faz pedido de recuperação. Ligar isto sem o servidor novo só gasta
+     * cota (o limite do Groq é de 8K tokens por minuto).
+     */
+    private const val CONTRATO_V2 = false
     /**
      * quanto o lote espera pelo modelo, em ms desde o início, quando a máquina ou o local já chegaram. O modelo responde
      * em ~0,4 s (mediana 373 ms, p90 583 ms em 03/10); passando disso vale mais mostrar a reserva e deixar a correção

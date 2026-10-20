@@ -1,9 +1,13 @@
 # Contrato do serviço de tradução, versão 2 (app Tradutor 0.33)
 
-O serviço `POST https://pocketlm.maxymus.dev.br/tradutor/traduzir` não está neste repositório. Este documento diz o que o
-app 0.33 manda e aceita, para o servidor ser atualizado quando o dono quiser. **O app continua funcionando com o servidor
-de hoje**: os campos novos são extras, e se o servidor recusar o corpo novo com 400 ou 422 o app repete no formato antigo
-e não insiste mais até ser reaberto (telemetria `modelo_contrato_antigo`).
+O serviço `POST https://pocketlm.maxymus.dev.br/tradutor/traduzir` não está neste repositório. **PLANO, não está em uso:**
+o app 0.33 continua no contrato antigo (manda só `de`, `para` e `falas`; lê só `falas`) e NÃO manda versão, ids, tipos nem
+contexto, nem faz pedido de recuperação (`CONTRATO_V2 = false` em Traducao.kt). Este documento diz o que o app passa a
+mandar e aceitar quando o servidor v2 existir e a chave for ligada. Com ela ligada, o app só volta ao formato antigo num
+400 ou 422 de formato ("json invalido", "sem falas"); qualquer outro erro não desliga nada (telemetria `modelo_contrato_antigo`).
+
+Atenção ao custo: o limite do Groq é de 8K tokens por minuto, então o `contexto` do servidor v2 deve ficar bem abaixo dos
+4000 caracteres que o app monta hoje (ajustar `RegraContexto.MAX_CARACTERES` junto com o servidor).
 
 Ideias estudadas no FrankYomik (tradução da página inteira com id estável, contexto das páginas anteriores, resposta com
 formato fixo e recuperação limitada), reescritas aqui.
@@ -60,6 +64,6 @@ duplicado ou desconhecido, e devolver só o que validou. O app completa o que fa
 
 ## Cache
 
-A chave do cache de traduções no app passou a levar a revisão (`REVISAO_CACHE = 2` em Traducao.kt): as traduções feitas
-antes da 0.33, sem contexto, deixam de valer de uma vez. Ao mudar o prompt do servidor de um jeito que mude a tradução,
-suba `REVISAO_CACHE` no app.
+A chave do cache de traduções no app continua `destino|texto normalizado`, a da 0.31: as traduções já guardadas seguem
+valendo. Se o servidor v2 mudar a tradução de um jeito que exija descartar o cache, a revisão entra na chave junto com a
+migração das entradas antigas na carga (para o limite de 20 mil não ficar ocupado por entradas mortas).

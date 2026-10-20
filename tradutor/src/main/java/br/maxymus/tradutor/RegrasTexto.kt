@@ -259,6 +259,13 @@ internal object RegraPedidoModelo {
             t?.trim()?.takeIf { it.isNotEmpty() }
         }
 
+    /**
+     * O 400 ou 422 diz que o servidor não entendeu o FORMATO do corpo ("json invalido", "sem falas")? Só esse erro devolve o app
+     * ao pedido antigo; limite, ocupado, modelo e qualquer outro erro não desligam o contrato novo.
+     */
+    fun erroDeFormato(codigo: Int, corpo: String): Boolean =
+        (codigo == 400 || codigo == 422) && (corpo.contains("json invalido") || corpo.contains("sem falas"))
+
     fun faltando(r: List<String?>): List<Int> = r.indices.filter { r[it] == null }
 
     /** Os pedidos da recuperação `tentativa` (0 é a primeira): todas as que faltam; depois em duas metades; depois nada. */
