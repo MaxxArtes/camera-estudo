@@ -75,15 +75,6 @@ class ServicoTradutor : AccessibilityService() {
         private const val ACAO_A11Y_PARAR = 0x4F000003
     }
 
-    /** Uma fala PINTADA na tela congelada e o texto que está pintado nela agora: é daqui que a leitura em voz alta lê. */
-    private class Pintada(val fala: Falas.Fala, val traduzida: String)
-
-    /**
-     * O que a tela congelada precisa depois de traduzir: a camada, as falas (para a revisão), as medidas do pedido e as falas
-     * pintadas (o mesmo filtro `uteis`, com o texto traduzido de cada uma).
-     */
-    private class Congelada(val camada: Bitmap, val falas: List<Falas.Fala>, val resultado: ResultadoLote, val pintadas: List<Pintada>)
-
     /** Recebe os toques da notificação fixa. */
     private val receptor = object : android.content.BroadcastReceiver() {
         override fun onReceive(c: Context, i: android.content.Intent) {
@@ -616,14 +607,14 @@ class ServicoTradutor : AccessibilityService() {
                 val atual = Traducao.correcoes.get()
                 if (atual != vista) {
                     val mapa = withContext(Dispatchers.Default) { Traducao.soCache(this@ServicoTradutor, falas.map { it.texto }) }
-                    val uteis = falas.filter { (mapa[it.texto] ?: it.texto) != it.texto }
-                    val nova = withContext(Dispatchers.Default) { Pintura.camada(tela, uteis) { mapa[it] ?: it } }
+                    val pintadas = FluxoCongelado.pintadas(falas, mapa)
+                    val nova = withContext(Dispatchers.Default) { FluxoCongelado.pintar(tela, pintadas) }
                     if (camadaCongelada !== alvo) return@launch
                     // a leitura pode ter começado enquanto a camada era refeita: a correção fica para depois dela
                     if (vozLazy.isInitialized() && voz.lendo) continue
                     vista = atual
                     alvo.setImageBitmap(nova)
-                    congeladaPintadas = uteis.map { Pintada(it, mapa[it.texto] ?: it.texto) }
+                    congeladaPintadas = pintadas
                 }
             }
         }
@@ -852,43 +843,13 @@ class ServicoTradutor : AccessibilityService() {
                 val t0 = System.nanoTime()
                 // a referência da revisão é lida ANTES de traduzir: correção que chega no meio do pedido não pode ficar invisível
                 val referencia = Traducao.correcoes.get()
-                var tudoNoIdioma = false
-                var fracaoSuspeita: Float? = null
-                val camada = withContext(Dispatchers.Default) {
-                    val tOcr = System.nanoTime()
-                    val lidas = Falas.lerOuNulo(tela, topo, base)
-                    val falas = lidas?.falas.orEmpty()
-                    msOcr = (System.nanoTime() - tOcr) / 1_000_000
-                    if (falas.isEmpty()) {
-                        // OCR que rodou e não achou texto: se a imagem é quase toda preta, pode ser página escura ou captura
-                        // bloqueada. OCR que falhou (lidas nulo) é inconclusivo e não gera suspeita.
-                        if (lidas?.algumTexto == false) {
-                            val f = RegraCaptura.fracaoEscura(tela, topo, base)
-                            if (RegraCaptura.suspeita(0, false, f)) fracaoSuspeita = f
-                        }
-                        null
-                    }
-                    else {
-                        val tTrad = System.nanoTime()
-                        // as falas puladas e as medidas são DESTE pedido: o pré-carregamento do contínuo roda ao mesmo tempo
-                        val r = Traducao.traduzirLoteDetalhado(this@ServicoTradutor, falas.map { it.texto }, ativo = { isActive && !LeitorActivity.visivel })
-                        val mapa = r.mapa
-                        msTrad = (System.nanoTime() - tTrad) / 1_000_000
-                        // o mesmo filtro do Leitor (uteis): fala pulada ou traduzida igual ao original não ganha faixa
-                        val uteis = falas.filter { (mapa[it.texto] ?: it.texto) != it.texto }
-                        if (uteis.isEmpty() && falas.all { it.texto in r.puladas }) { tudoNoIdioma = true; null }
-                        else {
-                            // há fala ainda sem tradução útil (o modelo pode chegar depois do prazo): a tela congela com
-                            // camada transparente e a revisão congelada a completa quando o cache for corrigido
-                            // (revisão do Astra, 03/10)
-                            val tPint = System.nanoTime()
-                            val c = if (uteis.isEmpty()) Bitmap.createBitmap(tela.width, tela.height, Bitmap.Config.ARGB_8888)
-                                    else Pintura.camada(tela, uteis) { mapa[it] ?: it }
-                            msPint = (System.nanoTime() - tPint) / 1_000_000
-                            Congelada(c, falas, r, uteis.map { Pintada(it, mapa[it.texto] ?: it.texto) })
-                        }
-                    }
+                val processada = withContext(Dispatchers.Default) {
+                    FluxoCongelado.processar(this@ServicoTradutor, tela, topo, base) { isActive && !LeitorActivity.visivel }
                 }
+                val camada = processada.congelada
+                val tudoNoIdioma = processada.tudoNoIdioma
+                val fracaoSuspeita = processada.fracaoSuspeita
+                msOcr = processada.msOcr; msTrad = processada.msTrad; msPint = processada.msPint
                 val ms = (System.nanoTime() - t0) / 1_000_000
                 // Suspeita de captura escura: UMA segunda captura confirma, e o serviço só é solto depois dela
                 val fracao1 = fracaoSuspeita
@@ -1156,10 +1117,7 @@ class ServicoTradutor : AccessibilityService() {
      * a cópia deste momento: a revisão troca a referência da lista, nunca o conteúdo, e Voz.ouvir ainda copia.
      */
     private fun ouvirCongelada(onde: String) {
-        val pintadas = congeladaPintadas
-        if (pintadas.isEmpty()) { voz.semFalas(); return }
-        val ordem = RegraVoz.ordemDeLeitura(pintadas.map { RegraVoz.PosicaoFala(it.fala.caixa.left, it.fala.caixa.top, it.fala.alturaLinha) })
-        voz.ouvir(ordem.map { pintadas[it].traduzida }, onde)
+        FluxoCongelado.ouvir(voz, congeladaPintadas, onde)
     }
 
     /** O botão do rodapé da congelada: "Parar" mantém a tela aberta (motivo parar); "Ouvir" lê a tela. */
