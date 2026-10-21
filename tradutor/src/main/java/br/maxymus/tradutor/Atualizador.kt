@@ -10,11 +10,9 @@ import android.os.Build
 import android.os.Environment
 import android.widget.Toast
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -50,39 +48,31 @@ object Atualizador {
         }.getOrNull()
     }
 
+    /**
+     * Baixa o APK na pasta Downloads pública com o DownloadManager; a notificação do Android abre o instalador do
+     * sistema. Sem REQUEST_INSTALL_PACKAGES: com captura de tela e sobreposição, "instalar outros apps" fazia o Play
+     * Protect pedir verificação (mesma solução da agenda, 17/09). A assinatura é fixa, então instala por cima.
+     */
     fun baixarEInstalar(contexto: Context, v: Versao) {
         val app = contexto.applicationContext
         val gerente = app.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val nome = "galeria-estudo-v${v.nome}.apk"
-        val destino = File(app.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), nome)
-        if (destino.exists()) destino.delete()
+        val nome = "tradutor-v${v.nome}.apk"
         val pedido = DownloadManager.Request(Uri.parse(v.apk))
-            .setTitle("Galeria Estudo ${v.nome}")
-            .setDescription("Baixando a atualização")
+            .setTitle("Tradutor ${v.nome}")
+            .setDescription("Toque aqui quando terminar para instalar")
             .setMimeType("application/vnd.android.package-archive")
             .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setDestinationInExternalFilesDir(app, Environment.DIRECTORY_DOWNLOADS, nome)
+            .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, nome)
         val id = gerente.enqueue(pedido)
-        Toast.makeText(app, "Baixando a versão ${v.nome}…", Toast.LENGTH_SHORT).show()
+        Toast.makeText(app, "Baixando a versão ${v.nome}. Quando terminar, toque na notificação para instalar.", Toast.LENGTH_LONG).show()
         val receptor = object : BroadcastReceiver() {
             override fun onReceive(c: Context, i: Intent) {
                 if (i.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1) != id) return
                 runCatching { app.unregisterReceiver(this) }
-                val cursor = gerente.query(DownloadManager.Query().setFilterById(id))
-                val ok = cursor.use { it.moveToFirst() && it.getInt(it.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS)) == DownloadManager.STATUS_SUCCESSFUL }
-                if (!ok || !destino.exists()) { Toast.makeText(app, "O download não terminou. Tente de novo.", Toast.LENGTH_LONG).show(); return }
-                instalar(app, destino)
+                // abre pelo próprio DownloadManager: a origem da instalação passa a ser o sistema, não este app
+                runCatching { app.startActivity(Intent(DownloadManager.ACTION_VIEW_DOWNLOADS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
             }
         }
         ContextCompat.registerReceiver(app, receptor, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), ContextCompat.RECEIVER_EXPORTED)
-    }
-
-    private fun instalar(contexto: Context, apk: File) {
-        val uri = FileProvider.getUriForFile(contexto, contexto.packageName + ".arquivos", apk)
-        val i = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-        runCatching { contexto.startActivity(i) }.onFailure { Toast.makeText(contexto, "Não consegui abrir o instalador: ${it.message}", Toast.LENGTH_LONG).show() }
     }
 }
