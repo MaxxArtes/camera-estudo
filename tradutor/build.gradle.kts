@@ -57,4 +57,6 @@ dependencies {
     implementation("com.google.mlkit:translate:17.0.3")          // tradução offline, pacote baixado sob demanda
     implementation("com.google.mlkit:language-id:17.0.6")        // detecta o idioma da fala, para servir a qualquer língua
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    // só para os testes JVM (src/test); não entra no APK
+    testImplementation("junit:junit:4.13.2")
 }
