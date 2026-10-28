@@ -140,6 +140,9 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/** O `servico_listado_morto` deste processo já saiu? Estático de propósito: vale para o processo, não para a tela. */
+private val listadoMortoEmitido = RegraServicoMorto.UmaVez()
+
 @Composable
 private fun Preparacao() {
     val ctx = LocalContext.current
@@ -180,7 +183,15 @@ private fun Preparacao() {
             // a notificação fixa pode ser dispensada com um arrasto no Android 14 e acima, e não voltava sozinha
             ServicoTradutor.ativo?.let { runCatching { it.reafirmaNotificacao() } }
         } else if (servicoListado) {
-            Telemetria.evento("servico_listado_morto", mapOf("android" to android.os.Build.VERSION.SDK_INT))
+            // uma vez por processo: a tela confere ao nascer E a cada volta, e o mesmo serviço morto era contado duas vezes
+            if (listadoMortoEmitido.primeira()) {
+                val atualizado = runCatching { ctx.packageManager.getPackageInfo(ctx.packageName, 0).lastUpdateTime }.getOrNull()
+                Telemetria.evento("servico_listado_morto", mapOf("android" to android.os.Build.VERSION.SDK_INT,
+                    // separa a morte por atualização (minutos) da morte durante a noite (horas)
+                    "atualizado_ha_min" to atualizado?.let { RegraServicoMorto.minutosDesde(System.currentTimeMillis(), it) },
+                    "processo_ha_s" to RegraServicoMorto.segundosDesde(android.os.SystemClock.uptimeMillis(),
+                        android.os.Process.getStartUptimeMillis())))
+            }
         } else if (jaLigou && !paradaOrdenada) {
             // o HyperOS tirou o serviço da lista depois de encerrar o app: antes a tela voltava a parecer a de primeira vez
             Telemetria.evento("servico_desligado_pelo_sistema", mapOf("android" to android.os.Build.VERSION.SDK_INT))
